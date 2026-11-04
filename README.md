@@ -60,3 +60,6 @@ codex plugin add fstack@fstack
 
 Подробнее: [установка и восстановление](docs/installation.md),
 [выбор навыка](docs/skills.md), [подготовка новой версии](docs/development.md).
+
+При таймауте Git-обновления в текущем Windows-клиенте используй
+[маркетплейс из локального Git-клона](docs/installation.md#если-git-обновление-в-codex-прерывается-по-таймауту).
