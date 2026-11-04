@@ -134,7 +134,7 @@ def finish_release(repository, version, records, base, sha=None):
     if existing:
         if not existing['draft']:
             raise ValueError(f'Релиз {tag} уже опубликован; проверьте его ревизию')
-        if marker not in existing.get('body', '') or existing['author']['login'] != 'github-actions[bot]':
+        if marker not in (existing.get('body') or '') or existing['author']['login'] != 'github-actions[bot]':
             raise ValueError(f'Черновик {tag} не принадлежит этому выпуску')
     output, checksum = archive(version, sha)
     if not existing:
@@ -158,7 +158,7 @@ def publish(repository):
     for record in release_records(repository):
         if not record['draft'] or record['author']['login'] != 'github-actions[bot]':
             continue
-        marker = re.search(r'<!-- release-source:([a-f0-9]{40}) -->', record.get('body', ''))
+        marker = re.search(r'^<!-- release-source:([a-f0-9]{40}) -->$', record.get('body') or '', re.M)
         if marker is None:
             continue
         sha = marker[1]
