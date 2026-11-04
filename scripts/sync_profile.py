@@ -1,5 +1,4 @@
 import argparse
-import csv
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -145,21 +144,17 @@ def atomic_write(path, content):
 
 
 def private_backup(path):
-    # Windows mode 0700 adds explicit administrator ACEs; icacls sets our DACL before any data is written.
-    path.mkdir(mode=0o777 if os.name == 'nt' else 0o700, parents=True)
+    path.mkdir(mode=0o700, parents=True)
     if os.name == 'nt':
-        identity = subprocess.run(
-            ['whoami', '/user', '/fo', 'csv', '/nh'], capture_output=True,
-            text=True, encoding='utf-8', errors='replace', check=True,
-        )
-        row = next(csv.reader(identity.stdout.splitlines()), [])
-        sid = row[-1] if row else ''
-        if not re.fullmatch(r'S-1-\d+(?:-\d+)+', sid):
-            raise ValueError('Не удалось определить владельца резервной копии')
+        command = """$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$acl = [System.Security.AccessControl.DirectorySecurity]::new()
+$acl.SetSecurityDescriptorSddlForm('D:P(A;OICI;FA;;;' + $sid + ')(A;OICI;FA;;;SY)', [System.Security.AccessControl.AccessControlSections]::Access)
+[System.IO.Directory]::SetAccessControl($env:FSTACK_BACKUP_PATH, $acl)
+"""
         subprocess.run(
-            ['icacls', str(path), '/inheritance:r', '/grant:r',
-             f'*{sid}:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/Q'],
-            capture_output=True, check=True,
+            ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command],
+            env={**os.environ, 'FSTACK_BACKUP_PATH': str(path)}, capture_output=True, check=True,
         )
     return path
 

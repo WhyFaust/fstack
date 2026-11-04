@@ -4,6 +4,8 @@
 
 Для сопровождения нужны Python 3.12+ и PyYAML из requirements-dev.txt.
 Синхронизация профиля использует только стандартную библиотеку Python 3.11+.
+Для защиты backup на Windows нужен встроенный Windows PowerShell: helper
+задаёт через системный .NET API полную DACL до сохранения данных.
 
 ```bash
 python -m pip install -r requirements-dev.txt
