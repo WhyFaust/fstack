@@ -1,0 +1,4 @@
+interface:
+  display_name: План работы
+  short_description: План проверяемых этапов и зависимостей
+  default_prompt: Используй $fstack:plan-work, чтобы разбить задачу на законченные этапы с зависимостями и проверками.

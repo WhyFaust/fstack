@@ -1,0 +1,4 @@
+interface:
+  display_name: No comments
+  short_description: Понятный код без поясняющих комментариев
+  default_prompt: Используй $fstack:no-comments при изменении кода; выражай намерение именами и структурой и сохраняй только необходимые исключения.

@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "fstack · Faust stack",
     "shortDescription": "Личные инженерные навыки для Codex",
-    "longDescription": "Исследование кода, разработка, диагностика, рефакторинг, ревью и проверка результата. Документация, GitLab, Playwright и Python/AQA — по задаче.",
+    "longDescription": "Исследование кода, разработка, диагностика, рефакторинг, ревью и проверка результата. Документация, GitLab, Playwright и Python — по задаче.",
     "developerName": "Faust",
     "websiteURL": "https://github.com/WhyFaust/fstack",
     "category": "Productivity",
