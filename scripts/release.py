@@ -166,8 +166,8 @@ def publish(repository):
         version_tuple(version)
         run('git', 'merge-base', '--is-ancestor', sha, 'HEAD')
         saved = json.loads(run('git', 'show', f'{sha}:{MANIFEST.as_posix()}'))
-        if saved['version'] != version or run('git', 'log', '-1', '--format=%s', sha) != f'chore(release): v{version}':
-            raise ValueError('Черновик не соответствует коммиту версии')
+        if saved['version'] != version:
+            raise ValueError('Версия черновика не совпадает с манифестом его коммита')
         finish_release(repository, version, [record], sha + '^', sha)
         run('git', 'fetch', 'origin', 'tag', record['tag_name'])
     proposed = plan(repository)
