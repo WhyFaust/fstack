@@ -1,0 +1,19 @@
+{
+  "name": "fstack",
+  "version": "0.1.0",
+  "description": "Faust stack — личный набор инженерных навыков Codex: от исследования до проверенного результата.",
+  "author": { "name": "WhyFaust" },
+  "repository": "https://github.com/WhyFaust/fstack",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "fstack · Faust stack",
+    "shortDescription": "Личные инженерные навыки для Codex",
+    "longDescription": "Исследование кода, разработка, диагностика, рефакторинг, ревью и проверка результата. Документация, GitLab, Playwright и Python/AQA — по задаче.",
+    "developerName": "Faust",
+    "category": "Productivity",
+    "brandColor": "#F0744F",
+    "composerIcon": "./assets/fstack.png",
+    "logo": "./assets/fstack.png",
+    "screenshots": ["./assets/cover.png"]
+  }
+}

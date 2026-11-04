@@ -1,0 +1,9 @@
+# Источники
+
+fstack развивает личные навыки Faust и их вспомогательные материалы.
+Справки `playwright-cli` адаптированы и сокращены на русском языке из
+[Microsoft Playwright CLI](https://github.com/microsoft/playwright-cli).
+Исходные материалы распространяются по [Apache License 2.0](licenses/Apache-2.0.txt).
+
+Логотип и обложка созданы встроенным ImageGen для fstack. В логотипе использован
+подтверждённый образ маскота Faust: кудри, очки, худи и одуванчик.

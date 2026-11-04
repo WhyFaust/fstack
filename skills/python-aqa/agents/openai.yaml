@@ -1,0 +1,4 @@
+interface:
+  display_name: "Python и автотесты"
+  short_description: "Python, фикстуры и изоляция ресурсов"
+  default_prompt: "Используй $python-aqa, чтобы соблюсти инструменты Python проекта и владение тестовыми ресурсами."

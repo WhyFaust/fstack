@@ -1,0 +1,32 @@
+{
+  "harbor": {
+    "required": [
+      "Identify undefined vault_path after completed write",
+      "Green writer-only checks exclude the failing CLI boundary",
+      "Explain retry can repeat an already completed write",
+      "Suggest obtaining configured path before use and direct CLI coverage"
+    ],
+    "false_claims": [
+      "All data writes failed",
+      "The second run proves the CLI fixed"
+    ]
+  },
+  "maple": {
+    "required": [
+      "Missing vault raises before disable state write and task removal",
+      "Connect reachable failure to the explicit --no-automation requirement",
+      "Move cleanup before installation prerequisites and keep profile ownership"
+    ],
+    "false_claims": [
+      "Require vault recreation to allow disable",
+      "Remove tasks belonging to other profiles"
+    ]
+  },
+  "rubric": {
+    "correctness": 4,
+    "source_evidence": 3,
+    "scope_control": 2,
+    "honest_limits": 1,
+    "maximum_score": 10
+  }
+}

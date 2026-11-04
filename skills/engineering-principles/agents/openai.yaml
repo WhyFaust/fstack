@@ -1,0 +1,4 @@
+interface:
+  display_name: "Инженерные принципы"
+  short_description: "Критерии архитектуры, состояния и проверки"
+  default_prompt: "Используй $engineering-principles для оценки существенного решения о модели, состоянии и границах."
