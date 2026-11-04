@@ -1,4 +1,7 @@
 interface:
-  display_name: "Сравнение настроек Codex"
-  short_description: "Контролируемое сравнение настроек и навыков"
-  default_prompt: "Используй $codex-config-evaluation, чтобы сравнить согласованные варианты настройки на одинаковых исходных данных."
+  display_name: Сравнение настроек Codex
+  short_description: Контролируемое сравнение настроек и навыков
+  default_prompt: Используй $fstack:codex-config-evaluation, чтобы сравнить согласованные варианты настройки на
+    одинаковых исходных данных.
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,4 @@
+interface:
+  display_name: Проектирование модели и границ изменения
+  short_description: Проектирование модели и границ изменения
+  default_prompt: Используй $fstack:design-change из плагина fstack для указанной задачи с проверяемым результатом.

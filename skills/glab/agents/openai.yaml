@@ -1,4 +1,4 @@
 interface:
-  display_name: "GitLab через CLI"
-  short_description: "GitLab CLI для операций, недоступных через MCP"
-  default_prompt: "Используй $glab, чтобы выполнить нужную операцию GitLab, недоступную через MCP."
+  display_name: GitLab через CLI
+  short_description: GitLab CLI для операций, недоступных через MCP
+  default_prompt: Используй $fstack:glab, чтобы выполнить нужную операцию GitLab, недоступную через MCP.

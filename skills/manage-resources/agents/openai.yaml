@@ -1,0 +1,4 @@
+interface:
+  display_name: Жизненный цикл и очистка собственных ресурсов
+  short_description: Жизненный цикл и очистка собственных ресурсов
+  default_prompt: Используй $fstack:manage-resources из плагина fstack для указанной задачи с проверяемым результатом.

@@ -1,0 +1,4 @@
+interface:
+  display_name: Поручения, владение и завершение подагентов
+  short_description: Поручения, владение и завершение подагентов
+  default_prompt: Используй $fstack:delegate-work из плагина fstack для указанной задачи с проверяемым результатом.

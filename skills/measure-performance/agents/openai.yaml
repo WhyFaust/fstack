@@ -1,0 +1,4 @@
+interface:
+  display_name: Измерение ускорения без потери покрытия
+  short_description: Измерение ускорения без потери покрытия
+  default_prompt: Используй $fstack:measure-performance из плагина fstack для указанной задачи с проверяемым результатом.

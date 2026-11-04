@@ -1,4 +1,4 @@
 interface:
-  display_name: "Настройка профиля fstack"
-  short_description: "Настройка ролей и связей профиля fstack"
-  default_prompt: "Используй $fstack-setup, чтобы проверить и синхронизировать мои роли и связи профиля fstack."
+  display_name: Настройка профиля fstack
+  short_description: Настройка ролей и связей профиля fstack
+  default_prompt: Используй $fstack:fstack-setup, чтобы проверить и синхронизировать мои роли и связи профиля fstack.
