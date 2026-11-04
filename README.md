@@ -74,7 +74,9 @@ codex plugin add fstack@fstack
 
 Повтори `$fstack:fstack-setup` для ролей новой версии и открой новую сессию.
 Меняй исходники в репозитории: установленный кэш заменяется при обновлении.
-Версии согласованы по SemVer и Conventional Commits; ZIP и SHA-256 находятся
+Версия плагина следует SemVer и Conventional Commits. Версия навыка обновляется
+только при изменении его инструкции, UI, справок или ресурсов и обозначает
+последний изменивший его релиз. ZIP и SHA-256 находятся
 в [релизах](https://github.com/WhyFaust/fstack/releases).
 
 [Установка и восстановление](docs/installation.md), [профиль Codex](docs/codex.md),

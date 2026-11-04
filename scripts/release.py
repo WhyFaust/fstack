@@ -21,7 +21,7 @@ def run(*args):
 
 
 def version_tuple(value):
-    match = SEMVER.fullmatch(value)
+    match = SEMVER.fullmatch(value) if isinstance(value, str) else None
     if match is None:
         raise ValueError(f'Некорректная версия: {value}')
     return tuple(map(int, match.groups()))
@@ -46,14 +46,21 @@ def manifest(root=ROOT):
     return json.loads((root / MANIFEST).read_text(encoding='utf-8'))
 
 
+def parse_skill(text, source):
+    match = re.match(r'---\n(.*?)\n---(?:\n|$)', text, re.S)
+    if match is None:
+        raise ValueError(f'Нет frontmatter: {source}')
+    data = yaml.safe_load(match[1])
+    if not isinstance(data, dict) or not isinstance(data.get('metadata'), dict):
+        raise ValueError(f'Некорректные metadata: {source}')
+    return match, data
+
+
 def skill_documents(root=ROOT):
     result = []
     for path in sorted((root / 'skills').glob('*/SKILL*.md')):
         text = path.read_text(encoding='utf-8')
-        match = re.match(r'---\n(.*?)\n---(?:\n|$)', text, re.S)
-        if match is None:
-            raise ValueError(f'Нет frontmatter: {path}')
-        data = yaml.safe_load(match[1])
+        match, data = parse_skill(text, path)
         result.append((path, text, match, data))
     if not result:
         raise ValueError('Не найдены навыки')
@@ -62,32 +69,77 @@ def skill_documents(root=ROOT):
 
 def check_versions(root=ROOT):
     current = manifest(root)['version']
-    version_tuple(current)
+    package_version = version_tuple(current)
     for path, _, _, data in skill_documents(root):
-        if data.get('metadata', {}).get('version') != current:
-            raise ValueError(f'Версия навыка не совпадает с плагином: {path}')
+        if version_tuple(data['metadata'].get('version')) > package_version:
+            raise ValueError(f'Версия навыка новее плагина: {path}')
     return current
 
 
-def version_contents(version):
+def skill_tree(revision):
+    result = {}
+    for entry in run('git', 'ls-tree', '-r', '-z', revision, '--', 'skills').split('\0'):
+        if entry:
+            metadata, path = entry.split('\t', 1)
+            mode, kind, sha = metadata.split()
+            result[path] = (mode, kind, sha)
+    return result
+
+
+def skill_signature(revision, path):
+    text = subprocess.check_output(['git', 'show', f'{revision}:{path}'], cwd=ROOT).decode('utf-8')
+    match, data = parse_skill(text, f'{revision}:{path}')
+    data['metadata'].pop('version', None)
+    return data, text[match.end():]
+
+
+def changed_skills(base, revision='HEAD'):
+    before, after = skill_tree(base), skill_tree(revision)
+    names = {path.split('/')[1] for path in after if re.fullmatch(r'skills/[^/]+/SKILL\.md', path)}
+    changed = set()
+    for name in names:
+        prefix = f'skills/{name}/'
+        old = {p: value for p, value in before.items() if p.startswith(prefix)}
+        new = {p: value for p, value in after.items() if p.startswith(prefix)}
+        if old.keys() != new.keys():
+            changed.add(name)
+            continue
+        for path in new:
+            if old[path] == new[path]:
+                continue
+            versioned = re.fullmatch(r'skills/[^/]+/SKILL[^/]*\.md', path)
+            if old[path][:2] == new[path][:2] and versioned and skill_signature(base, path) == skill_signature(revision, path):
+                continue
+            changed.add(name)
+            break
+    return sorted(changed)
+
+
+def version_contents(version, skills):
     version_tuple(version)
     data = manifest()
-    data['version'] = version
-    changes = {ROOT / MANIFEST: json.dumps(data, ensure_ascii=False, indent=2) + '\n'}
+    changes = {}
+    if data['version'] != version:
+        data['version'] = version
+        changes[ROOT / MANIFEST] = json.dumps(data, ensure_ascii=False, indent=2) + '\n'
     for path, text, match, data in skill_documents():
-        metadata = data.setdefault('metadata', {})
-        if not isinstance(metadata, dict):
-            raise ValueError(f'Некорректные metadata: {path}')
-        metadata['version'] = version
-        header = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=100).rstrip()
-        changes[path] = f'---\n{header}\n---\n{text[match.end():]}'
+        if path.parent.name not in skills or data['metadata'].get('version') == version:
+            continue
+        header = yaml.compose(match[1])
+        metadata = next(value for key, value in header.value if key.value == 'metadata')
+        node = next((value for key, value in metadata.value if key.value == 'version'), None)
+        if not isinstance(node, yaml.ScalarNode):
+            raise ValueError(f'Нет скалярной metadata.version: {path}')
+        start, end = match.start(1) + node.start_mark.index, match.start(1) + node.end_mark.index
+        changes[path] = text[:start] + version + text[end:]
     return changes
 
 
-def set_version(version):
-    changes = version_contents(version)
+def set_version(version, skills):
+    changes = version_contents(version, skills)
     for path, text in changes.items():
         path.write_text(text, encoding='utf-8', newline='\n')
+    return list(changes)
 
 
 def release_records(repository):
@@ -115,7 +167,8 @@ def plan(repository, records=None):
     candidates = {increment(version, n) for n in range(level + 1)}
     if current not in candidates:
         raise ValueError(f'Версия {current} не соответствует опубликованной или ожидающей версии {sorted(candidates)}')
-    return {'version': increment(version, level), 'level': level, 'base': base, 'records': records}
+    return {'version': increment(version, level), 'level': level, 'base': base,
+            'skills': changed_skills(base), 'records': records}
 
 
 def archive(version, revision='HEAD'):
@@ -173,7 +226,7 @@ def recover_version_commit(repository, expected, candidate):
     if not proposed['level'] or subject != f'chore(release): v{proposed["version"]}':
         raise ValueError(error)
     contents = {path.relative_to(ROOT).as_posix(): text.encode('utf-8')
-                for path, text in version_contents(proposed['version']).items()}
+                for path, text in version_contents(proposed['version'], proposed['skills']).items()}
     changed = set(run('git', 'diff', '--name-only', expected, candidate).splitlines())
     if changed != set(contents) or run('git', 'diff', '--summary', expected, candidate):
         raise ValueError(error)
@@ -218,12 +271,12 @@ def publish(repository):
     if not proposed['level']:
         print('Нет изменений, требующих релиза.')
         return
-    set_version(proposed['version'])
+    files = set_version(proposed['version'], proposed['skills'])
     run(sys.executable, 'scripts/check_package.py')
     run('git', 'config', 'user.name', 'github-actions[bot]')
     run('git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
-    files = [str(MANIFEST), *[str(p.relative_to(ROOT)) for p, _, _, _ in skill_documents()]]
-    run('git', 'add', '--', *files)
+    if files:
+        run('git', 'add', '--', *[str(path.relative_to(ROOT)) for path in files])
     if run('git', 'diff', '--cached', '--name-only'):
         run('git', 'commit', '-m', f'chore(release): v{proposed["version"]}')
     run('git', 'push', 'origin', 'HEAD:main')
