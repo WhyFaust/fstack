@@ -69,7 +69,7 @@ def check_versions(root=ROOT):
     return current
 
 
-def set_version(version):
+def version_contents(version):
     version_tuple(version)
     data = manifest()
     data['version'] = version
@@ -81,6 +81,11 @@ def set_version(version):
         metadata['version'] = version
         header = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=100).rstrip()
         changes[path] = f'---\n{header}\n---\n{text[match.end():]}'
+    return changes
+
+
+def set_version(version):
+    changes = version_contents(version)
     for path, text in changes.items():
         path.write_text(text, encoding='utf-8', newline='\n')
 
@@ -90,8 +95,8 @@ def release_records(repository):
     return [release for page in pages for release in page]
 
 
-def plan(repository):
-    records = release_records(repository)
+def plan(repository, records=None):
+    records = release_records(repository) if records is None else records
     stable = [r for r in records if not r['draft'] and not r['prerelease'] and
               r['tag_name'].startswith('v') and SEMVER.fullmatch(r['tag_name'][1:])]
     if stable:
@@ -148,13 +153,52 @@ def finish_release(repository, version, records, base, sha=None):
     print(json.dumps({'published': tag, 'sha': sha}, ensure_ascii=False))
 
 
+def recover_version_commit(repository, expected, candidate):
+    error = 'main изменился после начала проверки; дождитесь нового workflow или запустите workflow_dispatch для актуальной main'
+    if not re.fullmatch(r'[a-f0-9]{40}', candidate):
+        raise ValueError(error)
+    run('git', 'fetch', '--no-tags', 'origin', candidate)
+    if run('git', 'rev-list', '--parents', '-n', '1', candidate).split()[1:] != [expected]:
+        raise ValueError(error)
+    subject = run('git', 'log', '-1', '--format=%s', candidate)
+    match = re.fullmatch(r'chore\(release\): (v\d+\.\d+\.\d+)', subject)
+    if match is None:
+        raise ValueError(error)
+    records = release_records(repository)
+    for record in records:
+        if record['tag_name'] == match[1] and (record['author']['login'] != 'github-actions[bot]' or
+                f'<!-- release-source:{candidate} -->' not in (record.get('body') or '')):
+            raise ValueError(error)
+    proposed = plan(repository, [record for record in records if record['tag_name'] != match[1]])
+    if not proposed['level'] or subject != f'chore(release): v{proposed["version"]}':
+        raise ValueError(error)
+    contents = {path.relative_to(ROOT).as_posix(): text.encode('utf-8')
+                for path, text in version_contents(proposed['version']).items()}
+    changed = set(run('git', 'diff', '--name-only', expected, candidate).splitlines())
+    if changed != set(contents) or run('git', 'diff', '--summary', expected, candidate):
+        raise ValueError(error)
+    for name, expected_content in contents.items():
+        content = subprocess.check_output(['git', 'show', f'{candidate}:{name}'], cwd=ROOT)
+        if content != expected_content:
+            raise ValueError(error)
+    run('git', 'checkout', '--detach', candidate)
+
+
 def publish(repository):
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('GITHUB_REF') != 'refs/heads/main':
         raise ValueError('Публикация выполняется только workflow ветки main')
     if os.environ.get('GITHUB_REPOSITORY') != repository:
         raise ValueError('Репозиторий workflow не совпадает с целью')
+    expected = os.environ.get('GITHUB_SHA', '')
+    if not re.fullmatch(r'[a-f0-9]{40}', expected) or run('git', 'rev-parse', 'HEAD') != expected:
+        raise ValueError('Релиз должен начинаться с проверенного SHA события workflow')
     if run('git', 'status', '--porcelain'):
         raise ValueError('Рабочее дерево содержит изменения')
+    remote = run('git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main').split()
+    if not remote:
+        raise ValueError('Не найдена удалённая main')
+    if remote[0] != expected:
+        recover_version_commit(repository, expected, remote[0])
     for record in release_records(repository):
         if not record['draft'] or record['author']['login'] != 'github-actions[bot]':
             continue

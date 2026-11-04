@@ -1,4 +1,5 @@
 import argparse
+import csv
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -6,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -142,6 +144,26 @@ def atomic_write(path, content):
         temporary.unlink(missing_ok=True)
 
 
+def private_backup(path):
+    # Windows mode 0700 adds explicit administrator ACEs; icacls sets our DACL before any data is written.
+    path.mkdir(mode=0o777 if os.name == 'nt' else 0o700, parents=True)
+    if os.name == 'nt':
+        identity = subprocess.run(
+            ['whoami', '/user', '/fo', 'csv', '/nh'], capture_output=True,
+            text=True, encoding='utf-8', errors='replace', check=True,
+        )
+        row = next(csv.reader(identity.stdout.splitlines()), [])
+        sid = row[-1] if row else ''
+        if not re.fullmatch(r'S-1-\d+(?:-\d+)+', sid):
+            raise ValueError('Не удалось определить владельца резервной копии')
+        subprocess.run(
+            ['icacls', str(path), '/inheritance:r', '/grant:r',
+             f'*{sid}:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/Q'],
+            capture_output=True, check=True,
+        )
+    return path
+
+
 @contextmanager
 def exclusive_profile(home):
     path = target(home, 'fstack/profile.lock')
@@ -168,15 +190,14 @@ def apply_profile(home, root=ROOT, adopt=False):
             return {'status': 'unchanged', 'version': version, 'changes': []}
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
         backup = target(home, f'fstack/backups/profile-{stamp}')
-        backup.mkdir(parents=True)
+        private_backup(backup)
         for name in changes:
             if before[name] is not None:
                 copy = backup / name
-                copy.parent.mkdir(parents=True, exist_ok=True)
-                copy.write_bytes(before[name])
+                atomic_write(copy, before[name])
         receipt = {'version': version, 'files': {name: digest(before[name]) for name in changes if before[name] is not None},
                    'created': [name for name in changes if before[name] is None]}
-        (backup / 'manifest.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        atomic_write(backup / 'manifest.json', (json.dumps(receipt, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
         written = []
         try:
             for name, content in changes.items():
@@ -224,7 +245,7 @@ def main():
     except ProfileConflict as error:
         print(json.dumps({'status': 'conflict', 'paths': error.paths}, ensure_ascii=False, indent=2))
         return 1
-    except (OSError, ValueError, ExceptionGroup) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError, ExceptionGroup) as error:
         result = {'status': 'error', 'message': str(error)}
         if isinstance(error, ExceptionGroup):
             result['causes'] = [str(cause) for cause in error.exceptions]
