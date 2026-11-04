@@ -6,6 +6,7 @@ description: Управляет веб-страницами через Playwrigh
   Windows-приложения требуют computer-use из текущего каталога.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
+  version: 0.1.3
 ---
 
 # Браузер через Playwright
