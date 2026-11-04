@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import re
+import sys
 from urllib.parse import unquote
 
 import yaml
@@ -93,4 +94,6 @@ def check(root=ROOT):
 
 
 if __name__ == '__main__':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
     check()

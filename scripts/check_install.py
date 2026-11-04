@@ -5,6 +5,7 @@ from pathlib import Path
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 
@@ -108,6 +109,8 @@ def check(binary):
 
 
 if __name__ == '__main__':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser()
     parser.add_argument('--codex', default='codex')
     args = parser.parse_args()
