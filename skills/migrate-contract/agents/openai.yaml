@@ -1,0 +1,4 @@
+interface:
+  display_name: Миграция контрактов и всех потребителей
+  short_description: Миграция контрактов и всех потребителей
+  default_prompt: Используй $fstack:migrate-contract из плагина fstack для указанной задачи с проверяемым результатом.

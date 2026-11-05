@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -142,6 +143,22 @@ def atomic_write(path, content):
         temporary.unlink(missing_ok=True)
 
 
+def private_backup(path):
+    path.mkdir(mode=0o700, parents=True)
+    if os.name == 'nt':
+        command = """$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$acl = [System.Security.AccessControl.DirectorySecurity]::new()
+$acl.SetSecurityDescriptorSddlForm('D:P(A;OICI;FA;;;' + $sid + ')(A;OICI;FA;;;SY)', [System.Security.AccessControl.AccessControlSections]::Access)
+[System.IO.Directory]::SetAccessControl($env:FSTACK_BACKUP_PATH, $acl)
+"""
+        subprocess.run(
+            ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command],
+            env={**os.environ, 'FSTACK_BACKUP_PATH': str(path)}, capture_output=True, check=True,
+        )
+    return path
+
+
 @contextmanager
 def exclusive_profile(home):
     path = target(home, 'fstack/profile.lock')
@@ -168,15 +185,14 @@ def apply_profile(home, root=ROOT, adopt=False):
             return {'status': 'unchanged', 'version': version, 'changes': []}
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
         backup = target(home, f'fstack/backups/profile-{stamp}')
-        backup.mkdir(parents=True)
+        private_backup(backup)
         for name in changes:
             if before[name] is not None:
                 copy = backup / name
-                copy.parent.mkdir(parents=True, exist_ok=True)
-                copy.write_bytes(before[name])
+                atomic_write(copy, before[name])
         receipt = {'version': version, 'files': {name: digest(before[name]) for name in changes if before[name] is not None},
                    'created': [name for name in changes if before[name] is None]}
-        (backup / 'manifest.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        atomic_write(backup / 'manifest.json', (json.dumps(receipt, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
         written = []
         try:
             for name, content in changes.items():
@@ -224,7 +240,7 @@ def main():
     except ProfileConflict as error:
         print(json.dumps({'status': 'conflict', 'paths': error.paths}, ensure_ascii=False, indent=2))
         return 1
-    except (OSError, ValueError, ExceptionGroup) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError, ExceptionGroup) as error:
         result = {'status': 'error', 'message': str(error)}
         if isinstance(error, ExceptionGroup):
             result['causes'] = [str(cause) for cause in error.exceptions]

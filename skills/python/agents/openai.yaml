@@ -1,0 +1,4 @@
+interface:
+  display_name: Python
+  short_description: Python, окружение, типы и ресурсы
+  default_prompt: Используй $fstack:python для Python-кода с учётом окружения, типов, ошибок и ресурсов проекта; подключай справки по задаче.

@@ -1,0 +1,4 @@
+interface:
+  display_name: Проверка проекта через реальный сценарий
+  short_description: Проверка проекта через реальный сценарий
+  default_prompt: Используй $fstack:verify-project из плагина fstack для указанной задачи с проверяемым результатом.

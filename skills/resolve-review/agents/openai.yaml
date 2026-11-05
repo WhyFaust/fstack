@@ -1,0 +1,4 @@
+interface:
+  display_name: Разбор и исправление замечаний ревью
+  short_description: Разбор и исправление замечаний ревью
+  default_prompt: Используй $fstack:resolve-review из плагина fstack для указанной задачи с проверяемым результатом.

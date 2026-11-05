@@ -1,0 +1,4 @@
+interface:
+  display_name: Память Codex между устройствами через VaultGoblin
+  short_description: Память Codex между устройствами через VaultGoblin
+  default_prompt: Используй $fstack:use-memory из плагина fstack для указанной задачи с проверяемым результатом.

@@ -1,4 +1,5 @@
 interface:
-  display_name: "Инженерные принципы"
-  short_description: "Критерии архитектуры, состояния и проверки"
-  default_prompt: "Используй $engineering-principles для оценки существенного решения о модели, состоянии и границах."
+  display_name: Инженерные принципы
+  short_description: Критерии архитектуры, состояния и проверки
+  default_prompt: Используй $fstack:engineering-principles из плагина fstack для оценки существенного решения о
+    модели, состоянии и границах.

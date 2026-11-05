@@ -1,0 +1,4 @@
+interface:
+  display_name: Состояние и сопровождение PR или MR
+  short_description: Состояние и сопровождение PR или MR
+  default_prompt: Используй $fstack:watch-pr из плагина fstack для указанной задачи с проверяемым результатом.

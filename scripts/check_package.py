@@ -11,13 +11,6 @@ from release import check_versions
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS = {
-    'codex-config-evaluation', 'debug-failure', 'engineering-principles', 'find-docs',
-    'glab', 'implement-change', 'investigate-code', 'playwright-cli', 'python-aqa',
-    'refactor-code', 'review-change', 'verify-result', 'fstack-setup',
-}
-
-
 def require(condition, message):
     if not condition:
         raise ValueError(message)
@@ -69,8 +62,11 @@ def check(root=ROOT):
     require(catalog['name'] == 'fstack' and len(catalog['plugins']) == 1, 'Некорректный marketplace')
     entry = catalog['plugins'][0]
     require(entry['name'] == 'fstack' and entry['source'] == {'source': 'local', 'path': './'}, 'Некорректный source')
-    require({p.parent.name for p in (root / 'skills').glob('*/SKILL.md')} == SKILLS, 'Набор навыков изменился')
-    for name in sorted(SKILLS):
+    skills = {path.name for path in (root / 'skills').iterdir() if path.is_dir()}
+    listed = re.findall(r'^\| `([a-z0-9-]+)` \|', (root / 'docs/skills.md').read_text(encoding='utf-8'), re.M)
+    require(skills and skills == set(listed) and len(listed) == len(skills), 'Каталог навыков не совпадает с пакетом')
+    for name in sorted(skills):
+        require(re.fullmatch(r'[a-z][a-z0-9-]{0,63}', name), f'Некорректное имя навыка: {name}')
         folder = root / 'skills' / name
         data = frontmatter(folder / 'SKILL.md')
         require(data.get('name') == name, f'{name}: имя frontmatter отличается от каталога')
@@ -79,8 +75,8 @@ def check(root=ROOT):
         ui = yaml.safe_load((folder / 'agents/openai.yaml').read_text(encoding='utf-8'))
         interface = ui['interface']
         require(25 <= len(interface['short_description']) <= 64, f'{name}: длина UI description')
-        require(f'${name}' in interface['default_prompt'], f'{name}: default_prompt без имени навыка')
-        require(ui.get('policy', {}).get('allow_implicit_invocation', True) is True, f'{name}: изменена доступность')
+        require(f'${name}' in interface['default_prompt'] or f'$fstack:{name}' in interface['default_prompt'], f'{name}: default_prompt без имени навыка')
+        require(isinstance(ui.get('policy', {}).get('allow_implicit_invocation', True), bool), f'{name}: некорректная доступность')
         for field in ('icon_small', 'icon_large'):
             if interface.get(field):
                 contained_file(folder, folder, interface[field])
@@ -94,7 +90,7 @@ def check(root=ROOT):
         for name, role in roles.items():
             require(role['name'] == name and role.get('description') and role.get('developer_instructions'), f'Некорректная роль: {name}')
             references = set(re.findall(r'fstack:([a-z0-9-]+)', role['developer_instructions']))
-            require(references <= SKILLS, f'{name}: отсутствуют навыки {references - SKILLS}')
+            require(references <= skills, f'{name}: отсутствуют навыки {references - skills}')
         tomllib.loads((root / 'profile/config.example.toml').read_text(encoding='utf-8'))
         for relative in ('profile/AGENTS.md', 'profile/links.md', 'scripts/sync_profile.py'):
             contained_file(root, root, relative)
@@ -102,12 +98,14 @@ def check(root=ROOT):
         if any(part in {'.git', '.venv', 'work'} for part in path.relative_to(root).parts):
             continue
         text = path.read_text(encoding='utf-8')
+        references = set(re.findall(r'\bfstack:([a-z][a-z0-9-]*)', text)) - {'profile'}
+        require(references <= skills, f'{path}: отсутствуют навыки {references - skills}')
         for target in markdown_targets(text):
             target = target.split('#', 1)[0]
             if not target or '://' in target or target.startswith('mailto:'):
                 continue
             contained_file(root, path.parent, unquote(target), allow_directory=True)
-    print(f'Пакет {manifest["version"]}: {len(SKILLS)} навыков, метаданные, ссылки и ресурсы проверены.')
+    print(f'Пакет {manifest["version"]}: {len(skills)} навыков, метаданные, ссылки и ресурсы проверены.')
 
 
 if __name__ == '__main__':

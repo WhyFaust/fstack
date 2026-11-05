@@ -1,4 +1,5 @@
 interface:
-  display_name: "Браузер через Playwright"
-  short_description: "Работа с веб-интерфейсом через Playwright CLI"
-  default_prompt: "Используй $playwright-cli, чтобы проверить нужное поведение веб-интерфейса в отдельной браузерной сессии."
+  display_name: Браузер через Playwright
+  short_description: Работа с веб-интерфейсом через Playwright CLI
+  default_prompt: Используй $fstack:playwright-cli, чтобы проверить нужное поведение веб-интерфейса в отдельной
+    браузерной сессии.

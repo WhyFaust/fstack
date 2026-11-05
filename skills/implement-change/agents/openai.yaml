@@ -1,4 +1,5 @@
 interface:
-  display_name: "Реализация изменения"
-  short_description: "Реализация законченного изменения"
-  default_prompt: "Используй $implement-change, чтобы реализовать требуемое поведение и проверить критерии приёмки."
+  display_name: Реализация изменения
+  short_description: Реализация законченного изменения
+  default_prompt: Используй $fstack:implement-change, чтобы реализовать требуемое поведение и проверить критерии
+    приёмки.
