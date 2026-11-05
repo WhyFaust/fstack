@@ -11,6 +11,7 @@ import threading
 import time
 
 from release import check_versions
+from sync_profile import ROLES, STATE, digest, sources
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,6 +105,14 @@ def check(executable, root=ROOT):
         repeat = json.loads(run(sys.executable, [helper, '--home', str(home)], environment, directory))
         if repeat['status'] != 'unchanged':
             raise ValueError('Повторная синхронизация меняет профиль')
+        _, payloads, _ = sources(installed_path)
+        installed_roles = {path.stem for path in (home / 'agents').glob('*.toml')}
+        state = json.loads((home / STATE).read_text(encoding='utf-8'))
+        if installed_roles != set(ROLES) or set(state['files']) != set(payloads):
+            raise ValueError('Установленные роли или состояние не совпадают с пакетом')
+        for name, content in payloads.items():
+            if (home / name).read_bytes() != content or state['files'][name] != digest(content):
+                raise ValueError(f'Установленная роль отличается от источника: {name}')
         run(executable, ['app-server', '--strict-config', '--print-startup-config'], environment, directory)
         entries = discovered_skills(executable, environment, directory)
         errors = [error for entry in entries for error in entry['errors']]
@@ -115,6 +124,7 @@ def check(executable, root=ROOT):
                 raise ValueError(f'UI-подсказка использует другое имя: {skill["name"]}')
     return {'status': 'passed', 'client': client_version, 'version': version,
             'skills_discovered': len(expected), 'profile_roundtrip': 'unchanged',
+            'roles_installed': sorted(installed_roles), 'model_availability': 'not_checked',
             'model_tasks': 'not_run', 'role_execution': 'not_run'}
 
 

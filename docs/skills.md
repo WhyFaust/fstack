@@ -8,6 +8,7 @@
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
+| `select-skills` | Один основной метод и необходимые предметные дополнения | [Открыть](../skills/select-skills/SKILL.md) |
 | `investigate-code` | Исследование кода по исходным данным | [Открыть](../skills/investigate-code/SKILL.md) |
 | `implement-change` | Реализация законченного изменения | [Открыть](../skills/implement-change/SKILL.md) |
 | `debug-failure` | Причина сбоя и проверка исправления | [Открыть](../skills/debug-failure/SKILL.md) |
@@ -69,6 +70,11 @@
 | `codex-config-evaluation` | Контролируемое сравнение настроек и навыков | [Открыть](../skills/codex-config-evaluation/SKILL.md) |
 
 ## Правила выбора
+
+Координатор выбирает роль и передаёт ограниченное поручение через delegate-work.
+Исполнитель применяет select-skills: читает нужный метод и справки, затем
+возвращает краткий результат. Полный каталог и тексты навыков в главный контекст
+не копируются. Роли и выбор модели описаны в [оркестрации](orchestration.md).
 
 «Почему работает?» — investigate-code; «почему так решили?» — trace-history.
 «Добавь поведение» — implement-change; «сломалось» — debug-failure;

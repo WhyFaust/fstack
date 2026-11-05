@@ -8,6 +8,7 @@ from urllib.parse import unquote
 import yaml
 
 from release import check_versions
+from sync_profile import ROLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,13 +87,24 @@ def check(root=ROOT):
         require(asset.read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), f'{asset}: ожидался PNG')
     if manifest['name'] == 'fstack':
         roles = {path.stem: tomllib.loads(path.read_text(encoding='utf-8')) for path in (root / 'profile/agents').glob('*.toml')}
-        require(set(roles) == {'auditor', 'coder', 'python_coder', 'reviewer', 'allure_analyst'}, 'Набор ролей изменился')
+        require(set(roles) == set(ROLES), 'Набор ролей не совпадает с синхронизацией')
         for name, role in roles.items():
-            require(role['name'] == name and role.get('description') and role.get('developer_instructions'), f'Некорректная роль: {name}')
+            require(role.get('name') == name and all(isinstance(role.get(field), str) and role[field].strip()
+                    for field in ('description', 'developer_instructions')), f'Некорректная роль: {name}')
+            require(not {'model', 'model_reasoning_effort'} & role.keys(), f'{name}: фиксированные настройки перекрывают выбор при запуске')
             references = set(re.findall(r'fstack:([a-z0-9-]+)', role['developer_instructions']))
             require(references <= skills, f'{name}: отсутствуют навыки {references - skills}')
-        tomllib.loads((root / 'profile/config.example.toml').read_text(encoding='utf-8'))
-        for relative in ('profile/AGENTS.md', 'profile/links.md', 'scripts/sync_profile.py'):
+        config = tomllib.loads((root / 'profile/config.example.toml').read_text(encoding='utf-8'))
+        agents = config['agents']
+        require(isinstance(agents.get('enabled'), bool), 'agents.enabled должен быть boolean')
+        limit = agents.get('max_concurrent_threads_per_session')
+        require(type(limit) is int and limit > 0, 'Лимит подагентов должен быть положительным целым числом')
+        efforts = {'low', 'medium', 'high', 'xhigh', 'max', 'ultra'}
+        for settings, model, effort in ((config, 'model', 'model_reasoning_effort'),
+                                         (agents, 'default_subagent_model', 'default_subagent_reasoning_effort')):
+            require(isinstance(settings.get(model), str) and settings[model].strip(), f'Некорректная модель: {model}')
+            require(isinstance(settings.get(effort), str) and settings[effort] in efforts, f'Некорректный reasoning: {effort}')
+        for relative in ('profile/AGENTS.md', 'scripts/sync_profile.py'):
             contained_file(root, root, relative)
     for path in root.rglob('*.md'):
         if any(part in {'.git', '.venv', 'work'} for part in path.relative_to(root).parts):
