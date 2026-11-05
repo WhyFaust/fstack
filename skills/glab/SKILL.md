@@ -12,9 +12,11 @@ metadata:
 
 # GitLab через CLI
 
-Сначала проверь возможности GitLab MCP. CLI — резервный способ выполнить операцию,
-а не основание менять токен или обходить отказ в доступе. Установи repository, MR,
-ветку и ревизию. Неизвестные опции проверяй через `glab <command> --help`.
+Сначала проверь возможности и фактическую доступность GitLab MCP. Если нужной
+операции нет или повторные timeout мешают её выполнению, сверив состояние,
+область и авторизацию по fstack:verify-result, используй CLI. Отказ политики
+или доступа не разрешает такой переход и не является основанием менять токен.
+Установи repository, MR, ветку и ревизию. Неизвестные опции проверяй через `glab <command> --help`.
 
 Для состояния и сопровождения MR используй fstack:watch-pr, для замечаний —
 fstack:resolve-review, для явно разрешённого слияния — fstack:ship-pr.
@@ -29,8 +31,9 @@ glab ci get --pipeline-id 456 --with-job-details
 glab api projects/:id/jobs/789/trace
 ```
 
-Проверяй jobs именно нужного SHA и последней применимой попытки. `ci trace` ожидает
-завершения job, `ci view` интерактивен; для снимка состояния используй `ci get`.
+Проверяй принадлежность pipeline нужной ревизии MR и последнюю применимую попытку
+jobs; для merged results связь устанавливай по [справке API](references/api.md).
+`ci trace` ожидает завершения job, `ci view` интерактивен; для снимка состояния используй `ci get`.
 Аргумент `ci retry` — ID job. Коллекции API читай с пагинацией; первая страница
 не является полным набором.
 
@@ -68,6 +71,7 @@ glab api projects/:id/issues/123/notes -F 'body=@work/comment.md'
 поддержка stdin у команд различается. Issue/incident note не читают такой pipeline;
 для длинного текста используй API с `-F body=@file`.
 
-Для пагинации JSON, скачивания артефактов, placeholder API и diff comments
-прочитай [справку API](references/api.md); обычным командам выше она не нужна.
+Для пагинации JSON, скачивания артефактов, placeholder API, diff comments,
+merged results pipelines и mergeability прочитай [справку API](references/api.md);
+обычным командам выше она не нужна.
 Источник: [документация glab](https://docs.gitlab.com/cli/).
