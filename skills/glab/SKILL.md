@@ -5,7 +5,7 @@ license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 1.0.0
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -4,7 +4,7 @@ description: 'Сохраняет проверяемую точку продол�
 license: MIT
 metadata:
   short-description: Сохранение проверяемой точки продолжения
-  version: 2.0.0
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

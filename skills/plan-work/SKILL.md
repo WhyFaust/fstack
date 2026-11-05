@@ -4,7 +4,7 @@ description: 'Разбивает существенную задачу на пр
 license: MIT
 metadata:
   short-description: План проверяемых этапов и зависимостей
-  version: 1.0.0
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

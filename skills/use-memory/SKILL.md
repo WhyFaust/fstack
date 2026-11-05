@@ -5,7 +5,7 @@ license: MIT
 compatibility: Отдельно установленный и настроенный плагин VaultGoblin с навыком codex-shared-knowledge.
 metadata:
   short-description: Память Codex между устройствами через VaultGoblin
-  version: 1.0.0
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

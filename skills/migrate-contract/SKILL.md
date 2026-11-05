@@ -4,7 +4,7 @@ description: 'Переводит потребителей на новый API, �
 license: MIT
 metadata:
   short-description: Миграция контрактов и всех потребителей
-  version: 1.0.0
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

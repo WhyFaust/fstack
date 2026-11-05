@@ -4,7 +4,7 @@ description: 'Устанавливает и обновляет профиль fs
 license: MIT
 compatibility: Codex с поддержкой плагинов и подагентов; Python 3.11+ для скриптов пакета.
 metadata:
-  version: 2.0.0
+  version: 2.1.0
   short-description: Установка профиля и выбор настроек в беседе
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack

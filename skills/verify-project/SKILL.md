@@ -4,7 +4,7 @@ description: 'Выполняет существующий сценарий пр�
 license: MIT
 metadata:
   short-description: Проверка проекта через реальный сценарий
-  version: 1.0.0
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

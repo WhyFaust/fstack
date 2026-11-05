@@ -4,7 +4,7 @@ description: 'Создаёт короткий воспроизводимый с�
 license: MIT
 metadata:
   short-description: Подготовка воспроизводимой проверки проекта
-  version: 1.0.0
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
