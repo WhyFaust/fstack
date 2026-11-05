@@ -23,6 +23,28 @@ glab api projects/:id/uploads --method POST --form "file=@work/screenshot.png"
 glab api projects/:fullpath/wikis/attachments --method POST --form "file=@work/screenshot.png" --form "branch=main"
 ```
 
+## Pipeline и готовность к merge
+
+Сверь проект, MR, source head, target head и связанный pipeline: его ID, ref,
+source и SHA. Branch pipeline или обычный MR pipeline может проверять source SHA,
+а merged results pipeline проверяет временный merge commit. Для него установи
+связь с MR и родителями commit, соответствующими проверяемым source и target;
+не требуй равенства pipeline SHA и source SHA. Если target изменился после
+проверки, прежний результат не доказывает совместимость с новым target.
+Несовпадение SHA само по себе не повод создавать ещё один pipeline.
+
+После изменения веток GitLab пересчитывает mergeability асинхронно. Наблюдай
+`detailed_merge_status` ограниченное время; `checking` или `preparing` не означают
+готовность. `with_merge_status_recheck` запрашивает пересчёт, но не гарантирует
+завершение: не добавляй его к каждому опросу. При явно разрешённом merge передай
+проверенный source head в параметре `sha`; это защита от смены source, а не SHA
+временного merge commit. Неизвестный исход записи сначала установи чтением MR.
+
+Контракты: [merged results pipelines](https://docs.gitlab.com/ci/pipelines/merged_results_pipelines/)
+и [Merge requests API](https://docs.gitlab.com/api/merge_requests/).
+
+## Обсуждения
+
 Для diff comment проверь текущую diff version. `--line` указывает новую сторону,
 `--old-line` — старую; оба требуют `--file`, но несовместимы между собой.
 
