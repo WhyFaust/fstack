@@ -15,7 +15,12 @@
   "interface": {
     "displayName": "fstack · Faust stack",
     "shortDescription": "Личные инженерные навыки для Codex",
-    "longDescription": "Исследование кода, разработка, диагностика, рефакторинг, ревью и проверка результата. Документация, GitLab, Playwright и Python — по задаче.",
+    "longDescription": "Координация задач и компактные инженерные навыки. Setup устанавливает профиль и помогает настроить reasoning и параллельность в беседе.",
+    "defaultPrompt": [
+      "Настрой полный профиль fstack с сохранением моих настроек.",
+      "Открой настройки fstack: покажи текущие значения и помоги изменить reasoning и параллельность.",
+      "Проверь профиль fstack без изменения файлов."
+    ],
     "developerName": "Faust",
     "websiteURL": "https://github.com/WhyFaust/fstack",
     "category": "Productivity",

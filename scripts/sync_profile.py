@@ -13,7 +13,9 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ROLES = ('auditor', 'coder', 'python_coder', 'reviewer', 'allure_analyst')
+ROLES = ('auditor', 'coder', 'reviewer', 'verifier', 'allure_analyst')
+LEGACY_ROLES = ('auditor', 'coder', 'python_coder', 'reviewer', 'allure_analyst')
+RETIRED_PATHS = tuple(f'agents/{name}.toml' for name in LEGACY_ROLES if name not in ROLES)
 START = '<!-- fstack:profile:start -->'
 END = '<!-- fstack:profile:end -->'
 STATE = 'fstack/profile.json'
@@ -61,7 +63,7 @@ def sources(root):
         if data.get('name') != name or not data.get('description') or not data.get('developer_instructions'):
             raise ValueError(f'Некорректная роль в пакете: {name}')
         payloads[f'agents/{name}.toml'] = content
-    links = (root / 'profile/links.md').read_text(encoding='utf-8').strip()
+    links = (root / 'profile/AGENTS.md').read_text(encoding='utf-8').strip()
     if not links or START in links or END in links:
         raise ValueError('Некорректный управляемый блок в пакете')
     return version, payloads, links
@@ -93,14 +95,22 @@ def merge_links(content, links, expected, adopt):
 
 def plan(home, root=ROOT, adopt=False):
     version, payloads, links = sources(root)
-    before = {name: read_optional(target(home, name)) for name in [*payloads, 'AGENTS.md', STATE]}
-    state = json.loads(before[STATE].decode('utf-8')) if before[STATE] is not None else None
-    if state is not None:
-        if not isinstance(state, dict) or state.get('schema') != 1 or not isinstance(state.get('files'), dict):
+    state_content = read_optional(target(home, STATE))
+    state = json.loads(state_content.decode('utf-8')) if state_content is not None else None
+    if state_content is not None:
+        if (not isinstance(state, dict) or type(state.get('schema')) is not int
+                or state['schema'] != 1 or not isinstance(state.get('files'), dict)):
             raise ValueError('Некорректное состояние fstack/profile.json')
-        if set(state['files']) != set(payloads) or not isinstance(state.get('links_sha256'), str):
+        legacy_paths = {f'agents/{name}.toml' for name in LEGACY_ROLES}
+        if set(state['files']) not in (set(payloads), legacy_paths):
             raise ValueError('Состав управляемого профиля отличается от поддерживаемого')
+        hashes = [*state['files'].values(), state.get('links_sha256')]
+        if any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value) for value in hashes):
+            raise ValueError('Некорректные хеши управляемого профиля')
     owned = state['files'] if state is not None else {}
+    payloads.update({name: None for name in RETIRED_PATHS if name in owned})
+    before = {name: read_optional(target(home, name)) for name in [*payloads, 'AGENTS.md']}
+    before[STATE] = state_content
     conflicts = []
     for name, content in payloads.items():
         current = before[name]
@@ -127,6 +137,16 @@ def plan(home, root=ROOT, adopt=False):
     payloads[STATE] = (json.dumps(updated_state, ensure_ascii=False, indent=2, sort_keys=True) + '\n').encode('utf-8')
     changes = {name: content for name, content in payloads.items() if before[name] != content}
     return version, before, changes
+
+
+def profile_result(home, status, version, before, changes):
+    return {
+        'status': status,
+        'version': version,
+        'changes': list(changes),
+        'removed': [name for name, content in changes.items() if content is None],
+        'unmanaged_retired': [name for name in RETIRED_PATHS if name not in before and os.path.lexists(home / name)],
+    }
 
 
 def atomic_write(path, content):
@@ -176,13 +196,13 @@ def exclusive_profile(home):
 
 
 def apply_profile(home, root=ROOT, adopt=False):
-    version, _, changes = plan(home, root, adopt)
+    version, before, changes = plan(home, root, adopt)
     if not changes:
-        return {'status': 'unchanged', 'version': version, 'changes': []}
+        return profile_result(home, 'unchanged', version, before, changes)
     with exclusive_profile(home):
         version, before, changes = plan(home, root, adopt)
         if not changes:
-            return {'status': 'unchanged', 'version': version, 'changes': []}
+            return profile_result(home, 'unchanged', version, before, changes)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
         backup = target(home, f'fstack/backups/profile-{stamp}')
         private_backup(backup)
@@ -191,7 +211,8 @@ def apply_profile(home, root=ROOT, adopt=False):
                 copy = backup / name
                 atomic_write(copy, before[name])
         receipt = {'version': version, 'files': {name: digest(before[name]) for name in changes if before[name] is not None},
-                   'created': [name for name in changes if before[name] is None]}
+                   'created': [name for name in changes if before[name] is None],
+                   'removed': [name for name, content in changes.items() if content is None]}
         atomic_write(backup / 'manifest.json', (json.dumps(receipt, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
         written = []
         try:
@@ -199,7 +220,10 @@ def apply_profile(home, root=ROOT, adopt=False):
                 path = target(home, name)
                 if read_optional(path) != before[name]:
                     raise ProfileConflict([name])
-                atomic_write(path, content)
+                if content is None:
+                    path.unlink()
+                else:
+                    atomic_write(path, content)
                 written.append(name)
         except Exception as original:
             failures = []
@@ -217,7 +241,7 @@ def apply_profile(home, root=ROOT, adopt=False):
             if failures:
                 raise ExceptionGroup('Ошибка синхронизации и восстановления; используйте резервную копию', [original, *failures])
             raise
-    return {'status': 'applied', 'version': version, 'changes': list(changes), 'backup': str(backup)}
+    return {**profile_result(home, 'applied', version, before, changes), 'backup': str(backup)}
 
 
 def main():
@@ -233,8 +257,8 @@ def main():
         if args.apply:
             result = apply_profile(home, adopt=args.adopt)
         else:
-            version, _, changes = plan(home)
-            result = {'status': 'planned' if changes else 'unchanged', 'version': version, 'changes': list(changes)}
+            version, before, changes = plan(home)
+            result = profile_result(home, 'planned' if changes else 'unchanged', version, before, changes)
         print(json.dumps({'home': str(home), **result}, ensure_ascii=False, indent=2))
         return 0
     except ProfileConflict as error:
