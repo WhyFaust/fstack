@@ -102,7 +102,7 @@ def check(root=ROOT):
         efforts = {'low', 'medium', 'high', 'xhigh', 'max', 'ultra'}
         for settings, model, effort in ((config, 'model', 'model_reasoning_effort'),
                                          (agents, 'default_subagent_model', 'default_subagent_reasoning_effort')):
-            require(isinstance(settings.get(model), str) and settings[model].strip(), f'Некорректная модель: {model}')
+            require(model not in settings, f'Пример должен сохранять выбор модели Codex: {model}')
             require(isinstance(settings.get(effort), str) and settings[effort] in efforts, f'Некорректный reasoning: {effort}')
         for relative in ('profile/AGENTS.md', 'scripts/sync_profile.py'):
             contained_file(root, root, relative)
