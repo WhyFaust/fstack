@@ -1,15 +1,16 @@
 ---
 name: glab
-description: Выполняет необходимую операцию с GitLab через CLI, когда GitLab MCP не предоставляет её или
-  недоступен. Используй для репозиториев, MR, CI, артефактов и API; сохраняй авторизацию задачи и безопасную
-  передачу многострочного текста.
+description: 'Выполняет операции GitLab через glab, когда нужной возможности нет в доступном MCP. Используй для MR, CI, артефактов и API с существующей авторизацией; сопровождение и слияние задаются отдельными методами.'
+license: MIT
+compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
   version: 1.0.0
+  author: WhyFaust
+  source: https://github.com/WhyFaust/fstack
 ---
 
 # GitLab через CLI
-
 
 Сначала проверь возможности GitLab MCP. CLI — резервный способ выполнить операцию,
 а не основание менять токен или обходить отказ в доступе. Установи repository, MR,
@@ -67,5 +68,6 @@ glab api projects/:id/issues/123/notes -F 'body=@work/comment.md'
 поддержка stdin у команд различается. Issue/incident note не читают такой pipeline;
 для длинного текста используй API с `-F body=@file`.
 
-Для JSON, загрузок, placeholder и diff comments прочитай [справку](references/api.md).
+Для пагинации JSON, скачивания артефактов, placeholder API и diff comments
+прочитай [справку API](references/api.md); обычным командам выше она не нужна.
 Источник: [документация glab](https://docs.gitlab.com/cli/).

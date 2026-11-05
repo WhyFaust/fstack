@@ -1,9 +1,12 @@
 ---
 name: ship-pr
-description: Выполняет явно разрешённое слияние GitHub PR или GitLab MR после проверки текущей ревизии и правил forge. Используй для merge, land, ship или разрешённого auto-merge.
+description: 'Выполняет явно разрешённое слияние GitHub PR или GitLab MR после проверки текущей ревизии и правил forge. Используй для merge, land, ship или auto-merge; разрешение на создание PR не разрешает слияние.'
+license: MIT
 metadata:
   short-description: Слияние проверенной ревизии PR или MR
   version: 1.0.0
+  author: WhyFaust
+  source: https://github.com/WhyFaust/fstack
 ---
 
 # Выполнить разрешённое слияние

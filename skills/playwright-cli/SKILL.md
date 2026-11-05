@@ -1,16 +1,16 @@
 ---
 name: playwright-cli
-allowed-tools: Bash(playwright-cli:*) Bash(npx playwright:*) Bash(npx --no-install playwright:*)
-description: Управляет веб-страницами через Playwright CLI и помогает создавать или диагностировать Playwright-тесты.
-  Используй для браузерных взаимодействий, snapshot, UI-воспроизведения, trace и скриншотов; нативные
-  Windows-приложения требуют computer-use из текущего каталога.
+description: 'Управляет веб-страницей и диагностирует Playwright-тесты через CLI: snapshot, действия, trace и артефакты. Используй для браузерного сценария; нативные приложения относятся к computer-use.'
+license: MIT AND Apache-2.0
+compatibility: Установленный Playwright CLI и доступный ему браузер; Node.js нужен при запуске через npx.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
   version: 1.0.0
+  author: WhyFaust
+  source: https://github.com/WhyFaust/fstack
 ---
 
 # Браузер через Playwright
-
 
 Выбери именованную сессию, если браузером пользуется другая работа. Перед действием
 получи свежий snapshot и используй ссылки на элементы из него. После навигации или
@@ -50,4 +50,7 @@ playwright-cli -s=fstack-task close
 
 Читай только справку нужного режима. Установка CLI и браузера — отдельное изменение
 среды; используй существующий инструмент, если его достаточно.
-Источник: [Microsoft Playwright CLI](https://github.com/microsoft/playwright-cli).
+Справки адаптированы из [Microsoft Playwright CLI](https://github.com/microsoft/playwright-cli)
+по Apache-2.0; собственные инструкции fstack распространяются по MIT.
+При распространении сохраняй [уведомление](../../NOTICE.md)
+и [текст Apache-2.0](../../licenses/Apache-2.0.txt).

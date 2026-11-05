@@ -1,9 +1,12 @@
 ---
 name: watch-pr
-description: Проверяет состояние GitHub PR или GitLab MR и сопровождает его до согласованной готовности. Используй для CI, конфликтов, approvals и наблюдения после публикации; слияние выполняется отдельно.
+description: 'Проверяет состояние GitHub PR или GitLab MR и сопровождает его до согласованной готовности. Используй для CI, обсуждений, approvals и конфликтов; слияние относится к ship-pr.'
+license: MIT
 metadata:
   short-description: Состояние и сопровождение PR или MR
   version: 2.0.0
+  author: WhyFaust
+  source: https://github.com/WhyFaust/fstack
 ---
 
 # Проверить и сопровождать PR/MR

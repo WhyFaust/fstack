@@ -12,6 +12,8 @@ from sync_profile import ROLES
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
 def require(condition, message):
     if not condition:
         raise ValueError(message)
@@ -49,6 +51,53 @@ def markdown_targets(text):
         yield from re.findall(r'\]\(([^)]+)\)', prose)
 
 
+def skill_metadata(path):
+    data = frontmatter(path)
+    name = data.get('name')
+    require(isinstance(name, str) and re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', name)
+            and len(name) <= 64, f'{path}: некорректное имя навыка')
+    require(name == path.parent.name, f'{path}: имя отличается от каталога')
+    description = data.get('description')
+    require(isinstance(description, str) and description.strip() and len(description) <= 1024,
+            f'{path}: description должен содержать 1–1024 символа')
+    for field in ('license', 'compatibility', 'allowed-tools'):
+        if field in data or field == 'license':
+            value = data.get(field)
+            require(isinstance(value, str) and value.strip(), f'{path}: {field} должен быть непустой строкой')
+    if 'compatibility' in data:
+        require(len(data['compatibility']) <= 500, f'{path}: compatibility длиннее 500 символов')
+    metadata = data.get('metadata')
+    require(isinstance(metadata, dict) and all(isinstance(key, str) and isinstance(value, str)
+            for key, value in metadata.items()), f'{path}: metadata должен быть строковым словарём')
+    require(metadata.get('author') == 'WhyFaust'
+            and metadata.get('source') == 'https://github.com/WhyFaust/fstack',
+            f'{path}: отсутствуют автор или источник')
+    return data
+
+
+def skill_resources(folder, root):
+    for name in ('scripts', 'references', 'assets'):
+        directory = folder / name
+        if directory.exists():
+            contained_file(root, folder, name, allow_directory=True)
+            require(directory.is_dir() and any(path.is_file() and path.stat().st_size
+                    and path.name not in {'.gitkeep', '.gitignore'} for path in directory.rglob('*')),
+                    f'{directory}: пустой каталог ресурсов')
+    for path in folder.rglob('*.md'):
+        for target in markdown_targets(path.read_text(encoding='utf-8')):
+            target = target.split('#', 1)[0]
+            if not target or '://' in target or target.startswith('mailto:'):
+                continue
+            contained_file(root, path.parent, unquote(target), allow_directory=True)
+
+
+def role_settings(role, name):
+    efforts = {'auditor': 'low', 'coder': 'medium', 'reviewer': 'high',
+               'verifier': 'low', 'allure_analyst': 'medium'}
+    require(role.get('model') == 'gpt-6.1-sol', f'{name}: некорректная модель роли')
+    require(role.get('model_reasoning_effort') == efforts[name], f'{name}: некорректный reasoning роли')
+
+
 def check(root=ROOT):
     manifest = json.loads((root / '.codex-plugin/plugin.json').read_text(encoding='utf-8'))
     require(manifest['name'] == 'fstack', 'Некорректное имя плагина')
@@ -67,12 +116,11 @@ def check(root=ROOT):
     listed = re.findall(r'^\| `([a-z0-9-]+)` \|', (root / 'docs/skills.md').read_text(encoding='utf-8'), re.M)
     require(skills and skills == set(listed) and len(listed) == len(skills), 'Каталог навыков не совпадает с пакетом')
     for name in sorted(skills):
-        require(re.fullmatch(r'[a-z][a-z0-9-]{0,63}', name), f'Некорректное имя навыка: {name}')
         folder = root / 'skills' / name
-        data = frontmatter(folder / 'SKILL.md')
-        require(data.get('name') == name, f'{name}: имя frontmatter отличается от каталога')
-        description = data.get('description')
-        require(isinstance(description, str) and 20 <= len(description) <= 1024, f'{name}: description')
+        for path in folder.glob('SKILL*.md'):
+            skill_metadata(path)
+        require((folder / 'SKILL.md').is_file(), f'{name}: отсутствует SKILL.md')
+        skill_resources(folder, root)
         ui = yaml.safe_load((folder / 'agents/openai.yaml').read_text(encoding='utf-8'))
         interface = ui['interface']
         require(25 <= len(interface['short_description']) <= 64, f'{name}: длина UI description')
@@ -91,7 +139,7 @@ def check(root=ROOT):
         for name, role in roles.items():
             require(role.get('name') == name and all(isinstance(role.get(field), str) and role[field].strip()
                     for field in ('description', 'developer_instructions')), f'Некорректная роль: {name}')
-            require(not {'model', 'model_reasoning_effort'} & role.keys(), f'{name}: фиксированные настройки перекрывают выбор при запуске')
+            role_settings(role, name)
             references = set(re.findall(r'fstack:([a-z0-9-]+)', role['developer_instructions']))
             require(references <= skills, f'{name}: отсутствуют навыки {references - skills}')
         config = tomllib.loads((root / 'profile/config.example.toml').read_text(encoding='utf-8'))
@@ -102,7 +150,7 @@ def check(root=ROOT):
         efforts = {'low', 'medium', 'high', 'xhigh', 'max', 'ultra'}
         for settings, model, effort in ((config, 'model', 'model_reasoning_effort'),
                                          (agents, 'default_subagent_model', 'default_subagent_reasoning_effort')):
-            require(model not in settings, f'Пример должен сохранять выбор модели Codex: {model}')
+            require(settings.get(model) == 'gpt-6.1-sol', f'Некорректная модель примера: {model}')
             require(isinstance(settings.get(effort), str) and settings[effort] in efforts, f'Некорректный reasoning: {effort}')
         for relative in ('profile/AGENTS.md', 'scripts/sync_profile.py'):
             contained_file(root, root, relative)
