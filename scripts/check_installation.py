@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 
+from check_package import skill_resources
 from release import check_versions
 from sync_profile import ROLES, STATE, digest, sources
 
@@ -100,6 +101,9 @@ def check(executable, root=ROOT):
         if not any(item['pluginId'] == 'fstack@fstack' and item['enabled'] and item['installed']
                    for item in listing['installed']):
             raise ValueError('Клиент не подтвердил включённый установленный плагин')
+        for folder in (installed_path / 'skills').iterdir():
+            if folder.is_dir():
+                skill_resources(folder, installed_path)
         helper = str(installed_path / 'scripts/sync_profile.py')
         run(sys.executable, [helper, '--home', str(home), '--apply'], environment, directory)
         repeat = json.loads(run(sys.executable, [helper, '--home', str(home)], environment, directory))

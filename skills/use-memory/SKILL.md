@@ -1,9 +1,13 @@
 ---
 name: use-memory
-description: Подключает отдельный плагин Faust VaultGoblin для ограниченного поиска решений и истории Codex между устройствами. Используй при продолжении знакомого проекта или вопросе о прежнем решении.
+description: 'Находит решения и историю знакомого проекта через отдельный плагин VaultGoblin. Используй при продолжении существенной работы или вопросе о прежнем решении; настройку памяти выполняет сам VaultGoblin.'
+license: MIT
+compatibility: Отдельно установленный и настроенный плагин VaultGoblin с навыком codex-shared-knowledge.
 metadata:
   short-description: Память Codex между устройствами через VaultGoblin
   version: 1.0.0
+  author: WhyFaust
+  source: https://github.com/WhyFaust/fstack
 ---
 
 # Использовать общие знания
