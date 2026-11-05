@@ -5,7 +5,7 @@ description: Находит причину наблюдаемого сбоя к�
   изменений выполняет investigate-code.
 metadata:
   short-description: Причина сбоя и проверка исправления
-  version: 0.2.0
+  version: 1.0.0
 ---
 
 # Найти причину и исправить сбой

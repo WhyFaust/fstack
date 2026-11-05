@@ -3,7 +3,7 @@ name: ship-pr
 description: Выполняет явно разрешённое слияние GitHub PR или GitLab MR после проверки текущей ревизии и правил forge. Используй для merge, land, ship или разрешённого auto-merge.
 metadata:
   short-description: Слияние проверенной ревизии PR или MR
-  version: 0.2.0
+  version: 1.0.0
 ---
 
 # Выполнить разрешённое слияние

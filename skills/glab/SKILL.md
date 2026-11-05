@@ -5,7 +5,7 @@ description: Выполняет необходимую операцию с GitLa
   передачу многострочного текста.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 0.2.0
+  version: 1.0.0
 ---
 
 # GitLab через CLI
