@@ -4,7 +4,7 @@ description: 'Восстанавливает причины решения по 
 license: MIT
 metadata:
   short-description: Причины решений по истории и источникам
-  version: 2.1.0
+  version: 2.2.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

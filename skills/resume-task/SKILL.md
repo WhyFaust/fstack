@@ -4,7 +4,7 @@ description: 'Продолжает задачу после паузы, сжат�
 license: MIT
 metadata:
   short-description: Продолжение задачи со сверкой живого состояния
-  version: 2.1.0
+  version: 2.2.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
