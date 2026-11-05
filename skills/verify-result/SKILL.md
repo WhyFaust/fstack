@@ -4,7 +4,7 @@ description: 'Определяет достаточные проверки и с
 license: MIT
 metadata:
   short-description: Проверки и доказательства готовности
-  version: 2.1.0
+  version: 2.2.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

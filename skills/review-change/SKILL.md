@@ -4,7 +4,7 @@ description: 'Независимо проверяет конкретную ре�
 license: MIT
 metadata:
   short-description: Ревью изменения по контрактам и фактам
-  version: 2.1.0
+  version: 2.2.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

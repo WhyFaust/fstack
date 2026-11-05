@@ -4,7 +4,7 @@ description: 'Выбирает минимальный набор навыков 
 license: MIT
 metadata:
   short-description: Основной метод и применимые предметные навыки
-  version: 2.2.0
+  version: 2.2.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
