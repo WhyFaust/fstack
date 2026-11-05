@@ -1,4 +1,4 @@
 interface:
   display_name: "Настройка профиля fstack"
-  short_description: "Установка и обновление полного профиля fstack"
-  default_prompt: "Используй $fstack:fstack-setup, чтобы установить или обновить полный профиль fstack и проверить готовность."
+  short_description: "Установка профиля и выбор настроек в беседе"
+  default_prompt: "Используй $fstack:fstack-setup, чтобы настроить профиль fstack на gpt-6.1-sol и проверить готовность."
