@@ -1,4 +1,4 @@
 interface:
-  display_name: Память Codex между устройствами через VaultGoblin
-  short_description: Память Codex между устройствами через VaultGoblin
+  display_name: Общая память и контекст через Notion
+  short_description: Общая память и контекст через Notion
   default_prompt: Используй $fstack:use-memory из плагина fstack для указанной задачи с проверяемым результатом.
