@@ -14,7 +14,7 @@ class PackageTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name) / 'package'
         self.folder = self.root / 'skills/example'
         self.folder.mkdir(parents=True)
         self.skill = self.folder / 'SKILL.md'
@@ -49,6 +49,8 @@ class PackageTests(unittest.TestCase):
         shared.write_text('License notice', encoding='utf-8')
         self.skill.write_text('[Notice](../../NOTICE.md)\n', encoding='utf-8')
         check_package.skill_resources(self.folder, self.root)
+        outside = self.root.parent / 'outside.md'
+        outside.write_text('External resource', encoding='utf-8')
         for target in ('references/missing.md', '../../../outside.md'):
             with self.subTest(target=target):
                 self.skill.write_text(f'[Resource]({target})\n', encoding='utf-8')
