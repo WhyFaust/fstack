@@ -68,6 +68,7 @@
 | `use-memory` | Общая память и контекст через Notion | [Открыть](../skills/use-memory/SKILL.md) |
 | `use-rtk` | Сокращение шума RTK с сохранением доказательств | [Открыть](../skills/use-rtk/SKILL.md) |
 | `fstack-setup` | Настройка ролей и связей профиля fstack | [Открыть](../skills/fstack-setup/SKILL.md) |
+| `fstack-update` | Обновление marketplace, плагина и профиля по запросу | [Открыть](../skills/fstack-update/SKILL.md) |
 | `codex-config-evaluation` | Контролируемое сравнение настроек и навыков | [Открыть](../skills/codex-config-evaluation/SKILL.md) |
 
 ## Правила выбора

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Обновление fstack"
+  short_description: "Обновление плагина и согласование профиля"
+  default_prompt: "Используй $fstack:fstack-update, чтобы обновить fstack, сохранить мои настройки и проверить плагин и профиль новой версии."
