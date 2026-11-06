@@ -63,7 +63,8 @@ python scripts/check_installation.py
 
 Канонический источник управляемого блока — `profile/AGENTS.md`; helper читает
 его из установленного пакета. Роли `auditor`, `coder`, `reviewer`, `verifier`
-и `allure_analyst` задают границы работы и выбирают навыки через `select-skills`.
+и `allure_analyst` задают границы работы. К однозначному методу исполнитель
+переходит прямо; `select-skills` читает при необходимости выбора.
 Поля `model` и `model_reasoning_effort` проверяются вместе с контрактом ролей.
 Значения и приоритеты описаны в [контракте профиля](codex.md#модель-и-reasoning).
 
