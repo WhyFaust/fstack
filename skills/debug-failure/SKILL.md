@@ -4,7 +4,7 @@ description: 'Находит причину наблюдаемого сбоя и
 license: MIT
 metadata:
   short-description: Причина сбоя и проверка исправления
-  version: 2.1.0
+  version: 2.3.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

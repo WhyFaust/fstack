@@ -4,7 +4,7 @@ description: 'Прорабатывает пользовательский сце
 license: MIT
 metadata:
   short-description: Сценарий, компоненты и проверка интерфейса
-  version: 2.2.1
+  version: 2.3.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

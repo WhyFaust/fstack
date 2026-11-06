@@ -4,7 +4,7 @@ description: 'Упрощает существующий код с сохране
 license: MIT
 metadata:
   short-description: Упрощение кода с сохранением контрактов
-  version: 2.1.0
+  version: 2.3.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
