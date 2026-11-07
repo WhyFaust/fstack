@@ -1,0 +1,4 @@
+interface:
+  display_name: "Адаптация навыков"
+  short_description: "Создание, перенос и улучшение навыков"
+  default_prompt: "Используй $fstack:adapt-skill, чтобы создать, перенести или улучшить указанный навык."

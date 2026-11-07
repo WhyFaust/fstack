@@ -11,6 +11,7 @@
 | `select-skills` | Один основной метод и необходимые предметные дополнения | [Открыть](../skills/select-skills/SKILL.md) |
 | `investigate-code` | Исследование кода по исходным данным | [Открыть](../skills/investigate-code/SKILL.md) |
 | `implement-change` | Реализация законченного изменения | [Открыть](../skills/implement-change/SKILL.md) |
+| `adapt-skill` | Создание, перенос и улучшение исходников навыков | [Открыть](../skills/adapt-skill/SKILL.md) |
 | `debug-failure` | Причина сбоя и проверка исправления | [Открыть](../skills/debug-failure/SKILL.md) |
 | `refactor-code` | Упрощение кода с сохранением контрактов | [Открыть](../skills/refactor-code/SKILL.md) |
 | `review-change` | Ревью изменения по контрактам и фактам | [Открыть](../skills/review-change/SKILL.md) |
