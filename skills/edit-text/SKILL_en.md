@@ -4,7 +4,7 @@ description: "Edits, simplifies and shortens existing prose while preserving mea
 license: MIT
 metadata:
   short-description: Prose editing that preserves meaning and voice
-  version: 1.0.0
+  version: 1.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -12,6 +12,9 @@ metadata:
 # Edit text
 
 Use the request and context to determine how much to change. For proofreading and shortening, keep the original purpose and format. To turn an article into a script or adapt material for a new audience, use [$fstack:write-text](../write-text/SKILL_en.md).
+
+If the user limits the edit to a passage or to typos, use the surrounding text
+for context and preserve wording outside the requested scope.
 
 ## Edit for meaning
 

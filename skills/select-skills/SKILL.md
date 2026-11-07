@@ -4,7 +4,7 @@ description: 'Выбирает минимальный достаточный м�
 license: MIT
 metadata:
   short-description: Основной метод и применимые предметные навыки
-  version: 1.0.0
+  version: 1.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -25,8 +25,10 @@ metadata:
 Исследование поведения ведёт fstack:investigate-code, изменение поведения —
 fstack:implement-change, наблюдаемый сбой — fstack:debug-failure, перестройку
 без смены поведения — fstack:refactor-code, независимое ревью — fstack:review-change.
-Для проверки результата основным может быть fstack:verify-result или
-fstack:verify-project, для API — fstack:find-docs, для истории — fstack:trace-history.
+Выбери fstack:verify-result для оценки доказательств, fstack:verify-project
+для выполнения сценария через UI, API, CLI или установку. Для поиска официального
+контракта API используй fstack:find-docs, для объяснения поведения через историю
+используй fstack:trace-history.
 fstack:design-change разрешает инженерную неопределённость перед реализацией;
 fstack:design-ui прорабатывает пользовательский сценарий и визуальное решение.
 План и дизайн нужны только при оставшемся вопросе, влияющем на выполнение.

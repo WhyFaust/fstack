@@ -4,7 +4,7 @@ description: "Drafts original prose and adapts material to a new format, audienc
 license: MIT
 metadata:
   short-description: Original prose, replies and format adaptation
-  version: 1.0.0
+  version: 1.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -24,7 +24,8 @@ For editing within the existing format, use [$fstack:edit-text](../edit-text/SKI
 
 ## Proofread and deliver
 
-Return one finished text in Russian by default. Follow the requested language, length and form. Use samples to learn rhythm, vocabulary and distance. Use verified material for the author's biography, experiences, testimonials, numbers, position and commitments. Ask for any missing critical fact. Supply a template with gaps only on request.
+Return one finished text in Russian by default. If the user asks for a specific
+field, include only content that belongs in that field in the draft. Follow the requested language, length and form. Use samples to learn rhythm, vocabulary and distance. Use verified material for the author's biography, experiences, testimonials, numbers, position and commitments. Ask for any missing critical fact. Supply a template with gaps only on request.
 
 Check the accuracy of facts, quotations and links, whether the opening matches the content, and whether the language and format suit the destination. Respect each language's syntax and forms of address. In authored prose in any language, default to straight double quotation marks and avoid em dashes. Preserve exact quotes, names, mandatory wording and typography the author explicitly requests.
 

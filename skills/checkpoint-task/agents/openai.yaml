@@ -1,4 +1,4 @@
 interface:
   display_name: Сохранение проверяемой точки продолжения
   short_description: Сохранение проверяемой точки продолжения
-  default_prompt: Используй $fstack:checkpoint-task из плагина fstack для указанной задачи с проверяемым результатом.
+  default_prompt: "Сохрани через $fstack:checkpoint-task точку продолжения этой задачи с ревизией, доказательствами и ближайшим шагом."

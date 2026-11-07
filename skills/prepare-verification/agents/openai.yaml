@@ -1,4 +1,4 @@
 interface:
   display_name: Подготовка воспроизводимой проверки проекта
   short_description: Подготовка воспроизводимой проверки проекта
-  default_prompt: Используй $fstack:prepare-verification из плагина fstack для указанной задачи с проверяемым результатом.
+  default_prompt: "С помощью $fstack:prepare-verification подготовь воспроизводимую инструкцию на основе действующих команд проекта."
