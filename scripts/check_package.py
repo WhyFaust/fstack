@@ -80,9 +80,13 @@ def skill_resources(folder, root):
         directory = folder / name
         if directory.exists():
             contained_file(root, folder, name, allow_directory=True)
-            require(directory.is_dir() and any(path.is_file() and path.stat().st_size
-                    and path.name not in {'.gitkeep', '.gitignore'} for path in directory.rglob('*')),
-                    f'{directory}: пустой каталог ресурсов')
+            require(directory.is_dir(), f'{directory}: ожидался каталог ресурсов')
+            has_content = False
+            for path in directory.rglob('*'):
+                resource = contained_file(root, directory, path.relative_to(directory), allow_directory=True)
+                if resource.is_file() and resource.stat().st_size and path.name not in {'.gitkeep', '.gitignore'}:
+                    has_content = True
+            require(has_content, f'{directory}: пустой каталог ресурсов')
     for path in folder.rglob('*.md'):
         for target in markdown_targets(path.read_text(encoding='utf-8')):
             target = target.split('#', 1)[0]
