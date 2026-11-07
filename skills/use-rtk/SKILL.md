@@ -5,7 +5,7 @@ license: MIT
 compatibility: Отдельно установленный RTK; при его отсутствии используй обычные команды.
 metadata:
   short-description: Сокращение шума RTK с сохранением доказательств
-  version: 2.1.0
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

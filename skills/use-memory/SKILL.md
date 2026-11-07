@@ -5,7 +5,7 @@ license: MIT
 compatibility: Отдельно подключённый Notion MCP и утверждённые пользователем правила общей памяти.
 metadata:
   short-description: Общая память и контекст через Notion
-  version: 2.2.0
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

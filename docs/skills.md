@@ -61,6 +61,17 @@
 | `glab` | GitLab CLI для операций, недоступных через MCP | [Открыть](../skills/glab/SKILL.md) |
 | `playwright-cli` | Работа с веб-интерфейсом через Playwright CLI | [Открыть](../skills/playwright-cli/SKILL.md) |
 
+## Работа с текстом
+
+| Навык | Когда применять | Инструкция |
+| --- | --- | --- |
+| `write-text` | Новый авторский текст, комментарий, ответ, идеи, названия, план или адаптация под другую аудиторию, формат или площадку. Вызов `$fstack:write-text` | [Открыть](../skills/write-text/SKILL.md), [English](../skills/write-text/SKILL_en.md) |
+| `edit-text` | Вычитка, упрощение или сокращение готового текста в прежнем формате. Вызов `$fstack:edit-text` | [Открыть](../skills/edit-text/SKILL.md), [English](../skills/edit-text/SKILL_en.md) |
+| `research-for-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов `$fstack:research-for-text` | [Открыть](../skills/research-for-text/SKILL.md), [English](../skills/research-for-text/SKILL_en.md) |
+
+Поиск можно запросить отдельно или подключить к написанию и правке, когда нужны
+новые материалы или проверка фактов.
+
 ## Профиль и внешние компоненты
 
 | Навык | Когда применять | Инструкция |

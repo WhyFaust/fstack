@@ -4,7 +4,7 @@ description: 'Разрешает существенную инженерную �
 license: MIT
 metadata:
   short-description: Проектирование модели и границ изменения
-  version: 2.3.0
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

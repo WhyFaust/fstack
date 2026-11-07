@@ -4,7 +4,7 @@ description: 'Применяет правило кода без поясняющ
 license: MIT
 metadata:
   short-description: Понятный код без поясняющих комментариев
-  version: 2.1.0
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

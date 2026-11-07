@@ -4,7 +4,7 @@ description: 'Выбирает инженерный приём для конкр
 license: MIT
 metadata:
   short-description: Критерии архитектуры, состояния и проверки
-  version: 2.3.0
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

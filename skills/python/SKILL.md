@@ -4,7 +4,7 @@ description: 'Дополняет работу с Python правилами со�
 license: MIT
 metadata:
   short-description: Python, окружение, типы и ресурсы
-  version: 2.2.1
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

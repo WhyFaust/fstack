@@ -35,8 +35,9 @@ class ReleaseTests(unittest.TestCase):
         for name in ('alpha', 'beta'):
             folder = root / 'skills' / name
             folder.mkdir(parents=True)
-            (folder / 'SKILL.md').write_text(f'---\nname: {name}\nmetadata:\n  version: 0.2.0\n---\n# Original body {name}\n')
+            (folder / 'SKILL.md').write_text(f'---\nname: {name}\nmetadata:\n  version: 0.2.0\n---\n# Original body {name}\n', newline='\n')
         git(root, 'init', '--initial-branch=main')
+        git(root, 'config', 'core.autocrlf', 'false')
         git(root, 'config', 'user.name', 'Fixture')
         git(root, 'config', 'user.email', 'fixture@example.invalid')
         git(root, 'add', '.')
@@ -49,7 +50,7 @@ class ReleaseTests(unittest.TestCase):
         return root, module
 
     def test_stable_semver_and_conventional_commit_contract(self):
-        for invalid in ('01.2.0', '1.02.0', '1.2.03', '1.2', '1.2.3-alpha', None, 1):
+        for invalid in ('01.2.0', '1.02.0', '1.2.03', '1.2', '1.2.3-alpha', '1.2.1١', None, 1):
             with self.subTest(version=invalid), self.assertRaises(ValueError):
                 release.version_tuple(invalid)
         self.assertEqual([release.increment('1.2.3', level) for level in (0, 1, 2, 3)],
@@ -60,26 +61,39 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(messages=messages):
                 self.assertEqual(release.change_level(messages), expected)
 
-    def test_pending_release_preserves_bodies_and_does_not_double_bump(self):
+    def test_independent_versions_require_valid_matching_localizations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / release.MANIFEST
+            manifest.parent.mkdir()
+            manifest.write_text('{"version": "0.2.0"}', encoding='utf-8')
+            skill = root / 'skills/alpha/SKILL.md'
+            skill.parent.mkdir(parents=True)
+            text = '---\nname: alpha\nmetadata:\n  version: 9.0.0\n---\n'
+            skill.write_text(text, encoding='utf-8')
+            localization = skill.with_name('SKILL.en.md')
+            localization.write_text(text, encoding='utf-8')
+            self.assertEqual(release.check_versions(root), '0.2.0')
+            localization.write_text(text.replace('9.0.0', '8.0.0'), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'локализаций'):
+                release.check_versions(root)
+            localization.write_text(text.replace('9.0.0', '09.0.0'), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'Некорректная версия'):
+                release.check_versions(root)
+
+    def test_pending_release_does_not_double_bump(self):
         root, module = self.fixture()
         interface = root / 'skills/alpha/agents/openai.yaml'
         interface.parent.mkdir()
         interface.write_text('interface:\n  display_name: New behavior\n')
-        untouched = root / 'skills/beta/SKILL.md'
-        original = untouched.read_bytes()
         git(root, 'add', '.')
         git(root, 'commit', '-m', 'feat: new behavior')
         proposed = module.plan('fixture/fstack')
         self.assertEqual(proposed['version'], '0.3.0')
         self.assertEqual(proposed['skills'], ['alpha'])
-        changed = module.set_version('0.3.0', proposed['skills'])
-        self.assertEqual({path.relative_to(module.ROOT).as_posix() for path in changed},
-                         {'.codex-plugin/plugin.json', 'skills/alpha/SKILL.md'})
+        self.assertEqual(module.set_version('0.3.0'), [Path('.codex-plugin/plugin.json')])
         self.assertEqual(module.check_versions(), '0.3.0')
-        self.assertEqual(untouched.read_bytes(), original)
-        self.assertEqual(module.set_version('0.3.0', proposed['skills']), [])
-        for name in ('alpha', 'beta'):
-            self.assertTrue((root / 'skills' / name / 'SKILL.md').read_text().endswith(f'# Original body {name}\n'))
+        self.assertEqual(module.set_version('0.3.0'), [])
         git(root, 'add', '.')
         git(root, 'commit', '-m', 'chore(release): v0.3.0')
         (root / 'readme.md').write_text('Documentation')
@@ -92,17 +106,14 @@ class ReleaseTests(unittest.TestCase):
     def test_skill_changes_use_final_tree_and_ignore_version_only_edits(self):
         root, module = self.fixture()
         skill = root / 'skills/alpha/SKILL.md'
-        text = skill.read_text().replace('version: 0.2.0', 'version: "0.2.0" # keep comment')
-        skill.write_text(text)
-        module.set_version('0.2.1', ['alpha'])
-        self.assertEqual(skill.read_text(), text.replace('"0.2.0"', '0.2.1'))
-        self.assertEqual(module.check_versions(), '0.2.1')
+        text = skill.read_text().replace('version: 0.2.0', 'version: "1.0.0" # keep comment')
+        skill.write_text(text, newline='\n')
         git(root, 'add', '.')
         git(root, 'commit', '-m', 'chore: version-only fixture')
         self.assertEqual(module.changed_skills('v0.2.0'), [])
         resources = {'skills/alpha/references/run.md': b'New reference',
                      'skills/beta/assets/icon.bin': b'\x00\x01\xff',
-                     'skills/gamma/SKILL.md': b'---\nname: gamma\nmetadata:\n  version: 0.2.1\n---\nNew skill\n'}
+                     'skills/gamma/SKILL.md': b'---\nname: gamma\nmetadata:\n  version: 1.0.0\n---\nNew skill\n'}
         for name, content in resources.items():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,9 +125,6 @@ class ReleaseTests(unittest.TestCase):
         git(root, 'add', '-u')
         git(root, 'commit', '-m', 'refactor: undo reference addition')
         self.assertEqual(module.changed_skills('v0.2.0'), ['beta', 'gamma'])
-        skill.write_text(skill.read_text().replace('version: 0.2.1', 'version: 9.0.0'))
-        with self.assertRaisesRegex(ValueError, 'новее плагина'):
-            module.check_versions()
 
     def test_event_and_live_main_must_match_before_publication(self):
         root, module = self.fixture()
@@ -151,7 +159,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_draft_ownership_and_tag_identity_guard_real_archive(self):
         root, module = self.fixture()
-        module.set_version('0.2.1', [])
+        module.set_version('0.2.1')
         git(root, 'add', '.')
         git(root, 'commit', '-m', 'chore(release): v0.2.1')
         sha = git(root, 'rev-parse', 'HEAD')
@@ -192,15 +200,16 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(tampered=tampered):
                 root, module = self.fixture()
                 skill = root / 'skills/alpha/SKILL.md'
-                skill.write_text(skill.read_text() + 'Validated instruction\n')
+                skill.write_text(skill.read_text().replace('0.2.0', '1.0.0') + 'Validated instruction\n', newline='\n')
+                skills = {path: path.read_bytes() for path in (root / 'skills').glob('*/SKILL.md')}
                 git(root, 'add', '.')
                 git(root, 'commit', '-m', 'fix: validated change')
                 event = git(root, 'rev-parse', 'HEAD')
                 self.assertEqual(module.changed_skills('v0.2.0'), ['alpha'])
-                module.set_version('0.2.1', ['alpha'])
+                module.set_version('0.2.1')
                 if tampered:
                     skill = root / 'skills/alpha/SKILL.md'
-                    skill.write_text(skill.read_text() + 'Unvalidated instruction\n')
+                    skill.write_text(skill.read_text() + 'Unvalidated instruction\n', newline='\n')
                 git(root, 'add', '.')
                 git(root, 'commit', '-m', 'chore(release): v0.2.1')
                 candidate = git(root, 'rev-parse', 'HEAD')
@@ -239,13 +248,49 @@ class ReleaseTests(unittest.TestCase):
                         self.assertEqual([call[2] for call in calls], ['upload', 'edit'])
                         self.assertEqual(git(root, 'rev-parse', 'HEAD'), candidate)
                         self.assertEqual(module.check_versions(), '0.2.1')
-                        self.assertIn('version: 0.2.0', (root / 'skills/beta/SKILL.md').read_text())
-                        self.assertTrue((root / 'dist/fstack-0.2.1.zip').is_file())
+                        self.assertEqual({path: path.read_bytes() for path in skills}, skills)
+                        with zipfile.ZipFile(root / 'dist/fstack-0.2.1.zip') as archive:
+                            for path, content in skills.items():
+                                self.assertEqual(archive.read(f'fstack/{path.relative_to(root).as_posix()}'), content)
                         calls.clear()
                         git(root, 'checkout', '--detach', event)
                         module.publish('fixture/fstack')
                         self.assertEqual(calls, [])
                         self.assertEqual(git(root, 'rev-parse', 'HEAD'), candidate)
+
+    def test_publish_changes_only_manifest_and_archives_skill_bytes(self):
+        root, module = self.fixture()
+        skill = root / 'skills/alpha/SKILL.md'
+        skill.write_text(skill.read_text().replace('0.2.0', '1.0.0') + 'New behavior\n', newline='\n')
+        skills = {path: path.read_bytes() for path in (root / 'skills').glob('*/SKILL.md')}
+        git(root, 'add', '.')
+        git(root, 'commit', '-m', 'feat: new behavior')
+        event = git(root, 'rev-parse', 'HEAD')
+        origin = root.parent / 'origin.git'
+        git(root.parent, 'clone', '--bare', str(root), str(origin))
+        git(root, 'remote', 'add', 'origin', str(origin))
+        calls, real_run = [], module.run
+
+        def intercepted(*args):
+            if args == (sys.executable, 'scripts/check_package.py'):
+                self.assertEqual(module.check_versions(), '0.3.0')
+                return ''
+            if args[0] == 'gh':
+                calls.append(args)
+                return ''
+            return real_run(*args)
+
+        environment = {'GITHUB_ACTIONS': 'true', 'GITHUB_REF': 'refs/heads/main',
+                       'GITHUB_REPOSITORY': 'fixture/fstack', 'GITHUB_SHA': event}
+        with patch.dict(os.environ, environment), patch.object(module, 'run', side_effect=intercepted), redirect_stdout(io.StringIO()):
+            module.publish('fixture/fstack')
+        self.assertEqual([call[2] for call in calls], ['create', 'upload', 'edit'])
+        self.assertEqual(git(origin, 'rev-parse', 'main'), git(root, 'rev-parse', 'HEAD'))
+        self.assertEqual(git(root, 'diff', '--name-only', event, 'HEAD'), '.codex-plugin/plugin.json')
+        self.assertEqual({path: path.read_bytes() for path in skills}, skills)
+        with zipfile.ZipFile(root / 'dist/fstack-0.3.0.zip') as archive:
+            for path, content in skills.items():
+                self.assertEqual(archive.read(f'fstack/{path.relative_to(root).as_posix()}'), content)
 
 
 if __name__ == '__main__':
