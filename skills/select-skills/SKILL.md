@@ -4,7 +4,7 @@ description: 'Выбирает минимальный достаточный м�
 license: MIT
 metadata:
   short-description: Основной метод и применимые предметные навыки
-  version: 2.3.0
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

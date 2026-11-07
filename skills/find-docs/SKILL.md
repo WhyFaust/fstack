@@ -4,7 +4,7 @@ description: 'Находит официальный контракт API или 
 license: MIT
 metadata:
   short-description: Проверка API по документации нужной версии
-  version: 2.1.0
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

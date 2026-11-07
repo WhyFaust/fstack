@@ -4,7 +4,7 @@ description: 'Обновляет установленный fstack и согла
 license: MIT
 metadata:
   short-description: Обновление плагина и согласование профиля
-  version: 2.4.1
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
