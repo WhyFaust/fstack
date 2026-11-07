@@ -4,7 +4,7 @@ description: "Finds material and fresh angles for a text and verifies facts, dat
 license: MIT
 metadata:
   short-description: Source research and fact-checking for prose
-  version: 1.0.0
+  version: 1.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -21,4 +21,4 @@ If sources are restricted, search is unavailable or there are no suitable fresh 
 
 ## Deliver the findings
 
-For standalone research, return verified facts, angles or fact-check findings with direct links. Identify material disagreements, dates and access limits. For a text, carry facts, qualifications and attribution into [$fstack:write-text](../write-text/SKILL_en.md) or [$fstack:edit-text](../edit-text/SKILL_en.md) as appropriate. After the clean draft, give a separate short author note with the verification time, search period, sources read and material limitations. If the user requests only the final field, place necessary attribution within it.
+For standalone research, return verified facts, angles or fact-check findings with direct links. If you can verify only part of a disputed claim, identify what is established and what remains open. Identify material disagreements, dates and access limits. For a text, carry facts, qualifications and attribution into [$fstack:write-text](../write-text/SKILL_en.md) or [$fstack:edit-text](../edit-text/SKILL_en.md) as appropriate. After the clean draft, give a separate short author note with the verification time, search period, sources read and material limitations. If the user requests only the final field, place necessary attribution within it.

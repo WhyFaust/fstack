@@ -1,4 +1,4 @@
 interface:
   display_name: Причины решений по истории и источникам
   short_description: Причины решений по истории и источникам
-  default_prompt: Используй $fstack:trace-history из плагина fstack для указанной задачи с проверяемым результатом.
+  default_prompt: Используй $fstack:trace-history, чтобы восстановить причину прежнего решения по истории изменений и обсуждениям.

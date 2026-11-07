@@ -1,4 +1,4 @@
 interface:
   display_name: Слияние проверенной ревизии PR или MR
   short_description: Слияние проверенной ревизии PR или MR
-  default_prompt: Используй $fstack:ship-pr из плагина fstack для указанной задачи с проверяемым результатом.
+  default_prompt: "Используй $fstack:ship-pr, чтобы проверить готовность текущей ревизии PR/MR и выполнить слияние при наличии разрешения."
