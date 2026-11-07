@@ -1,8 +1,10 @@
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -27,6 +29,14 @@ class PackageTests(unittest.TestCase):
     def write_skill(self, metadata):
         self.skill.write_text('---\n' + yaml.safe_dump(metadata, allow_unicode=True)
                               + '---\n# Пример\n', encoding='utf-8')
+
+    def link_directory(self, link, target):
+        if sys.platform == 'win32':
+            subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)],
+                           check=True, capture_output=True)
+            self.addCleanup(link.rmdir)
+        else:
+            link.symlink_to(target, target_is_directory=True)
 
     def test_frontmatter_strings_and_name_contract(self):
         self.write_skill(self.metadata)
@@ -67,6 +77,30 @@ class PackageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_package.skill_resources(self.folder, self.root)
         (directory / 'contract.md').write_text('Контракт ресурса', encoding='utf-8')
+        check_package.skill_resources(self.folder, self.root)
+
+    def test_nested_resource_link_outside_package_is_rejected_after_valid_file(self):
+        outside = self.root.parent / 'external'
+        outside.mkdir()
+        (outside / 'helper.py').write_text('print(1)\n', encoding='utf-8')
+        directory = self.folder / 'scripts'
+        directory.mkdir()
+        valid = directory / 'local.py'
+        valid.write_text('print(2)\n', encoding='utf-8')
+        link = directory / 'vendor'
+        self.link_directory(link, outside)
+        with patch.object(Path, 'rglob', return_value=iter([valid, link / 'helper.py'])):
+            with self.assertRaises(ValueError):
+                check_package.skill_resources(self.folder, self.root)
+
+    def test_nested_resource_link_to_shared_package_directory_is_allowed(self):
+        shared = self.root / 'shared'
+        shared.mkdir()
+        (shared / 'helper.py').write_text('print(1)\n', encoding='utf-8')
+        directory = self.folder / 'scripts'
+        directory.mkdir()
+        (directory / 'local.py').write_text('print(2)\n', encoding='utf-8')
+        self.link_directory(directory / 'vendor', shared)
         check_package.skill_resources(self.folder, self.root)
 
     def test_shipped_role_defaults_are_valid_toml_and_required(self):
