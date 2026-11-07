@@ -4,7 +4,7 @@ description: "Редактирует, упрощает и сокращает г�
 license: MIT
 metadata:
   short-description: Правка текста с сохранением смысла и голоса
-  version: 2.4.1
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -4,7 +4,7 @@ description: "Drafts original prose and adapts material to a new format, audienc
 license: MIT
 metadata:
   short-description: Original prose, replies and format adaptation
-  version: 2.4.1
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

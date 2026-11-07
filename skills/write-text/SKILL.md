@@ -4,7 +4,7 @@ description: "Пишет авторские тексты с нуля и адап
 license: MIT
 metadata:
   short-description: Авторские тексты, комментарии и новые форматы
-  version: 2.4.1
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

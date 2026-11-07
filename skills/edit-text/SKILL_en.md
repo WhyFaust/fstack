@@ -4,7 +4,7 @@ description: "Edits, simplifies and shortens existing prose while preserving mea
 license: MIT
 metadata:
   short-description: Prose editing that preserves meaning and voice
-  version: 2.4.1
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

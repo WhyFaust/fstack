@@ -70,8 +70,7 @@
 | `research-for-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов `$fstack:research-for-text` | [Открыть](../skills/research-for-text/SKILL.md), [English](../skills/research-for-text/SKILL_en.md) |
 
 Поиск можно запросить отдельно или подключить к написанию и правке, когда нужны
-новые материалы или проверка фактов. Методы используют материалы из
-[WhyFaust/chelovechno v0.6.0](https://github.com/WhyFaust/chelovechno/tree/27821d5f4bbb9173e2a0687aaf760b6baf96fefd/skills/chelovechno).
+новые материалы или проверка фактов.
 
 ## Профиль и внешние компоненты
 

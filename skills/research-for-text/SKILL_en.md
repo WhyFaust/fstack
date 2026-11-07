@@ -4,7 +4,7 @@ description: "Finds material and fresh angles for a text and verifies facts, dat
 license: MIT
 metadata:
   short-description: Source research and fact-checking for prose
-  version: 2.4.1
+  version: 1.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
