@@ -7,15 +7,12 @@ fstack развивает личные навыки Faust и их вспомог
 
 Приёмы диагностики в `refactor-code` основаны на идеях из
 `caldoai/skills`, ревизия `442c29918339cc8dbf09ae27aaf17b05745465a3`,
-файл `skills/untangle-codebase/SKILL.md`. Copyright (c) 2026 Maze.
-Уведомление об авторстве и условия [MIT](licenses/caldoai-MIT.txt) сохранены из
-`LICENSE` той же ревизии.
+файл `skills/untangle-codebase/SKILL.md` (Copyright (c) 2026 Maze, MIT).
 
 При разработке `adapt-skill` использованы материалы из `agentskills/agentskills`,
-ревизия `83021e2be457a9b6679148719c1f6074f0ad975e`. В `GOVERNANCE.md` указана
-Apache License 2.0 для спецификации. Обзор, каталог клиентов и руководства по
-созданию, проверке и клиентской реализации распространяются по CC BY 4.0
-(`docs/LICENSE` исходного репозитория).
+ревизия `83021e2be457a9b6679148719c1f6074f0ad975e`. Спецификация распространяется
+по Apache License 2.0 (`GOVERNANCE.md`), обзор, каталог клиентов и руководства
+распространяются по CC BY 4.0 (`docs/LICENSE`).
 
 Сверены 2026-11-07 документ OpenAI Developers "Build skills", справка Codex
 `openai_yaml.md` из `skill-creator`, Claude Platform Docs "Skill authoring
