@@ -1,0 +1,4 @@
+interface:
+  display_name: "Edit text"
+  short_description: "Prose editing that preserves meaning and voice"
+  default_prompt: "Use $fstack:edit-text. Edit my text while preserving facts, conditions and the author's voice."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write text"
+  short_description: "Original prose, replies and format adaptation"
+  default_prompt: "Use $fstack:write-text. Draft the text for my task and audience, preserve my voice and use verified details."
