@@ -4,7 +4,7 @@ description: 'Передаёт ограниченное поручение ис�
 license: MIT
 metadata:
   short-description: Поручения, владение и завершение подагентов
-  version: 2.3.0
+  version: 2.4.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
