@@ -17,6 +17,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "skills" / "use-memory" / "scripts" / "memory.py"
 sys.path.insert(0, str(SCRIPT.parent))
+import hook_spool
 import memory
 TOKEN = re.compile(r"stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})")
 CANDIDATE = {"kind": "decision", "title": "Heliotrope convention", "body": "The heliotrope marker is retained."}
@@ -230,6 +231,56 @@ class MemoryHookTests(unittest.TestCase):
             self.assertIn("systemMessage", self.hook("UserPromptSubmit", prompt="Withdraw"))
         self.assertEqual(self.hook("Stop"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
+        self.assertNotIn(CANDIDATE["body"].encode(), (self.state / "pending.sqlite3").read_bytes())
+
+    def test_steering_revokes_forget_even_when_generation_replacement_fails(self):
+        self.init()
+        entry = self.cli("remember", payload=CANDIDATE)
+        token = self.token()
+        action = {"action": "forget", "id": entry["id"]}
+        command = self.stage(token, action)
+        key, nonce = token.split(".")
+        generation = self.state / "pending-generations" / key
+        write_text = hook_spool._write_text
+
+        def locked_generation(path, text, *, replace=False):
+            if path == generation and replace:
+                raise PermissionError("Generation file is open without delete sharing")
+            return write_text(path, text, replace=replace)
+
+        payload = {
+            "hook_event_name": "UserPromptSubmit", "cwd": str(self.repo),
+            "session_id": "00000000-0000-4000-a000-000000000001", "turn_id": "turn-1", "prompt": "Withdraw",
+        }
+        if os.name == "nt":
+            with generation.open("rb"):
+                result = self.hook("UserPromptSubmit", prompt="Withdraw")
+            self.assertNotIn("decision", result)
+            self.assertIn("systemMessage", result)
+        else:
+            with chdir(self.repo), patch.object(hook_spool, "_write_text", locked_generation):
+                with self.assertRaises(PermissionError):
+                    memory.hook(memory.Store(self.state), "UserPromptSubmit", payload)
+        self.assertEqual(generation.read_text(encoding="utf-8"), nonce)
+        self.assertTrue((self.state / "pending-revocations" / token).is_file())
+        encoded, _ = self.stage_command(token, action)
+        self.cli("stage", "--turn", token, "--payload", encoded, ok=False)
+        self.assertEqual(self.post(command), {})
+        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.cli("show", entry["id"]), entry)
+
+    def test_steering_blocks_when_the_revocation_marker_cannot_be_written(self):
+        self.init()
+        self.stage(self.token(), REMEMBER)
+        payload = {
+            "hook_event_name": "UserPromptSubmit", "cwd": str(self.repo),
+            "session_id": "00000000-0000-4000-a000-000000000001", "turn_id": "turn-1", "prompt": "Withdraw",
+        }
+        with chdir(self.repo), patch.object(hook_spool, "_write_text", side_effect=PermissionError):
+            result = memory.hook(memory.Store(self.state), "UserPromptSubmit", payload)
+        self.assertEqual(result["decision"], "block")
+        self.assertTrue(result["reason"])
 
     def test_slow_vault_save_does_not_block_steering_in_another_session(self):
         self.init()
@@ -349,7 +400,8 @@ class MemoryHookTests(unittest.TestCase):
             self.assertIsNotNone(shells[0])
             if pwsh := shutil.which("pwsh.exe"):
                 shells.append(pwsh)
-            shells = [[shell, "-NoProfile", "-NonInteractive", "-Command"] for shell in shells]
+            shells = [[shell, "-NoProfile", "-ExecutionPolicy", "Restricted", "-NonInteractive", "-Command"]
+                      for shell in shells]
         else:
             shells = [["/bin/sh", "-c"]]
         environment["PATH"] = os.pathsep.join(path)

@@ -11,7 +11,15 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from hook_spool import MAX_STAGE_BYTES, TOKEN, PendingTurns, digest, ensure_state_directory, read_json
+from hook_spool import (
+    MAX_STAGE_BYTES,
+    TOKEN,
+    PendingRevocationError,
+    PendingTurns,
+    digest,
+    ensure_state_directory,
+    read_json,
+)
 from memory_store import ENTRY_ID, Binding, Store, StoreError, _candidate, _info, _write_text
 
 
@@ -133,7 +141,15 @@ def hook(store: Store, event: str, payload: dict) -> dict:
     pending = PendingTurns(store.state_dir, cwd)
     generation = None
     if event == "UserPromptSubmit" or (event == "Stop" and plan):
-        generation = pending.invalidate(key)
+        try:
+            generation = pending.invalidate(key)
+        except PendingRevocationError:
+            if event == "UserPromptSubmit":
+                return {
+                    "decision": "block",
+                    "reason": "Не удалось отменить предыдущую операцию памяти fstack. Повтори ввод.",
+                }
+            raise
     if plan:
         return {}
     staged = posted_stage(payload) if event == "PostToolUse" else None

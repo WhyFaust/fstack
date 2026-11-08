@@ -23,6 +23,11 @@ TURN_LIMIT = 256
 TOKEN = re.compile(r"([0-9a-f]{64})\.([0-9a-f]{32})")
 TURN_KEY = re.compile(r"[0-9a-f]{64}")
 LOCAL_MODE = 0o777 if os.name == "nt" else 0o700
+REVOCATION_LIMIT = 4 * TURN_LIMIT
+
+
+class PendingRevocationError(StoreError):
+    pass
 
 
 def _unique_fields(items: list[tuple[str, object]]) -> dict[str, object]:
@@ -64,6 +69,7 @@ class PendingTurns:
         self.cwd = cwd
         self.path = state_dir / "pending.sqlite3"
         self.generations = state_dir / "pending-generations"
+        self.revocations = state_dir / "pending-revocations"
 
     def _state_available(self, *, create: bool = False) -> bool:
         return ensure_state_directory(self.state_dir, self.cwd, create=create)
@@ -115,27 +121,59 @@ class PendingTurns:
             return None
         return _read_text(self.generations / key)
 
+    def _revoked(self, key: str, nonce: str) -> bool:
+        name = f"{key}.{nonce}"
+        if not TOKEN.fullmatch(name):
+            raise StoreError("Invalid pending memory generation")
+        return _directory(self.revocations) and _info(self.revocations / name) is not None
+
+    def _current(self, key: str, nonce: str) -> bool:
+        return self._generation(key) == nonce and not self._revoked(key, nonce)
+
     def invalidate(self, key: str) -> str | None:
-        if self._generation(key) is None:
+        if not self._state_available():
             return None
+        try:
+            previous = _read_text(self.generations / key)
+            if previous is None:
+                return None
+            if not self._revoked(key, previous):
+                _directory(self.revocations, create=True, mode=LOCAL_MODE)
+                self._prune(self.revocations, TOKEN, REVOCATION_LIMIT)
+                _write_text(self.revocations / f"{key}.{previous}", "")
+                if not self._revoked(key, previous):
+                    raise StoreError("Missing pending memory revocation marker")
+        except (StoreError, OSError) as error:
+            raise PendingRevocationError("Cannot revoke pending memory action") from error
         nonce = secrets.token_hex(16)
         _write_text(self.generations / key, nonce, replace=True)
         return nonce
 
+    @staticmethod
+    def _prune(directory: Path, pattern: re.Pattern[str], limit: int) -> None:
+        now = time.time()
+        with os.scandir(directory) as entries:
+            paths = list(islice(entries, limit + 1))
+        remaining = len(paths)
+        for entry in paths:
+            if not pattern.fullmatch(entry.name):
+                continue
+            try:
+                if (
+                    entry.is_file(follow_symlinks=False)
+                    and now - entry.stat(follow_symlinks=False).st_mtime > TTL_SECONDS + 1
+                ):
+                    if _delete(Path(entry.path)):
+                        remaining -= 1
+            except (FileNotFoundError, PermissionError):
+                continue
+        if remaining >= limit:
+            raise StoreError("Pending memory marker limit exceeded")
+
     def _new_generation(self, key: str) -> str:
         self._state_available(create=True)
         _directory(self.generations, create=True, mode=LOCAL_MODE)
-        now = time.time()
-        with os.scandir(self.generations) as entries:
-            paths = list(islice(entries, TURN_LIMIT + 1))
-        remaining = len(paths)
-        for entry in paths:
-            if TURN_KEY.fullmatch(entry.name) and entry.is_file(follow_symlinks=False):
-                if now - entry.stat(follow_symlinks=False).st_mtime > TTL_SECONDS:
-                    if _delete(Path(entry.path)):
-                        remaining -= 1
-        if remaining >= TURN_LIMIT:
-            raise StoreError("Pending memory generation limit exceeded")
+        self._prune(self.generations, TURN_KEY, TURN_LIMIT)
         nonce = secrets.token_hex(16)
         if not _write_text(self.generations / key, nonce):
             raise StoreError("Memory turn was replaced by a newer input")
@@ -147,7 +185,7 @@ class PendingTurns:
         with self._write(create=True) as connection:
             if connection is None:
                 raise StoreError("Cannot open pending memory database")
-            if self._generation(key) != nonce:
+            if not self._current(key, nonce):
                 raise StoreError("Memory turn was replaced by a newer input")
             connection.execute("DELETE FROM pending WHERE expires<?", (now,))
             if connection.execute("SELECT count(*) FROM pending").fetchone()[0] >= TURN_LIMIT:
@@ -162,7 +200,7 @@ class PendingTurns:
 
     def is_current(self, token: str, scope: str) -> bool:
         match = TOKEN.fullmatch(token)
-        if match is None or self._generation(match[1]) != match[2] or not self._available():
+        if match is None or not self._current(*match.groups()) or not self._available():
             return False
         uri = f"{self.path.as_uri()}?mode=ro"
         with closing(sqlite3.connect(uri, timeout=1, uri=True)) as connection:
@@ -170,15 +208,15 @@ class PendingTurns:
                 "SELECT 1 FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=?",
                 (*match.groups(), scope, int(time.time())),
             ).fetchone() is not None
-        return current and self._generation(match[1]) == match[2]
+        return current and self._current(*match.groups())
 
     def stage(self, key: str, token: str, scope: str, action: dict) -> None:
         match = TOKEN.fullmatch(token)
-        if match is None or match[1] != key or self._generation(key) != match[2]:
+        if match is None or match[1] != key or not self._current(key, match[2]):
             return
         serialized = json.dumps(action, ensure_ascii=False, separators=(",", ":"))
         with self._write() as connection:
-            if connection is not None and self._generation(key) == match[2]:
+            if connection is not None and self._current(key, match[2]):
                 connection.execute(
                     "UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? "
                     "AND expires>=? AND (action IS NULL OR action=?)",
@@ -190,13 +228,15 @@ class PendingTurns:
         if nonce is None:
             return None
         with self._write() as connection:
-            if connection is None:
+            if connection is None or self._generation(key) != nonce:
                 return None
-            row = connection.execute(
-                "SELECT action FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=?",
-                (key, nonce, scope, int(time.time())),
-            ).fetchone()
-            connection.execute("DELETE FROM pending WHERE turn=? AND nonce=?", (key, nonce))
-        if row and row[0] and self._generation(key) == nonce:
+            row = None
+            if self._current(key, nonce):
+                row = connection.execute(
+                    "SELECT action FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=?",
+                    (key, nonce, scope, int(time.time())),
+                ).fetchone()
+            connection.execute("DELETE FROM pending WHERE turn=?", (key,))
+        if row and row[0] and self._current(key, nonce):
             return json.loads(row[0])
         return None

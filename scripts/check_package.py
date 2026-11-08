@@ -110,7 +110,8 @@ def check_memory_hooks(root, relative):
     contained_file(root, root, 'skills/use-memory/scripts/memory.py')
     launchers = {
         'command': (r'/bin/sh "\$PLUGIN_ROOT/([^"]+)" (\w+)', 'hooks/memory.sh'),
-        'commandWindows': (r'& "\$env:PLUGIN_ROOT\\([^"]+)" (\w+)', 'hooks/memory.ps1'),
+        'commandWindows': (r'& \(\[scriptblock\]::Create\(\[IO\.File\]::ReadAllText\("\$env:PLUGIN_ROOT\\([^"]+)"\)\)\) (\w+)',
+                           'hooks/memory.ps1'),
     }
     for event, groups in hooks.items():
         require(len(groups) == 1 and len(groups[0]['hooks']) == 1, f'{event}: ожидалась одна команда памяти')

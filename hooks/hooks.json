@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" SessionStart",
-            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" SessionStart",
+            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) SessionStart",
             "timeout": 5
           }
         ]
@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" UserPromptSubmit",
-            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" UserPromptSubmit",
+            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) UserPromptSubmit",
             "timeout": 5
           }
         ]
@@ -30,7 +30,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" Stop",
-            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" Stop",
+            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) Stop",
             "timeout": 5
           }
         ]
@@ -43,7 +43,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" PostToolUse",
-            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" PostToolUse",
+            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) PostToolUse",
             "timeout": 5
           }
         ]
