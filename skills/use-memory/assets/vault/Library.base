@@ -4,7 +4,7 @@ filters:
     - 'file.folder.endsWith("/Records")'
     - 'file.ext == "md"'
     - 'fstack_memory == 1'
-    - 'file(file.path.replace("/Records/", "/Forgotten/")) == null'
+    - '(file(file.folder + "/" + file.basename + "-forgotten.json") == null && file(file.path.replace("/Records/", "/Forgotten/")) == null)'
     - '!this.file.path.endsWith("/Project.md") || file.inFolder(this.file.folder)'
 formulas:
   record: 'link(file.path, title)'

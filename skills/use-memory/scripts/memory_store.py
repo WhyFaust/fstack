@@ -59,6 +59,7 @@ LOCK_TIMEOUT = 3
 MEMORY_MARKER = "fstack_memory: 1"
 APPROVED_MARKER = "fstack_approved: 1"
 FORGOTTEN_MARKER = "fstack_forgotten: 1"
+TOMBSTONE_SUFFIX = "-forgotten.json"
 TEXT_FIELDS = {"kind": 16, "title": 160, "body": 4000, "source": 300}
 METADATA_FIELDS = {"id", "kind", "title", "created", "source", "supersedes", "session_id", "turn_id"}
 GRAPH_FIELDS = {"fstack_status", "project_link", "supersedes_link"}
@@ -438,6 +439,59 @@ def _record_approval(path: Path, entry_id: str) -> dict[str, str] | None:
         return None
 
 
+def _tombstone_paths(root: Path, entry_id: str) -> tuple[Path, Path]:
+    return root / "Records" / f"{entry_id}{TOMBSTONE_SUFFIX}", root / "Forgotten" / f"{entry_id}.md"
+
+
+def _is_forgotten(root: Path, entry_id: str) -> bool:
+    canonical, legacy = _tombstone_paths(root, entry_id)
+    return _file(legacy) or _file(canonical)
+
+
+def _parse_tombstone(raw: str, entry_id: str) -> dict[str, str | None]:
+    try:
+        fields = json.loads(raw)
+    except (ValueError, RecursionError) as error:
+        raise StoreError("Invalid memory tombstone") from error
+    if not isinstance(fields, dict) or fields.keys() - {"id", "supersedes"} or fields.get("id") != entry_id:
+        raise StoreError("Invalid memory tombstone")
+    predecessor = fields.get("supersedes")
+    if predecessor is not None and _entry_id(predecessor) == entry_id:
+        raise StoreError("Memory entry cannot supersede itself")
+    return fields
+
+
+def _read_tombstones(
+    root: Path, entry_id: str,
+) -> tuple[str | None, dict[str, str | None] | None, dict[str, str] | None]:
+    canonical, legacy_path = _tombstone_paths(root, entry_id)
+    legacy = _parse(legacy_path, entry_id, FORGOTTEN_MARKER)
+    raw = _read_text(canonical)
+    fields = _parse_tombstone(raw, entry_id) if raw is not None else None
+    return raw, fields, legacy
+
+
+def _tombstone_fields(entry_id: str, approval: dict[str, str] | None) -> dict[str, str | None]:
+    if approval is None:
+        return {"id": entry_id}
+    return {"id": entry_id, "supersedes": approval.get("supersedes")}
+
+
+def _confirmed_tombstone(
+    canonical: dict[str, str | None] | None, legacy: dict[str, str] | None,
+) -> dict[str, str | None] | None:
+    if canonical is not None and "supersedes" in canonical:
+        return canonical
+    if legacy is not None and "supersedes" in legacy:
+        return _tombstone_fields(legacy["id"], legacy)
+    return None
+
+
+def _write_tombstone(path: Path, raw: str | None, fields: dict[str, str | None]) -> None:
+    if not _write_text(path, json.dumps(fields) + "\n", replace=raw is not None, expected=raw):
+        raise StoreError("Memory tombstone changed while forgetting an entry")
+
+
 def _capture_record(record: Path, captured: Path) -> bool:
     if not _file(record):
         return False
@@ -482,17 +536,48 @@ def _update_note(path: Path, raw: str, fields: dict[str, str], updates: dict[str
     return True
 
 
-def _files(directory: Path) -> Iterator[Path]:
+def _files(directory: Path, *, tombstones: bool = False) -> Iterator[Path]:
     if not _directory(directory):
         return
     try:
-        for count, path in enumerate(directory.iterdir(), 1):
+        count = 0
+        for path in directory.iterdir():
+            is_tombstone = (
+                directory.name == "Records" and path.name.endswith(TOMBSTONE_SUFFIX)
+                and ENTRY_ID.fullmatch(path.name.removesuffix(TOMBSTONE_SUFFIX)) is not None
+            )
+            if is_tombstone != tombstones:
+                continue
+            count += 1
             if count > MAX_ENTRIES:
+                if tombstones:
+                    raise StoreError("Memory tombstone entry limit exceeded")
                 raise StoreError("Memory directory entry limit exceeded")
-            if path.suffix == ".md" and ENTRY_ID.fullmatch(path.stem):
+            if tombstones or (path.suffix == ".md" and ENTRY_ID.fullmatch(path.stem)):
                 yield path
     except OSError as error:
         raise StoreError("Cannot list memory entries") from error
+
+
+def _tombstone_ids(root: Path) -> set[str]:
+    ids = {path.stem for path in _files(root / "Forgotten")} | {
+        path.name.removesuffix(TOMBSTONE_SUFFIX) for path in _files(root / "Records", tombstones=True)
+    }
+    if len(ids) > MAX_ENTRIES:
+        raise StoreError("Memory tombstone entry limit exceeded")
+    return ids
+
+
+def _remove_empty_directory(path: Path) -> None:
+    if not _directory(path):
+        return
+    try:
+        path.rmdir()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        if error.errno not in (errno.ENOTEMPTY, errno.EEXIST) and getattr(error, "winerror", None) != 145:
+            raise StoreError("Cannot remove empty legacy memory directory") from error
 
 
 class Store:
@@ -550,8 +635,7 @@ class Store:
         self._check_home(root)
         binding = Binding(project, mode, root)
         _refresh_library(binding.root)
-        for folder in ("Records", "Forgotten"):
-            _directory(self._project_root(binding) / folder, create=True)
+        _directory(self._project_root(binding) / "Records", create=True)
         _directory(settings.parent, create=True)
         _write_text(settings, json.dumps({"root": str(root), "project": project, "mode": mode}), replace=True)
         return binding
@@ -622,18 +706,19 @@ class Store:
             if approval is not None:
                 inline[path.stem] = approval
         tombstones = {}
-        for path in _files(root / "Forgotten"):
-            tombstone = _parse(path, path.stem, FORGOTTEN_MARKER)
-            if tombstone is not None:
-                tombstones[path.stem] = tombstone
-                if "supersedes" not in tombstone and path.stem not in approvals:
-                    captured = _captured_record(root / "Records" / path.name)
-                    approval = _record_approval(captured, path.stem)
-                    if approval is not None:
-                        inline[path.stem] = approval
-                    latest = _parse(path, path.stem, FORGOTTEN_MARKER)
-                    if latest is not None:
-                        tombstones[path.stem] = latest
+        for entry_id in _tombstone_ids(root):
+            _, canonical, legacy = _read_tombstones(root, entry_id)
+            if canonical is None and legacy is None:
+                continue
+            confirmed = _confirmed_tombstone(canonical, legacy)
+            if confirmed is None and entry_id not in approvals:
+                captured = _captured_record(root / "Records" / f"{entry_id}.md")
+                approval = _record_approval(captured, entry_id)
+                if approval is not None:
+                    inline[entry_id] = approval
+                _, canonical, legacy = _read_tombstones(root, entry_id)
+                confirmed = _confirmed_tombstone(canonical, legacy)
+            tombstones[entry_id] = confirmed or {"id": entry_id}
         for entry_id, error in unreadable.items():
             if entry_id not in tombstones:
                 raise error
@@ -641,7 +726,7 @@ class Store:
         confirmed = approvals | {
             entry_id: fields for entry_id, fields in tombstones.items() if "supersedes" in fields
         }
-        superseded = {item["supersedes"] for item in confirmed.values() if "supersedes" in item}
+        superseded = {predecessor for item in confirmed.values() if (predecessor := item.get("supersedes")) is not None}
         return approvals, tombstones.keys() | superseded
 
     @staticmethod
@@ -655,11 +740,10 @@ class Store:
     @staticmethod
     def _record(root: Path, entry_id: str, approval: dict[str, str] | None) -> dict[str, str] | None:
         filename = f"{entry_id}.md"
-        tombstone = root / "Forgotten" / filename
-        if _file(tombstone):
+        if _is_forgotten(root, entry_id):
             return None
         record = _parse(root / "Records" / filename, entry_id, MEMORY_MARKER)
-        if record is None or _file(tombstone):
+        if record is None or _is_forgotten(root, entry_id):
             return None
         return Store._public_record(record, approval)
 
@@ -753,7 +837,7 @@ class Store:
             if approved:
                 metadata["fstack_status"] = "approved"
             if _write_text(path, _markdown(MEMORY_MARKER, metadata, fields["body"])):
-                if _file(root / "Forgotten" / path.name):
+                if _is_forgotten(root, entry_id):
                     self._forget(root, entry_id)
                     raise StoreError("Memory entry is unavailable")
                 approval = _inline_approval(metadata)
@@ -804,8 +888,7 @@ class Store:
         approval = approvals.get(entry_id)
         path = root / "Records" / filename
         raw = _read_text(path)
-        tombstone = root / "Forgotten" / filename
-        if raw is None or _file(tombstone):
+        if raw is None or _is_forgotten(root, entry_id):
             raise StoreError("Inbox entry is unavailable")
         fields = _parse_note(raw, entry_id, MEMORY_MARKER)
         if approval is None:
@@ -815,7 +898,7 @@ class Store:
         _update_note(path, raw, fields, {
             "fstack_status": "approved", "supersedes": predecessor, **_graph_properties(root, predecessor),
         })
-        if _file(tombstone):
+        if _is_forgotten(root, entry_id):
             raise StoreError("Memory entry is unavailable")
         return self._public_record(fields, approval)
 
@@ -827,11 +910,11 @@ class Store:
 
     def _forget(self, root: Path, entry_id: str) -> dict:
         filename = f"{entry_id}.md"
-        tombstone = root / "Forgotten" / filename
+        tombstone, _ = _tombstone_paths(root, entry_id)
         record = root / "Records" / filename
         captured = _captured_record(record)
         marker = root / "Approved" / filename
-        raw = _read_text(tombstone)
+        raw, canonical, legacy = _read_tombstones(root, entry_id)
         has_marker = _file(marker)
         has_record = _file(record)
         try:
@@ -839,27 +922,31 @@ class Store:
         except StoreError:
             approval = None
         if raw is None:
-            if not has_record and not has_marker:
+            if legacy is None and not has_record and not has_marker:
                 raise StoreError("Memory entry is unavailable")
-            observed = approval if approval is not None else _record_approval(record, entry_id)
-            if not _write_text(tombstone, _markdown(FORGOTTEN_MARKER, observed or {"id": entry_id})):
-                raise StoreError("Memory tombstone changed while forgetting an entry")
-        self._finish_forget(tombstone, captured, entry_id, approval)
+            if legacy is None and len(_tombstone_ids(root) | {entry_id}) > MAX_ENTRIES:
+                raise StoreError("Memory tombstone entry limit exceeded")
+            observed = _confirmed_tombstone(canonical, legacy)
+            if observed is None:
+                record_approval = approval or _record_approval(captured, entry_id) or _record_approval(record, entry_id)
+                observed = _tombstone_fields(entry_id, record_approval)
+            _write_tombstone(tombstone, raw, observed)
+        self._finish_forget(root, captured, entry_id, approval)
         if _capture_record(record, captured):
-            self._finish_forget(tombstone, captured, entry_id, approval)
+            self._finish_forget(root, captured, entry_id, approval)
         return {"id": entry_id, "status": "forgotten"}
 
     @staticmethod
-    def _finish_forget(tombstone: Path, captured: Path, entry_id: str, approval: dict[str, str] | None) -> None:
-        raw = _read_text(tombstone)
-        if raw is None:
+    def _finish_forget(root: Path, captured: Path, entry_id: str, approval: dict[str, str] | None) -> None:
+        raw, canonical, legacy = _read_tombstones(root, entry_id)
+        if canonical is None:
             raise StoreError("Memory tombstone disappeared during removal")
-        fields = _parse_note(raw, entry_id, FORGOTTEN_MARKER)
-        if "supersedes" not in fields:
-            if approval is None:
-                approval = _record_approval(captured, entry_id)
-            if approval is not None:
-                _update_note(tombstone, raw, fields, {"supersedes": approval.get("supersedes")})
+        if "supersedes" not in canonical:
+            confirmed = _confirmed_tombstone(canonical, legacy) or _tombstone_fields(
+                entry_id, approval or _record_approval(captured, entry_id),
+            )
+            if confirmed != canonical:
+                _write_tombstone(_tombstone_paths(root, entry_id)[0], raw, confirmed)
         _delete(captured)
 
     def migrate(self, binding: Binding, *, prune_legacy: bool = False) -> dict[str, int]:
@@ -872,28 +959,25 @@ class Store:
 
     @staticmethod
     def _migrate(root: Path) -> dict[str, int]:
-        entry_ids = {path.stem for folder in ("Records", "Approved", "Forgotten") for path in _files(root / folder)}
+        entry_ids = _tombstone_ids(root) | {
+            path.stem for folder in ("Records", "Approved") for path in _files(root / folder)
+        }
         updated = skipped = 0
         for entry_id in sorted(entry_ids):
             filename = f"{entry_id}.md"
             record = root / "Records" / filename
-            tombstone = root / "Forgotten" / filename
             try:
                 approval = _parse(root / "Approved" / filename, entry_id, APPROVED_MARKER)
-                forgotten = _read_text(tombstone)
-                if forgotten is not None:
+                tombstone_raw, canonical, legacy = _read_tombstones(root, entry_id)
+                if canonical is not None or legacy is not None:
+                    confirmed = _confirmed_tombstone(canonical, legacy)
                     if approval is None:
-                        approval = _record_approval(_captured_record(record), entry_id)
-                    if approval is None:
-                        approval = _inline_approval(_parse(record, entry_id, MEMORY_MARKER, include_body=False))
-                    if approval is None:
-                        continue
-                    fields = _parse_note(forgotten, entry_id, FORGOTTEN_MARKER)
-                    predecessor = approval.get("supersedes")
-                    if "supersedes" in fields:
-                        skipped += fields.get("supersedes") != predecessor
-                        continue
-                    path, raw, updates = tombstone, forgotten, {"supersedes": predecessor}
+                        approval = _record_approval(_captured_record(record), entry_id) or _record_approval(record, entry_id)
+                    desired = confirmed or _tombstone_fields(entry_id, approval)
+                    conflict = confirmed is not None and (
+                        (legacy is not None and "supersedes" in legacy and confirmed != legacy)
+                        or (approval is not None and confirmed != _tombstone_fields(entry_id, approval))
+                    )
                 else:
                     raw = _read_text(record)
                     if raw is None:
@@ -908,29 +992,41 @@ class Store:
             except StoreError:
                 skipped += 1
                 continue
-            updated += _update_note(path, raw, fields, updates)
+            if canonical is not None or legacy is not None:
+                if desired != canonical:
+                    _write_tombstone(_tombstone_paths(root, entry_id)[0], tombstone_raw, desired)
+                    updated += 1
+                elif conflict:
+                    skipped += 1
+            else:
+                updated += _update_note(path, raw, fields, updates)
         return {"updated": updated, "skipped": skipped}
 
     @staticmethod
     def _prune_legacy(root: Path) -> dict[str, int]:
         pruned = skipped = 0
-        for path in sorted(_files(root / "Approved")):
-            try:
-                raw = _read_text(path)
-                if raw is None:
-                    continue
-                approval = _parse_note(raw, path.stem, APPROVED_MARKER)
-                tombstone = _parse(root / "Forgotten" / path.name, path.stem, FORGOTTEN_MARKER)
-                if tombstone is not None:
-                    equivalent = tombstone == approval
-                else:
-                    record = _parse(root / "Records" / path.name, path.stem, MEMORY_MARKER)
-                    equivalent = _inline_approval(record) == approval
-                if not equivalent or _read_text(path) != raw:
+        for folder, marker in (("Approved", APPROVED_MARKER), ("Forgotten", FORGOTTEN_MARKER)):
+            directory = root / folder
+            for path in sorted(_files(directory)):
+                try:
+                    raw = _read_text(path)
+                    if raw is None:
+                        continue
+                    fields = _parse_note(raw, path.stem, marker)
+                    _, canonical, legacy = _read_tombstones(root, path.stem)
+                    if marker == FORGOTTEN_MARKER:
+                        equivalent = canonical is not None and ("supersedes" not in fields or canonical == fields)
+                    elif canonical is not None or legacy is not None:
+                        equivalent = canonical == _tombstone_fields(path.stem, fields)
+                    else:
+                        record = _parse(root / "Records" / path.name, path.stem, MEMORY_MARKER)
+                        equivalent = _inline_approval(record) == fields
+                    if not equivalent or _read_text(path) != raw:
+                        skipped += 1
+                        continue
+                except StoreError:
                     skipped += 1
                     continue
-            except StoreError:
-                skipped += 1
-                continue
-            pruned += _delete(path)
+                pruned += _delete(path)
+            _remove_empty_directory(directory)
         return {"pruned": pruned, "skipped": skipped}

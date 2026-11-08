@@ -185,6 +185,11 @@ class MemoryHookTests(unittest.TestCase):
         self.stage(self.token("turn-3"), {"action": "forget", "id": entry["id"]}, "turn-3")
         self.assertEqual(self.hook("Stop", "turn-3"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
+        project = self.vault / "Codex Memory" / "Projects" / "pilot"
+        self.assertEqual({path.name for path in project.iterdir()}, {"Project.md", "Records"})
+        tombstone, = (project / "Records").iterdir()
+        self.assertEqual(tombstone.name, f'{entry["id"]}-forgotten.json')
+        self.assertEqual(json.loads(tombstone.read_bytes()), {"id": entry["id"], "supersedes": None})
         self.assertEqual(self.init(mode="auto")["mode"], "auto")
 
     def test_cli_migration_only_changes_current_projects_records(self):
@@ -194,7 +199,10 @@ class MemoryHookTests(unittest.TestCase):
         self.cli("init", "--vault", str(self.vault), "--repo", str(other_repo), "--project", "other", cwd=other_repo)
         library = self.vault / "Codex Memory" / "Library.base"
         approval_file = 'file(file.path.replace("/Records/", "/Approved/"))'
+        legacy_forgotten_file = 'file(file.path.replace("/Records/", "/Forgotten/"))'
+        forgotten_file = 'file(file.folder + "/" + file.basename + "-forgotten.json")'
         library.write_text(
+            f"filters:\n  and:\n    - {legacy_forgotten_file} == null\n"
             "views:\n"
             f"  - type: table\n    name: Saved\n    filters: {approval_file} != null\n    limit: 7\n"
             f"  - type: table\n    name: Inbox\n    filters: '{approval_file} == null'\n",
@@ -216,6 +224,7 @@ class MemoryHookTests(unittest.TestCase):
         neighbor = notes["other"].read_bytes()
         self.assertEqual(self.cli("migrate"), {"updated": 1, "skipped": 0})
         upgraded = library.read_text(encoding="utf-8")
+        self.assertIn(f"    - ({forgotten_file} == null && {legacy_forgotten_file} == null)", upgraded)
         self.assertIn(f'filters: (note.fstack_status == "approved" || {approval_file} != null)', upgraded)
         self.assertIn(f"""filters: '(note.fstack_status != "approved" && {approval_file} == null)'""", upgraded)
         self.assertIn("    limit: 7\n", upgraded)

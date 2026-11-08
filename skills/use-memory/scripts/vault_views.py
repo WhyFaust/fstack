@@ -14,9 +14,12 @@ VAULT_FILES = (
     'Templates/Review.md',
 )
 APPROVAL_FILE = 'file(file.path.replace("/Records/", "/Approved/"))'
+LEGACY_FORGOTTEN_FILE = 'file(file.path.replace("/Records/", "/Forgotten/"))'
+FORGOTTEN_FILE = 'file(file.folder + "/" + file.basename + "-forgotten.json")'
 LEGACY_FILTERS = (
     (f'{APPROVAL_FILE} != null', f'(note.fstack_status == "approved" || {APPROVAL_FILE} != null)'),
     (f'{APPROVAL_FILE} == null', f'(note.fstack_status != "approved" && {APPROVAL_FILE} == null)'),
+    (f'{LEGACY_FORGOTTEN_FILE} == null', f'({FORGOTTEN_FILE} == null && {LEGACY_FORGOTTEN_FILE} == null)'),
 )
 
 

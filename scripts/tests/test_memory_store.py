@@ -1,4 +1,5 @@
 import errno
+import json
 import os
 import sqlite3
 import subprocess
@@ -40,6 +41,9 @@ class MemoryStoreTests(unittest.TestCase):
 
     def entry_path(self, binding, status, entry_id):
         return binding.root / "Projects" / binding.project / status / f"{entry_id}.md"
+
+    def tombstone_path(self, binding, entry_id):
+        return self.entry_path(binding, "Records", entry_id).with_name(f"{entry_id}-forgotten.json")
 
     def legacy_approval(self, binding, entry_id, supersedes=None):
         path = self.entry_path(binding, "Approved", entry_id)
@@ -155,17 +159,17 @@ class MemoryStoreTests(unittest.TestCase):
         files = memory_store._files
         forget_results = []
 
-        def forget_before_scanning_records(directory):
-            if directory.name == "Records":
+        def forget_before_scanning_records(directory, **options):
+            if directory.name == "Records" and not options.get("tombstones"):
                 forget_results.append(self.store.forget(binding, correction["id"]))
-            return files(directory)
+            return files(directory, **options)
 
         with patch("memory_store._files", side_effect=forget_before_scanning_records):
             self.assertEqual(self.store.search(binding, "порог"), [])
         self.assertEqual(forget_results, [{"id": correction["id"], "status": "forgotten"}])
-        tombstone = self.entry_path(binding, "Forgotten", correction["id"])
-        self.assertNotIn(correction["body"], tombstone.read_text(encoding="utf-8"))
-        self.assertIn(f'supersedes: "{previous["id"]}"', tombstone.read_text(encoding="utf-8"))
+        tombstone = self.tombstone_path(binding, correction["id"])
+        self.assertEqual(json.loads(tombstone.read_bytes()), {"id": correction["id"], "supersedes": previous["id"]})
+        self.assertEqual({child.name for child in path.parent.parent.iterdir()}, {"Project.md", "Records"})
         self.assertFalse(path.exists())
         path.write_bytes(stale)
         self.assertEqual(self.store.search(binding, "порог"), [])
@@ -204,8 +208,8 @@ class MemoryStoreTests(unittest.TestCase):
         with patch("memory_store._capture_record", side_effect=interrupt_after_capture):
             with self.assertRaisesRegex(StoreError, "Interrupted after capture"):
                 self.store.forget(binding, correction["id"])
-        tombstone = self.entry_path(binding, "Forgotten", correction["id"])
-        self.assertIn(f'supersedes: "{previous["id"]}"', tombstone.read_text(encoding="utf-8"))
+        tombstone = self.tombstone_path(binding, correction["id"])
+        self.assertEqual(json.loads(tombstone.read_bytes()), {"id": correction["id"], "supersedes": previous["id"]})
         self.assertFalse(self.entry_path(binding, "Records", correction["id"]).exists())
         self.store.forget(binding, correction["id"])
 
@@ -219,10 +223,10 @@ class MemoryStoreTests(unittest.TestCase):
                 draft = self.store.save(binding, candidate, approved=False)
                 path = self.entry_path(binding, "Records", draft["id"])
                 draft_text = path.read_text(encoding="utf-8")
-                forgotten = self.entry_path(binding, "Forgotten", draft["id"])
+                forgotten = self.tombstone_path(binding, draft["id"])
                 self.store.forget(binding, draft["id"])
                 self.assertEqual(self.store.get(binding, previous["id"]), previous)
-                self.assertNotIn("supersedes:", forgotten.read_text(encoding="utf-8"))
+                self.assertEqual(json.loads(forgotten.read_bytes()), {"id": draft["id"]})
                 approved = draft_text.replace("fstack_memory: 1", 'fstack_memory: 1\nfstack_status: "approved"')
                 if operation == "save":
                     original = forgotten.read_bytes()
@@ -277,7 +281,7 @@ class MemoryStoreTests(unittest.TestCase):
         candidate = dict(self.candidate, body="New threshold.", supersedes=previous["id"])
         draft = self.store.save(binding, candidate, approved=False)
         path = self.entry_path(binding, "Records", draft["id"])
-        tombstone = self.entry_path(binding, "Forgotten", draft["id"])
+        tombstone = self.tombstone_path(binding, draft["id"])
         approved = path.read_text(encoding="utf-8").replace(
             "fstack_memory: 1", 'fstack_memory: 1\nfstack_status: "approved"',
         )
@@ -295,7 +299,7 @@ class MemoryStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(StoreError, "interrupted"):
                 self.store.forget(binding, draft["id"])
         self.assertFalse(path.exists())
-        self.assertNotIn("supersedes:", tombstone.read_text(encoding="utf-8"))
+        self.assertEqual(json.loads(tombstone.read_bytes()), {"id": draft["id"]})
         hidden, = path.parent.glob(".fstack-forget-*")
         self.assertEqual(hidden.read_text(encoding="utf-8"), approved)
         self.assertEqual(self.store.search(binding, "конфигурации"), [other])
@@ -412,19 +416,128 @@ class MemoryStoreTests(unittest.TestCase):
         previous = self.store.save(binding, self.candidate, approved=True)
         draft = self.store.save(binding, dict(self.candidate, body="Revised threshold."), approved=False)
         path = self.entry_path(binding, "Records", draft["id"])
-        tombstone = self.entry_path(binding, "Forgotten", draft["id"])
-        tombstone.write_text(f'---\nfstack_forgotten: 1\nid: "{draft["id"]}"\n---\n', encoding="utf-8")
+        legacy = self.entry_path(binding, "Forgotten", draft["id"])
+        legacy.parent.mkdir()
+        original = f'---\nfstack_forgotten: 1\nid: "{draft["id"]}"\n---\n'
+        legacy.write_text(original, encoding="utf-8")
+        tombstone = self.tombstone_path(binding, draft["id"])
         marker = self.legacy_approval(binding, draft["id"], previous["id"])
-        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 2})
         self.assertEqual(self.store.inbox(binding), [])
-        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
-        self.assertIn(previous["id"], tombstone.read_text(encoding="utf-8"))
+        self.assertEqual(self.store.search(binding, "порог"), [])
+        with patch("memory_store._write_text", side_effect=StoreError("write failed")):
+            with self.assertRaisesRegex(StoreError, "write failed"):
+                self.store.migrate(binding)
+        self.assertFalse(tombstone.exists())
+        self.assertEqual(legacy.read_text(encoding="utf-8"), original)
         self.assertTrue(marker.exists())
-        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 1, "skipped": 0})
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        self.assertEqual(json.loads(tombstone.read_bytes()), {"id": draft["id"], "supersedes": previous["id"]})
+        self.assertEqual(legacy.read_text(encoding="utf-8"), original)
+        self.assertTrue(marker.exists())
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 2, "skipped": 0})
+        self.assertFalse(marker.parent.exists())
+        self.assertFalse(legacy.parent.exists())
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 0})
         self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 0})
         self.assertTrue(path.exists())
         self.assertEqual(self.store.inbox(binding), [])
         self.assertEqual(self.store.search(binding, "порог"), [])
+
+    def test_legacy_forgotten_can_confirm_a_json_tombstone_without_overriding_it(self):
+        binding = self.setup_store()
+        previous = self.store.save(binding, self.candidate, approved=True)
+        other = self.store.save(binding, dict(self.candidate, title="Other"), approved=True)
+        draft = self.store.save(binding, dict(self.candidate, title="Draft"), approved=False)
+        self.store.forget(binding, draft["id"])
+        legacy = self.entry_path(binding, "Forgotten", draft["id"])
+        legacy.parent.mkdir()
+        personal = legacy.parent / "Personal.md"
+        personal.write_text("Personal note", encoding="utf-8")
+        marker = f'---\nfstack_forgotten: 1\nid: "{draft["id"]}"\nsupersedes: "{{}}"\n---\n'
+        legacy.write_text(marker.format(previous["id"]), encoding="utf-8")
+        self.assertEqual(self.store.search(binding, "конфигурации"), [other])
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        legacy.write_text(marker.format(other["id"]), encoding="utf-8")
+        self.assertEqual(self.store.search(binding, "конфигурации"), [other])
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        self.assertTrue(legacy.exists())
+        legacy.write_text(marker.format(previous["id"]), encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 1, "skipped": 0})
+        self.assertEqual(personal.read_text(encoding="utf-8"), "Personal note")
+
+    def test_pruning_legacy_approval_does_not_adopt_a_stale_predecessor(self):
+        binding = self.setup_store()
+        previous = self.store.save(binding, self.candidate, approved=True)
+        candidate = dict(self.candidate, body="Revised threshold.", supersedes=previous["id"])
+        draft = self.store.save(binding, candidate, approved=False)
+        path = self.entry_path(binding, "Records", draft["id"])
+        stale = path.read_bytes().replace(b'fstack_memory: 1', b'fstack_memory: 1\nfstack_status: "approved"')
+        self.store.forget(binding, draft["id"])
+        marker = self.legacy_approval(binding, draft["id"])
+        tombstone = self.tombstone_path(binding, draft["id"])
+        self.assertEqual(self.store.get(binding, previous["id"]), previous)
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        self.assertEqual(json.loads(tombstone.read_bytes()), {"id": draft["id"], "supersedes": None})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 1, "skipped": 0})
+        self.assertFalse(marker.parent.exists())
+        path.write_bytes(stale)
+        self.assertEqual(self.store.get(binding, previous["id"]), previous)
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 1})
+        self.store.forget(binding, draft["id"])
+        self.assertFalse(path.exists())
+        self.assertEqual(self.store.get(binding, previous["id"]), previous)
+
+    def test_record_and_tombstone_entry_limits_are_independent(self):
+        binding = self.setup_store()
+        previous = self.store.save(binding, self.candidate, approved=True)
+        draft = self.store.save(binding, dict(self.candidate, title="Draft"), approved=False)
+        self.store.forget(binding, draft["id"])
+        with patch("memory_store.MAX_ENTRIES", 1):
+            self.assertEqual(self.store.get(binding, previous["id"]), previous)
+            self.assertEqual(self.store.inbox(binding), [])
+
+    def test_tombstone_limit_counts_legacy_and_canonical_copies_once(self):
+        binding = self.setup_store()
+        record = self.store.save(binding, self.candidate, approved=True)
+        entry_id = "a" * 64
+        legacy = self.entry_path(binding, "Forgotten", entry_id)
+        legacy.parent.mkdir()
+        legacy.write_text(f'---\nfstack_forgotten: 1\nid: "{entry_id}"\n---\n', encoding="utf-8")
+        with patch("memory_store.MAX_ENTRIES", 1):
+            with self.assertRaisesRegex(StoreError, "Memory tombstone entry limit exceeded"):
+                self.store.forget(binding, record["id"])
+            self.assertFalse(self.tombstone_path(binding, record["id"]).exists())
+            self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+            self.assertEqual(self.store.get(binding, record["id"]), record)
+            self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 1, "skipped": 0})
+            self.assertEqual(self.store.get(binding, record["id"]), record)
+
+    def test_reader_sees_tombstone_when_sync_replaces_legacy_between_reads(self):
+        binding = self.setup_store()
+        previous = self.store.save(binding, self.candidate, approved=True)
+        entry_id = "a" * 64
+        legacy = self.entry_path(binding, "Forgotten", entry_id)
+        legacy.parent.mkdir()
+        legacy.write_text(
+            f'---\nfstack_forgotten: 1\nid: "{entry_id}"\nsupersedes: "{previous["id"]}"\n---\n',
+            encoding="utf-8",
+        )
+        read = memory_store._read_text
+
+        def sync_before_legacy_read(path):
+            if path == legacy and legacy.exists():
+                self.tombstone_path(binding, entry_id).write_text(
+                    json.dumps({"id": entry_id, "supersedes": previous["id"]}), encoding="utf-8",
+                )
+                legacy.unlink()
+            return read(path)
+
+        with patch("memory_store._read_text", side_effect=sync_before_legacy_read):
+            self.assertEqual(self.store.search(binding, "порог"), [])
 
     def test_concurrent_promotion_and_saving_publish_one_record(self):
         binding = self.setup_store()
@@ -501,7 +614,7 @@ class MemoryStoreTests(unittest.TestCase):
         correction = dict(self.candidate, body="Использовать пять секунд.", supersedes=predecessor["id"])
         draft = self.store.save(binding, correction, approved=False)
         record = self.entry_path(binding, "Records", draft["id"])
-        tombstone = self.entry_path(binding, "Forgotten", draft["id"])
+        tombstone = self.tombstone_path(binding, draft["id"])
         original = record.read_bytes()
         paused, contended, resume = Event(), Event(), Event()
         write_text = memory_store._write_text
