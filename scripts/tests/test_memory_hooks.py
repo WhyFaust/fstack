@@ -148,6 +148,10 @@ class MemoryHookTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["body"], CANDIDATE["body"])
         self.assertEqual(records[0]["turn_id"], "turn-1")
+        project = self.vault / "Codex Memory" / "Projects" / "pilot"
+        record = project / "Records" / f'{records[0]["id"]}.md'
+        self.assertIn('fstack_status: "approved"', record.read_text(encoding="utf-8"))
+        self.assertFalse((project / "Approved").exists())
         self.assertEqual(self.hook("Stop"), {})
         encoded, _ = self.stage_command(token, REMEMBER)
         self.cli("stage", "--turn", token, "--payload", encoded, ok=False)
@@ -182,6 +186,46 @@ class MemoryHookTests(unittest.TestCase):
         self.assertEqual(self.hook("Stop", "turn-3"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
         self.assertEqual(self.init(mode="auto")["mode"], "auto")
+
+    def test_cli_migration_only_changes_current_projects_records(self):
+        self.init()
+        other_repo = self.root / "other"
+        other_repo.mkdir()
+        self.cli("init", "--vault", str(self.vault), "--repo", str(other_repo), "--project", "other", cwd=other_repo)
+        library = self.vault / "Codex Memory" / "Library.base"
+        approval_file = 'file(file.path.replace("/Records/", "/Approved/"))'
+        library.write_text(
+            "views:\n"
+            f"  - type: table\n    name: Saved\n    filters: {approval_file} != null\n    limit: 7\n"
+            f"  - type: table\n    name: Inbox\n    filters: '{approval_file} == null'\n",
+            encoding="utf-8",
+        )
+        projects = self.vault / "Codex Memory" / "Projects"
+        notes = {}
+        markers = {}
+        for project, repo in (("pilot", self.repo), ("other", other_repo)):
+            entry = self.cli("remember", payload=CANDIDATE, cwd=repo)
+            notes[project] = projects / project / "Records" / f'{entry["id"]}.md'
+            note = notes[project].read_text(encoding="utf-8")
+            notes[project].write_text(
+                re.sub(r"(?m)^(?:fstack_status|project_link): .*\n", "", note), encoding="utf-8",
+            )
+            markers[project] = projects / project / "Approved" / notes[project].name
+            markers[project].parent.mkdir()
+            markers[project].write_text(f'---\nfstack_approved: 1\nid: "{entry["id"]}"\n---\n', encoding="utf-8")
+        neighbor = notes["other"].read_bytes()
+        self.assertEqual(self.cli("migrate"), {"updated": 1, "skipped": 0})
+        upgraded = library.read_text(encoding="utf-8")
+        self.assertIn(f'filters: (note.fstack_status == "approved" || {approval_file} != null)', upgraded)
+        self.assertIn(f"""filters: '(note.fstack_status != "approved" && {approval_file} == null)'""", upgraded)
+        self.assertIn("    limit: 7\n", upgraded)
+        self.assertTrue(markers["pilot"].exists())
+        self.assertIn('fstack_status: "approved"', notes["pilot"].read_text(encoding="utf-8"))
+        self.assertEqual(self.cli("migrate", "--prune-legacy"), {"pruned": 1, "skipped": 0})
+        self.assertFalse(markers["pilot"].exists())
+        self.assertEqual(notes["other"].read_bytes(), neighbor)
+        self.assertTrue(markers["other"].exists())
+        self.assertEqual(library.read_text(encoding="utf-8"), upgraded)
 
     def test_stop_revalidates_binding_and_ignores_an_unstaged_assistant_message(self):
         self.init()

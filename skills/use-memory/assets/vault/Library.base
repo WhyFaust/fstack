@@ -21,9 +21,9 @@ properties:
 views:
   - type: table
     name: Сохранённые
-    filters: 'file(file.path.replace("/Records/", "/Approved/")) != null'
+    filters: '(note.fstack_status == "approved" || file(file.path.replace("/Records/", "/Approved/")) != null)'
     order: [formula.record, formula.project, note.kind, note.created]
   - type: table
     name: Inbox
-    filters: 'file(file.path.replace("/Records/", "/Approved/")) == null'
+    filters: '(note.fstack_status != "approved" && file(file.path.replace("/Records/", "/Approved/")) == null)'
     order: [formula.record, formula.project, note.kind, note.created]

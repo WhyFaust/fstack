@@ -232,6 +232,7 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("inbox")
     commands.add_parser("approve").add_argument("id")
     commands.add_parser("forget").add_argument("id")
+    commands.add_parser("migrate").add_argument("--prune-legacy", action="store_true")
     commands.add_parser("remember")
     commands.add_parser("pack")
     stage = commands.add_parser("stage")
@@ -291,6 +292,8 @@ def command(store: Store, args: argparse.Namespace) -> dict | list[dict] | str:
         return store.approve(binding, args.id)
     if args.command == "forget":
         return store.forget(binding, args.id)
+    if args.command == "migrate":
+        return store.migrate(binding, prune_legacy=args.prune_legacy)
     if args.command == "remember":
         value = read_json(sys.stdin.buffer, 32_768)
         return store.save(binding, _candidate(value), approved=True)
