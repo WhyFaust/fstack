@@ -172,15 +172,20 @@ def hook(store: Store, event: str, payload: dict) -> dict:
         token = pending.issue(key, scope, generation)
         return extra_context(
             event,
-            f"Память fstack, проект {binding.project}. ID поиска: {', '.join(ids) or '—'}. "
-            "Загрузи навык use-memory для правил записи. Только в режиме реализации и при наличии "
-            f"долговечной записи передай структурированный JSON в {prefix} pack через stdin. "
+            f"Память fstack, проект {binding.project}, режим {binding.mode}. ID поиска: {', '.join(ids) or '—'}. "
+            "Загрузи навык use-memory для правил записи. Перед завершением обычного хода сам оцени, "
+            "есть ли обоснованное долговечное решение, поправка или устойчивое предпочтение. "
+            "Опирайся на текущую работу, слова пользователя или проверяемый результат. "
+            "В режиме auto подготовь такое знание через remember. Разрешение уже даёт режим auto. "
+            "Сомнительное, но полезное знание можно направить в draft. "
+            "В режиме inbox подготовленные знания поступают на ручную проверку. "
+            "Для approve и forget нужно явное поручение пользователя. "
+            "В обычном режиме, если есть подходящая запись или явное поручение по памяти, "
+            f"передай структурированный JSON в {prefix} pack через stdin. "
             "Затем выполни отдельный точный вызов в оболочке из текущего cwd, подставив ASCII-строку "
             f"из JSON-ответа pack без кавычек вместо BASE64URL: "
             f"{prefix} stage --turn {token} --payload BASE64URL. "
-            "Для remember нужно подтверждение пользователя или его явное «запомни», "
-            "для approve и forget нужно его явное поручение. Остальные долговечные записи направляй в draft. "
-            "В режиме Plan и при отсутствии подходящей записи пропусти stage. Не включай токен в ответ.",
+            "В режиме Plan пропусти stage. Не включай токен в ответ.",
         )
 
     if staged is not None:
@@ -217,7 +222,7 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--vault", type=Path, required=True)
     init.add_argument("--repo", type=Path, required=True)
     init.add_argument("--project", required=True)
-    init.add_argument("--mode", choices=("auto", "inbox"), default="inbox")
+    init.add_argument("--mode", choices=("auto", "inbox"), default="auto")
     commands.add_parser("status")
     commands.add_parser("disable")
     search = commands.add_parser("search")

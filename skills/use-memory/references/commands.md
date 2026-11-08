@@ -24,8 +24,9 @@ python /path/to/memory.py disable
 python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
 ```
 
-Режим `auto` применяет подтверждённые записи, а режим `inbox` направляет
-кандидатов в Inbox. Открой новый чат и одобри хуки fstack в меню `/hooks`
+Режим по умолчанию `auto` сохраняет долговечные записи, которые Codex
+отобрал по текущей работе. Выбери `--mode inbox` для ручной проверки всех
+кандидатов. Открой новый чат и одобри хуки fstack в меню `/hooks`
 или через **Settings → Hooks** в Codex Desktop. Подключение локально для
 устройства. Используй одинаковый `--project` на каждом устройстве, где
 работаешь с этой памятью.
@@ -66,8 +67,9 @@ python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project
 }
 ```
 
-`action` принимает `remember` для подтверждённого факта или `draft` для
-кандидата. `kind` принимает `decision`, `preference` или `correction`.
+`action` принимает `remember` для обоснованной долговечной записи
+или `draft` для кандидата, который нужно проверить. `kind` принимает
+`decision`, `preference` или `correction`.
 В `candidate` можно передать `source` со ссылкой и `supersedes`
 с идентификатором предыдущей записи. Для обработки Inbox и удаления передай
 `{"action":"approve","id":"ID"}` или `{"action":"forget","id":"ID"}`.

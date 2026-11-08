@@ -53,9 +53,10 @@ class MemoryHookTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         return json.loads(result.stdout)
 
-    def init(self, mode="auto"):
+    def init(self, mode=None):
+        options = ("--mode", mode) if mode is not None else ()
         return self.cli(
-            "init", "--vault", str(self.vault), "--repo", str(self.repo), "--project", "pilot", "--mode", mode,
+            "init", "--vault", str(self.vault), "--repo", str(self.repo), "--project", "pilot", *options,
         )
 
     def hook(self, event, turn="turn-1", *, cwd=None, **extra):
