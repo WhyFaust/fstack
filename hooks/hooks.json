@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -E -s -B \"$PLUGIN_ROOT/skills/use-memory/scripts/memory.py\" hook SessionStart",
-            "commandWindows": "$env:PATH = (($env:PATH -split ';') -match '^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)') -join ';'; $localPython = Join-Path $PWD.ProviderPath 'python.exe'; $python = Get-Command python.exe -CommandType Application | Where-Object { $_.Source -ne $localPython } | Select-Object -First 1; if (!$python) { throw 'python.exe was not found on PATH' }; & $python.Source -E -s -B \"$env:PLUGIN_ROOT\\skills\\use-memory\\scripts\\memory.py\" hook SessionStart; exit $LASTEXITCODE",
+            "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" SessionStart",
+            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" SessionStart",
             "timeout": 5
           }
         ]
@@ -17,8 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -E -s -B \"$PLUGIN_ROOT/skills/use-memory/scripts/memory.py\" hook UserPromptSubmit",
-            "commandWindows": "$env:PATH = (($env:PATH -split ';') -match '^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)') -join ';'; $localPython = Join-Path $PWD.ProviderPath 'python.exe'; $python = Get-Command python.exe -CommandType Application | Where-Object { $_.Source -ne $localPython } | Select-Object -First 1; if (!$python) { throw 'python.exe was not found on PATH' }; & $python.Source -E -s -B \"$env:PLUGIN_ROOT\\skills\\use-memory\\scripts\\memory.py\" hook UserPromptSubmit; exit $LASTEXITCODE",
+            "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" UserPromptSubmit",
+            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" UserPromptSubmit",
             "timeout": 5
           }
         ]
@@ -29,8 +29,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -E -s -B \"$PLUGIN_ROOT/skills/use-memory/scripts/memory.py\" hook Stop",
-            "commandWindows": "$env:PATH = (($env:PATH -split ';') -match '^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)') -join ';'; $localPython = Join-Path $PWD.ProviderPath 'python.exe'; $python = Get-Command python.exe -CommandType Application | Where-Object { $_.Source -ne $localPython } | Select-Object -First 1; if (!$python) { throw 'python.exe was not found on PATH' }; & $python.Source -E -s -B \"$env:PLUGIN_ROOT\\skills\\use-memory\\scripts\\memory.py\" hook Stop; exit $LASTEXITCODE",
+            "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" Stop",
+            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" Stop",
             "timeout": 5
           }
         ]
@@ -42,8 +42,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -E -s -B \"$PLUGIN_ROOT/skills/use-memory/scripts/memory.py\" hook PostToolUse",
-            "commandWindows": "$env:PATH = (($env:PATH -split ';') -match '^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)') -join ';'; $localPython = Join-Path $PWD.ProviderPath 'python.exe'; $python = Get-Command python.exe -CommandType Application | Where-Object { $_.Source -ne $localPython } | Select-Object -First 1; if (!$python) { throw 'python.exe was not found on PATH' }; & $python.Source -E -s -B \"$env:PLUGIN_ROOT\\skills\\use-memory\\scripts\\memory.py\" hook PostToolUse; exit $LASTEXITCODE",
+            "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" PostToolUse",
+            "commandWindows": "& \"$env:PLUGIN_ROOT\\hooks\\memory.ps1\" PostToolUse",
             "timeout": 5
           }
         ]

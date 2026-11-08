@@ -2,15 +2,22 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import chdir, closing
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "skills" / "use-memory" / "scripts" / "memory.py"
+sys.path.insert(0, str(SCRIPT.parent))
+import memory
 TOKEN = re.compile(r"stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})")
 CANDIDATE = {"kind": "decision", "title": "Heliotrope convention", "body": "The heliotrope marker is retained."}
 REMEMBER = {"action": "remember", "candidate": CANDIDATE}
@@ -20,6 +27,8 @@ class MemoryHookTests(unittest.TestCase):
     def setUp(self):
         workspace = self.enterContext(tempfile.TemporaryDirectory(prefix="fstack hooks "))
         self.root = Path(workspace).resolve()
+        cache = str(self.root / "cache")
+        self.enterContext(patch.dict(os.environ, {"LOCALAPPDATA": cache, "XDG_CACHE_HOME": cache}))
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.vault = self.root / "vault"
@@ -73,8 +82,9 @@ class MemoryHookTests(unittest.TestCase):
 
     def stage_command(self, token, action):
         encoded = self.cli("pack", payload=action)
-        python = "python.exe" if os.name == "nt" else "python3"
-        return encoded, f'{python} "{SCRIPT}" stage --turn {token} --payload {encoded}'
+        invoke = "& " if os.name == "nt" else ""
+        python = Path(sys.executable).resolve()
+        return encoded, f'{invoke}"{python}" -E -s -B "{SCRIPT}" stage --turn {token} --payload {encoded}'
 
     def post(self, command, turn="turn-1", **overrides):
         return self.hook(
@@ -212,6 +222,48 @@ class MemoryHookTests(unittest.TestCase):
         self.assertEqual(self.hook("Stop", "turn-2"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
 
+    def test_steering_revokes_the_action_even_when_database_write_is_locked(self):
+        self.init()
+        self.stage(self.token(), REMEMBER)
+        with closing(sqlite3.connect(self.state / "pending.sqlite3")) as locked, locked:
+            locked.execute("BEGIN IMMEDIATE")
+            self.assertIn("systemMessage", self.hook("UserPromptSubmit", prompt="Withdraw"))
+        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.cli("search", "heliotrope"), [])
+
+    def test_slow_vault_save_does_not_block_steering_in_another_session(self):
+        self.init()
+        self.stage(self.token(), REMEMBER)
+        first_session = "first-session"
+        first_token = TOKEN.search(self.context(session_id=first_session))[1]
+        _, command = self.stage_command(first_token, REMEMBER)
+        self.assertEqual(self.post(command, session_id=first_session), {})
+        saving, resume = Event(), Event()
+        store = memory.Store(self.state)
+        save = store.save
+
+        def slow_save(*args, **kwargs):
+            saving.set()
+            if not resume.wait(10):
+                raise RuntimeError("Vault test did not release the save")
+            return save(*args, **kwargs)
+
+        payload = {
+            "hook_event_name": "Stop", "cwd": str(self.repo), "session_id": first_session,
+            "turn_id": "turn-1", "stop_hook_active": False,
+        }
+        with chdir(self.repo), patch.object(store, "save", slow_save), ThreadPoolExecutor(1) as pool:
+            result = pool.submit(memory.hook, store, "Stop", payload)
+            try:
+                self.assertTrue(saving.wait(5))
+                self.assertIn("hookSpecificOutput", self.hook("UserPromptSubmit", prompt="Withdraw"))
+                self.assertEqual(self.hook("Stop"), {})
+                self.assertEqual(self.cli("search", "heliotrope"), [])
+            finally:
+                resume.set()
+            self.assertEqual(result.result(timeout=10), {})
+        self.assertEqual(len(self.cli("search", "heliotrope")), 1)
+
     def test_post_tool_use_only_accepts_the_exact_shell_invocation(self):
         self.init()
         token = self.token()
@@ -233,9 +285,21 @@ class MemoryHookTests(unittest.TestCase):
 
     def test_rejects_pending_state_inside_the_workspace(self):
         self.state = self.repo / "fake-codex-home"
-        self.init()
+        self.cli("init", "--vault", str(self.vault), "--repo", str(self.repo), "--project", "pilot", ok=False)
         self.assertIn("systemMessage", self.hook("UserPromptSubmit", prompt="heliotrope"))
         self.assertFalse((self.state / "pending.sqlite3").exists())
+
+    def test_init_rejects_a_python_binary_inside_the_worktree(self):
+        self.git_init(self.repo)
+        nested = self.repo / "nested"
+        nested.mkdir()
+        executable = self.repo / ".venv" / "python"
+        executable.parent.mkdir()
+        executable.write_bytes(b"not a trusted Python")
+        executable.chmod(0o755)
+        with patch.object(memory.sys, "executable", str(executable)):
+            with self.assertRaises(memory.StoreError):
+                memory.pinned_python(nested, nested)
 
     def test_pending_state_rejects_a_link_to_an_outside_directory(self):
         self.init()
@@ -261,12 +325,26 @@ class MemoryHookTests(unittest.TestCase):
             "print(json.dumps({'args': sys.argv[1:], 'input': json.load(sys.stdin.buffer)}))\n",
             encoding="utf-8",
         )
+        (plugin / "hooks").mkdir()
+        for launcher in ("memory.sh", "memory.ps1"):
+            shutil.copyfile(ROOT / "hooks" / launcher, plugin / "hooks" / launcher)
         environment = os.environ.copy()
         environment["PLUGIN_ROOT"] = str(plugin)
-        path = [str(Path(sys.executable).parent), environment["PATH"]]
+        profile = self.root / "isolated profile"
+        environment["CODEX_HOME"] = str(profile)
+        pin = profile / "fstack" / "memory" / "python-executable"
+        pin.parent.mkdir(parents=True)
+        pin.write_text(f"{Path(sys.executable).resolve()}\n", encoding="utf-8")
+        self.git_init(self.repo)
+        nested = self.repo / "nested"
+        nested.mkdir()
+        fake_bin = self.repo / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        fake_bin.mkdir(parents=True)
+        fake = fake_bin / ("python.exe" if os.name == "nt" else "python3")
+        fake.write_text("not a Python executable", encoding="utf-8")
+        fake.chmod(0o755)
+        path = [str(fake_bin), str(Path(sys.executable).parent), environment["PATH"]]
         if os.name == "nt":
-            (self.repo / "python.exe").write_bytes(b"not a Python executable")
-            path[:0] = [".", str(self.repo)]
             shells = [shutil.which("powershell.exe")]
             self.assertIsNotNone(shells[0])
             if pwsh := shutil.which("pwsh.exe"):
@@ -283,7 +361,7 @@ class MemoryHookTests(unittest.TestCase):
                 with self.subTest(event=event, shell=shell[0]):
                     result = subprocess.run(
                         [*shell, command],
-                        cwd=self.repo,
+                        cwd=nested,
                         env=environment,
                         input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                         capture_output=True,
@@ -291,3 +369,21 @@ class MemoryHookTests(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
                     self.assertEqual(json.loads(result.stdout), {"args": ["hook", event], "input": payload})
+        pin.write_text(f"{fake}\n", encoding="utf-8")
+        for shell in shells:
+            with self.subTest(unsafe_pin=shell[0]):
+                result = subprocess.run(
+                    [*shell, command], cwd=nested, env=environment, input=b"{}", capture_output=True, timeout=10,
+                )
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b"", b""))
+        unsafe_profile = self.repo / "unsafe profile"
+        unsafe_pin = unsafe_profile / "fstack" / "memory" / "python-executable"
+        unsafe_pin.parent.mkdir(parents=True)
+        unsafe_pin.write_text(f"{Path(sys.executable).resolve()}\n", encoding="utf-8")
+        for shell in shells:
+            with self.subTest(unsafe_profile=shell[0]):
+                result = subprocess.run(
+                    [*shell, command], cwd=nested, env={**environment, "CODEX_HOME": str(unsafe_profile)},
+                    input=b"{}", capture_output=True, timeout=10,
+                )
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b"", b""))

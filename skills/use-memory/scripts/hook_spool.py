@@ -10,16 +10,19 @@ import stat
 import time
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from itertools import islice
 from pathlib import Path
 from typing import BinaryIO
 
-from memory_store import StoreError, _directory, _info
+from memory_store import StoreError, _delete, _directory, _info, _read_text, _write_text
 
 
 MAX_STAGE_BYTES = 20_000
 TTL_SECONDS = 3600
 TURN_LIMIT = 256
 TOKEN = re.compile(r"([0-9a-f]{64})\.([0-9a-f]{32})")
+TURN_KEY = re.compile(r"[0-9a-f]{64}")
+LOCAL_MODE = 0o777 if os.name == "nt" else 0o700
 
 
 def _unique_fields(items: list[tuple[str, object]]) -> dict[str, object]:
@@ -47,18 +50,26 @@ def digest(*parts: str) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def ensure_state_directory(state_dir: Path, cwd: Path, *, create: bool = False) -> bool:
+    if state_dir.is_relative_to(cwd) or any(
+        _info(parent / ".git") is not None for parent in (state_dir, *state_dir.parents)
+    ):
+        raise StoreError("Memory hook state must be outside the workspace")
+    return _directory(state_dir, create=create, mode=LOCAL_MODE)
+
+
 class PendingTurns:
     def __init__(self, state_dir: Path, cwd: Path):
         self.state_dir = state_dir
         self.cwd = cwd
         self.path = state_dir / "pending.sqlite3"
+        self.generations = state_dir / "pending-generations"
+
+    def _state_available(self, *, create: bool = False) -> bool:
+        return ensure_state_directory(self.state_dir, self.cwd, create=create)
 
     def _available(self, *, create: bool = False) -> bool:
-        if self.state_dir.is_relative_to(self.cwd) or any(
-            _info(parent / ".git") is not None for parent in (self.state_dir, *self.state_dir.parents)
-        ):
-            raise StoreError("Memory hook state must be outside the workspace")
-        if not _directory(self.state_dir, create=create):
+        if not self._state_available(create=create):
             return False
         if create and _info(self.path) is None:
             try:
@@ -99,17 +110,45 @@ class PendingTurns:
             )
             yield connection
 
-    def invalidate(self, key: str) -> None:
-        with self._write() as connection:
-            if connection is not None:
-                connection.execute("DELETE FROM pending WHERE turn=? OR expires<?", (key, int(time.time())))
+    def _generation(self, key: str) -> str | None:
+        if not self._state_available():
+            return None
+        return _read_text(self.generations / key)
 
-    def issue(self, key: str, scope: str) -> str:
-        now = int(time.time())
+    def invalidate(self, key: str) -> str | None:
+        if self._generation(key) is None:
+            return None
         nonce = secrets.token_hex(16)
+        _write_text(self.generations / key, nonce, replace=True)
+        return nonce
+
+    def _new_generation(self, key: str) -> str:
+        self._state_available(create=True)
+        _directory(self.generations, create=True, mode=LOCAL_MODE)
+        now = time.time()
+        with os.scandir(self.generations) as entries:
+            paths = list(islice(entries, TURN_LIMIT + 1))
+        remaining = len(paths)
+        for entry in paths:
+            if TURN_KEY.fullmatch(entry.name) and entry.is_file(follow_symlinks=False):
+                if now - entry.stat(follow_symlinks=False).st_mtime > TTL_SECONDS:
+                    if _delete(Path(entry.path)):
+                        remaining -= 1
+        if remaining >= TURN_LIMIT:
+            raise StoreError("Pending memory generation limit exceeded")
+        nonce = secrets.token_hex(16)
+        if not _write_text(self.generations / key, nonce):
+            raise StoreError("Memory turn was replaced by a newer input")
+        return nonce
+
+    def issue(self, key: str, scope: str, generation: str | None) -> str:
+        now = int(time.time())
+        nonce = generation if generation is not None else self._new_generation(key)
         with self._write(create=True) as connection:
             if connection is None:
                 raise StoreError("Cannot open pending memory database")
+            if self._generation(key) != nonce:
+                raise StoreError("Memory turn was replaced by a newer input")
             connection.execute("DELETE FROM pending WHERE expires<?", (now,))
             if connection.execute("SELECT count(*) FROM pending").fetchone()[0] >= TURN_LIMIT:
                 raise StoreError("Pending memory turn limit exceeded")
@@ -123,37 +162,41 @@ class PendingTurns:
 
     def is_current(self, token: str, scope: str) -> bool:
         match = TOKEN.fullmatch(token)
-        if match is None or not self._available():
+        if match is None or self._generation(match[1]) != match[2] or not self._available():
             return False
         uri = f"{self.path.as_uri()}?mode=ro"
         with closing(sqlite3.connect(uri, timeout=1, uri=True)) as connection:
-            return connection.execute(
+            current = connection.execute(
                 "SELECT 1 FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=?",
                 (*match.groups(), scope, int(time.time())),
             ).fetchone() is not None
+        return current and self._generation(match[1]) == match[2]
 
     def stage(self, key: str, token: str, scope: str, action: dict) -> None:
         match = TOKEN.fullmatch(token)
-        if match is None or match[1] != key:
+        if match is None or match[1] != key or self._generation(key) != match[2]:
             return
         serialized = json.dumps(action, ensure_ascii=False, separators=(",", ":"))
         with self._write() as connection:
-            if connection is not None:
+            if connection is not None and self._generation(key) == match[2]:
                 connection.execute(
                     "UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? "
                     "AND expires>=? AND (action IS NULL OR action=?)",
                     (serialized, key, match[2], scope, int(time.time()), serialized),
                 )
 
-    @contextmanager
-    def consume(self, key: str, scope: str) -> Iterator[object]:
+    def consume(self, key: str, scope: str) -> object:
+        nonce = self._generation(key)
+        if nonce is None:
+            return None
         with self._write() as connection:
             if connection is None:
-                yield None
-                return
+                return None
             row = connection.execute(
-                "SELECT action FROM pending WHERE turn=? AND scope=? AND expires>=?",
-                (key, scope, int(time.time())),
+                "SELECT action FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=?",
+                (key, nonce, scope, int(time.time())),
             ).fetchone()
-            yield json.loads(row[0]) if row and row[0] else None
-            connection.execute("DELETE FROM pending WHERE turn=?", (key,))
+            connection.execute("DELETE FROM pending WHERE turn=? AND nonce=?", (key, nonce))
+        if row and row[0] and self._generation(key) == nonce:
+            return json.loads(row[0])
+        return None

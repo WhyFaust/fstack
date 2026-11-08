@@ -107,10 +107,10 @@ def check_memory_hooks(root, relative):
     hooks = json.loads(config.read_text(encoding='utf-8'))['hooks']
     require(set(hooks) == {'SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'},
             'Неверный набор событий памяти')
-    runtime = contained_file(root, root, 'skills/use-memory/scripts/memory.py')
-    patterns = {
-        'command': r'"\$PLUGIN_ROOT/([^"]+)" hook (\w+)$',
-        'commandWindows': r'"\$env:PLUGIN_ROOT\\([^"]+)" hook (\w+); exit \$LASTEXITCODE$',
+    contained_file(root, root, 'skills/use-memory/scripts/memory.py')
+    launchers = {
+        'command': (r'/bin/sh "\$PLUGIN_ROOT/([^"]+)" (\w+)', 'hooks/memory.sh'),
+        'commandWindows': (r'& "\$env:PLUGIN_ROOT\\([^"]+)" (\w+)', 'hooks/memory.ps1'),
     }
     for event, groups in hooks.items():
         require(len(groups) == 1 and len(groups[0]['hooks']) == 1, f'{event}: ожидалась одна команда памяти')
@@ -118,11 +118,11 @@ def check_memory_hooks(root, relative):
             require(groups[0].get('matcher') == '^Bash$', f'{event}: ожидался фильтр оболочки')
         handler = groups[0]['hooks'][0]
         require(handler['type'] == 'command', f'{event}: ожидался командный хук')
-        for field, pattern in patterns.items():
-            target = re.search(pattern, handler[field])
+        for field, (pattern, relative_launcher) in launchers.items():
+            target = re.fullmatch(pattern, handler[field])
             require(target and target[2] == event, f'{event}: неверная команда {field}')
             script = contained_file(root, root, target[1].replace('\\', '/'))
-            require(script == runtime, f'{event}: команда запускает другой ресурс')
+            require(script == contained_file(root, root, relative_launcher), f'{event}: команда запускает другой ресурс')
 
 
 def check(root=ROOT):

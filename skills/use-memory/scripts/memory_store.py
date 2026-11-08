@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -8,8 +9,9 @@ import sqlite3
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +55,7 @@ STOP_WORDS = frozenset(
 MAX_FILE = 32768
 MAX_ENTRIES = 4096
 GIT_TIMEOUT = 3
+LOCK_TIMEOUT = 3
 MEMORY_MARKER = "fstack_memory: 1"
 APPROVED_MARKER = "fstack_approved: 1"
 FORGOTTEN_MARKER = "fstack_forgotten: 1"
@@ -126,14 +129,14 @@ def _info(path: Path) -> os.stat_result | None:
     return info
 
 
-def _directory(path: Path, *, create: bool = False) -> bool:
+def _directory(path: Path, *, create: bool = False, mode: int = 0o777) -> bool:
     for current in (*reversed(path.parents), path):
         info = _info(current)
         if info is None:
             if not create:
                 return False
             try:
-                current.mkdir(exist_ok=True)
+                current.mkdir(mode=mode, exist_ok=True)
             except OSError as error:
                 raise StoreError("Cannot create memory directory") from error
             info = _info(current)
@@ -214,6 +217,63 @@ def _delete(path: Path) -> bool:
     except OSError as error:
         raise StoreError("Cannot remove memory file") from error
     return True
+
+
+def _lock_directory() -> Path:
+    local_data = os.environ.get("LOCALAPPDATA" if os.name == "nt" else "XDG_CACHE_HOME")
+    cache = Path(local_data) if local_data else Path.home() / ".cache"
+    if not cache.is_absolute() or (os.name == "nt" and cache.drive.startswith("\\\\")):
+        raise StoreError("Memory locks require a local absolute cache directory")
+    return _path(cache / "fstack" / "memory-locks")
+
+
+def _try_project_lock(descriptor: int) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@contextmanager
+def _mutation_lock(project: Path, vault: Path) -> Iterator[None]:
+    directory = _lock_directory()
+    if directory.is_relative_to(vault):
+        raise StoreError("Local memory lock directory is inside the vault")
+    if not _directory(project):
+        raise StoreError("Memory project directory is unavailable")
+    info = _info(project)
+    if info is None or not info.st_ino:
+        raise StoreError("Cannot identify the physical memory project")
+    key = hashlib.sha256(f"{info.st_dev}:{info.st_ino}".encode("ascii")).hexdigest()
+    _directory(directory, create=True, mode=0o700)
+    path = directory / f"{key}.lock"
+    _file(path)
+    try:
+        descriptor = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError as error:
+        raise StoreError("Cannot open the local memory lock") from error
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise StoreError("Local memory lock is not a regular file")
+        deadline = time.monotonic() + LOCK_TIMEOUT
+        while True:
+            try:
+                _try_project_lock(descriptor)
+                break
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    raise StoreError("Cannot acquire the local memory lock") from error
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise StoreError("Timed out waiting for the local memory lock") from error
+                time.sleep(min(0.025, remaining))
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def _git_executable(worktree: Path) -> Path:
@@ -519,6 +579,13 @@ class Store:
         if type(approved) is not bool:
             raise StoreError("Invalid memory approval")
         root = self._project_root(binding)
+        with _mutation_lock(root, binding.root.parent):
+            return self._save(root, fields, approved and binding.mode == "auto", session_id, turn_id)
+
+    def _save(
+        self, root: Path, fields: dict[str, str], approved: bool,
+        session_id: str | None, turn_id: str | None,
+    ) -> dict:
         identity = {key: value for key, value in fields.items() if key != "source"}
         entry_id = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         provenance = {
@@ -541,8 +608,8 @@ class Store:
             if _file(root / "Forgotten" / path.name):
                 _delete(path)
                 raise StoreError("Memory entry is unavailable")
-        if approved and binding.mode == "auto":
-            return self.approve(binding, entry_id)
+        if approved:
+            return self._approve(root, entry_id)
         approval = _parse(root / "Approved" / path.name, entry_id, APPROVED_MARKER)
         record = self._record(root, entry_id, approval)
         if record is None:
@@ -570,8 +637,13 @@ class Store:
         return sorted(result, key=lambda entry: (entry.get("created", ""), entry["id"]))
 
     def approve(self, binding: Binding, entry_id: str) -> dict:
+        entry_id = _entry_id(entry_id)
         root = self._project_root(binding)
-        filename = f"{_entry_id(entry_id)}.md"
+        with _mutation_lock(root, binding.root.parent):
+            return self._approve(root, entry_id)
+
+    def _approve(self, root: Path, entry_id: str) -> dict:
+        filename = f"{entry_id}.md"
         approvals, hidden = self._statuses(root)
         if entry_id in hidden:
             raise StoreError("Memory entry is unavailable")
@@ -593,8 +665,13 @@ class Store:
         return record
 
     def forget(self, binding: Binding, entry_id: str) -> dict:
+        entry_id = _entry_id(entry_id)
         root = self._project_root(binding)
-        filename = f"{_entry_id(entry_id)}.md"
+        with _mutation_lock(root, binding.root.parent):
+            return self._forget(root, entry_id)
+
+    def _forget(self, root: Path, entry_id: str) -> dict:
+        filename = f"{entry_id}.md"
         tombstone = root / "Forgotten" / filename
         record = root / "Records" / filename
         if not _file(tombstone):

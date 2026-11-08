@@ -1,3 +1,4 @@
+import errno
 import os
 import sqlite3
 import subprocess
@@ -6,6 +7,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "use-memory" / "scripts"))
@@ -18,6 +20,9 @@ class MemoryStoreTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.temp = Path(temporary.name).resolve()
+        locks = patch("memory_store._lock_directory", return_value=self.temp / "locks")
+        locks.start()
+        self.addCleanup(locks.stop)
         self.repo = self.temp / "repo"
         self.repo.mkdir()
         self.vault = self.temp / "vault"
@@ -191,28 +196,84 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertIn("пять секунд", record.read_text(encoding="utf-8"))
         self.assertEqual(self.store.get(binding, approved["id"]), approved)
 
-    def test_forget_interleaved_with_approval_keeps_predecessor_hidden(self):
-        binding = self.setup_store()
+    def test_approval_and_forget_follow_lock_order_across_profiles(self):
+        for first in ("approve", "forget"):
+            with self.subTest(first=first):
+                self.assert_approval_and_forget_order(first)
+
+    def assert_approval_and_forget_order(self, first):
+        binding = self.store.setup(self.vault, self.repo, first, "auto")
+        other_store = Store(self.temp / "other-profile")
+        other_binding = other_store.setup(self.vault, self.repo, first, "auto")
         predecessor = self.store.save(binding, self.candidate, approved=True)
         correction = dict(self.candidate, body="Использовать пять секунд.", supersedes=predecessor["id"])
         draft = self.store.save(binding, correction, approved=False)
         record = self.entry_path(binding, "Records", draft["id"])
+        approval = self.entry_path(binding, "Approved", draft["id"])
         original = record.read_bytes()
+        paused, contended, resume = Event(), Event(), Event()
         write_text = memory_store._write_text
+        try_lock = memory_store._try_project_lock
+        first_folder = "Approved" if first == "approve" else "Forgotten"
+        second = "forget" if first == "approve" else "approve"
 
-        def forget_before_approval_is_published(path, text):
-            if path.parent.name == "Approved":
-                self.store.forget(binding, draft["id"])
+        def pause_first_marker(path, text):
+            if path.parent.name == first_folder:
+                paused.set()
+                self.assertTrue(resume.wait(5), "first operation was not released")
             return write_text(path, text)
 
-        with patch("memory_store._write_text", side_effect=forget_before_approval_is_published):
-            with self.assertRaises(StoreError):
-                self.store.approve(binding, draft["id"])
+        def observe_contention(descriptor):
+            try:
+                try_lock(descriptor)
+            except OSError:
+                contended.set()
+                raise
+
+        with (patch("memory_store._write_text", side_effect=pause_first_marker),
+              patch("memory_store._try_project_lock", side_effect=observe_contention),
+              ThreadPoolExecutor(max_workers=2) as pool):
+            first_result = pool.submit(getattr(self.store, first), binding, draft["id"])
+            try:
+                self.assertTrue(paused.wait(5), "first operation did not reach marker")
+                second_result = pool.submit(getattr(other_store, second), other_binding, draft["id"])
+                self.assertTrue(contended.wait(2), "second operation did not contend for the same lock")
+            finally:
+                resume.set()
+            if first == "approve":
+                self.assertEqual(first_result.result()["status"], "memory")
+                self.assertEqual(second_result.result()["status"], "forgotten")
+                self.assertTrue(approval.is_file())
+                expected = []
+            else:
+                self.assertEqual(first_result.result()["status"], "forgotten")
+                with self.assertRaises(StoreError):
+                    second_result.result()
+                self.assertFalse(approval.exists())
+                expected = [predecessor]
         self.assertFalse(record.exists())
-        self.assertEqual(self.store.search(binding, "порог"), [])
+        self.assertEqual(self.store.search(binding, "порог"), expected)
         record.write_bytes(original)
-        self.assertEqual(self.store.search(binding, "порог"), [])
+        self.assertEqual(self.store.search(binding, "порог"), expected)
         self.assertEqual(self.store.inbox(binding), [])
+
+    def test_mutation_fails_closed_when_lock_is_busy_or_unavailable(self):
+        binding = self.setup_store()
+        project = binding.root / "Projects" / binding.project
+        with memory_store._mutation_lock(project, self.vault):
+            with patch("memory_store.LOCK_TIMEOUT", 0), self.assertRaisesRegex(StoreError, "Timed out"):
+                self.store.save(binding, self.candidate, approved=True)
+        with patch("memory_store._try_project_lock", side_effect=OSError(errno.ENOSYS, "unavailable")):
+            with self.assertRaisesRegex(StoreError, "Cannot acquire"):
+                self.store.save(binding, self.candidate, approved=True)
+        inside_vault = self.vault / "unsafe-locks"
+        with patch("memory_store._lock_directory", return_value=inside_vault):
+            with self.assertRaisesRegex(StoreError, "inside the vault"):
+                self.store.save(binding, self.candidate, approved=True)
+        self.assertFalse(inside_vault.exists())
+        self.assertEqual(list((project / "Records").iterdir()), [])
+        entry = self.store.save(binding, self.candidate, approved=True)
+        self.assertEqual(entry["status"], "memory")
 
     def test_search_fallback_stays_within_the_connected_project(self):
         binding = self.setup_store()

@@ -17,7 +17,8 @@ python /path/to/memory.py disable
 Выполни команду только с явно выбранным vault, рабочей папкой и идентификатором
 проекта. Vault должен содержать каталог конфигурации `.obsidian`. Git worktree
 одного репозитория используют одну привязку. Для папки вне Git привязка действует
-из этой папки.
+из этой папки. Для `init` возьми Python, установленный вне рабочей папки.
+Хуки будут использовать этот интерпретатор. После смены Python повтори настройку.
 
 ```text
 python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
@@ -35,13 +36,19 @@ python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project
 вернёт строку base64url в JSON. Возьми содержимое строки без JSON-кавычек
 и вызови отдельную команду в той же рабочей папке.
 
-```text
-python "/absolute/path/to/memory.py" stage --turn TOKEN --payload BASE64URL
+```bash
+"/absolute/path/to/python3" -E -s -B "/absolute/path/to/memory.py" stage --turn TOKEN --payload BASE64URL
 ```
 
-Используй абсолютный путь к установленному скрипту и токен текущего
-пользовательского запроса. Не добавляй к команде пайп, перенаправление
-или другие команды. Хук принимает данные только из такого вызова.
+На Windows используй форму PowerShell.
+
+```powershell
+& "C:\absolute\path\to\python.exe" -E -s -B "C:\absolute\path\to\memory.py" stage --turn TOKEN --payload BASE64URL
+```
+
+Возьми готовый префикс команды и токен из контекста хука. Подставь только
+строку из `pack`. Хук принимает один вызов без пайпа, перенаправления
+и других команд.
 Результат `{"staged": true}` означает, что команда прошла проверку.
 Запись применяет `Stop`. Токен и base64url предназначены для вызова
 инструмента, в ответе пользователю их не повторяй.

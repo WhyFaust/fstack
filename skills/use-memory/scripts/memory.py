@@ -11,8 +11,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from hook_spool import MAX_STAGE_BYTES, TOKEN, PendingTurns, digest, read_json
-from memory_store import ENTRY_ID, Binding, Store, StoreError, _candidate
+from hook_spool import MAX_STAGE_BYTES, TOKEN, PendingTurns, digest, ensure_state_directory, read_json
+from memory_store import ENTRY_ID, Binding, Store, StoreError, _candidate, _info, _write_text
 
 
 EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop")
@@ -55,11 +55,18 @@ def decode_action(payload: str) -> dict:
     return memory_action(read_json(io.BytesIO(data), MAX_STAGE_BYTES))
 
 
-def quoted_script() -> str:
-    script = str(Path(__file__).resolve())
-    if any(char in script for char in '"`$\r\n') or (os.name != "nt" and "\\" in script):
-        raise StoreError("Installed memory script path cannot be used in a shell command")
-    return f'"{script}"'
+def _quoted_path(path: Path) -> str:
+    text = str(path.resolve())
+    if any(char in text for char in '"`$\r\n') or (os.name != "nt" and "\\" in text):
+        raise StoreError("Memory command path cannot be used in a shell command")
+    return f'"{text}"'
+
+
+def command_prefix() -> str:
+    python = _quoted_path(Path(sys.executable))
+    script = _quoted_path(Path(__file__))
+    invoke = "& " if os.name == "nt" else ""
+    return f"{invoke}{python} -E -s -B {script}"
 
 
 def posted_stage(payload: dict) -> tuple[str, dict] | None:
@@ -77,9 +84,9 @@ def posted_stage(payload: dict) -> tuple[str, dict] | None:
         or tool_response.strip() != json.dumps(RECEIPT)
     ):
         return None
-    script = re.escape(quoted_script())
+    prefix = re.escape(command_prefix())
     command = re.fullmatch(
-        rf"(?:python|python3)(?:\.exe)? {script} stage --turn (?P<token>{TOKEN.pattern}) "
+        rf"{prefix} stage --turn (?P<token>{TOKEN.pattern}) "
         rf"--payload (?P<encoded>[A-Za-z0-9_-]{{1,{MAX_PAYLOAD_CHARS}}})",
         tool_input["command"],
     )
@@ -124,8 +131,9 @@ def hook(store: Store, event: str, payload: dict) -> dict:
         return {}
     key = digest(session_id, turn_id)
     pending = PendingTurns(store.state_dir, cwd)
+    generation = None
     if event == "UserPromptSubmit" or (event == "Stop" and plan):
-        pending.invalidate(key)
+        generation = pending.invalidate(key)
     if plan:
         return {}
     staged = posted_stage(payload) if event == "PostToolUse" else None
@@ -136,7 +144,7 @@ def hook(store: Store, event: str, payload: dict) -> dict:
         return {}
     scope = scope_id(binding, cwd)
     if event == "UserPromptSubmit":
-        script = quoted_script()
+        prefix = command_prefix()
         prompt = payload.get("prompt")
         ids = []
         if isinstance(prompt, str) and prompt.strip():
@@ -145,16 +153,15 @@ def hook(store: Store, event: str, payload: dict) -> dict:
                 ids = [entry["id"] for entry in results if ENTRY_ID.fullmatch(entry["id"])]
             except HOOK_ERRORS:
                 pass
-        token = pending.issue(key, scope)
-        python = "python.exe" if os.name == "nt" else "python3"
+        token = pending.issue(key, scope, generation)
         return extra_context(
             event,
             f"Память fstack, проект {binding.project}. ID поиска: {', '.join(ids) or '—'}. "
             "Загрузи навык use-memory для правил записи. Только в режиме реализации и при наличии "
-            f"долговечной записи передай структурированный JSON в {python} {script} pack через stdin. "
+            f"долговечной записи передай структурированный JSON в {prefix} pack через stdin. "
             "Затем выполни отдельный точный вызов в оболочке из текущего cwd, подставив ASCII-строку "
             f"из JSON-ответа pack без кавычек вместо BASE64URL: "
-            f'{python} {script} stage --turn {token} --payload BASE64URL. '
+            f"{prefix} stage --turn {token} --payload BASE64URL. "
             "Для remember нужно подтверждение пользователя или его явное «запомни», "
             "для approve и forget нужно его явное поручение. Остальные долговечные записи направляй в draft. "
             "В режиме Plan и при отсутствии подходящей записи пропусти stage. Не включай токен в ответ.",
@@ -163,9 +170,10 @@ def hook(store: Store, event: str, payload: dict) -> dict:
     if staged is not None:
         pending.stage(key, staged[0], scope, staged[1])
         return {}
-    with pending.consume(key, scope) as action_data:
-        if action_data is None:
-            return {}
+    action_data = pending.consume(key, scope)
+    if action_data is None:
+        return {}
+    try:
         request = memory_action(action_data)
         action = request["action"]
         if action == "approve":
@@ -180,6 +188,8 @@ def hook(store: Store, event: str, payload: dict) -> dict:
                 session_id=session_id,
                 turn_id=turn_id,
             )
+    except HOOK_ERRORS:
+        return {"systemMessage": "Не удалось применить операцию памяти fstack. Повтори поручение в новом ходе."}
     return {}
 
 
@@ -217,10 +227,29 @@ def _status(binding: Binding | None) -> dict:
     }
 
 
+def pinned_python(repo: Path, cwd: Path) -> Path:
+    python = Path(sys.executable).resolve(strict=True)
+    if (
+        python.is_relative_to(repo.resolve())
+        or python.is_relative_to(cwd)
+        or any(_info(parent / ".git") is not None for parent in python.parents)
+        or not python.is_file()
+        or not os.access(python, os.X_OK)
+        or any(char in str(python) for char in "\r\n")
+    ):
+        raise StoreError("Initialize memory with a trusted Python installed outside the workspace")
+    return python
+
+
 def command(store: Store, args: argparse.Namespace) -> dict | list[dict] | str:
     cwd = Path.cwd()
     if args.command == "init":
-        return _status(store.setup(args.vault, args.repo, args.project, args.mode))
+        python = pinned_python(args.repo, cwd)
+        _quoted_path(python)
+        ensure_state_directory(store.state_dir, args.repo.resolve(), create=True)
+        binding = store.setup(args.vault, args.repo, args.project, args.mode)
+        _write_text(store.state_dir / "python-executable", f"{python}\n", replace=True)
+        return _status(binding)
     if args.command == "disable":
         return {"disabled": store.disable(cwd)}
     if args.command == "pack":
