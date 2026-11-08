@@ -5,7 +5,7 @@ filters:
     - 'file.ext == "md"'
     - 'fstack_memory == 1'
     - '(file(file.folder + "/" + file.basename + "-forgotten.json") == null && file(file.path.replace("/Records/", "/Forgotten/")) == null)'
-    - '!this.file.path.endsWith("/Project.md") || file.inFolder(this.file.folder)'
+    - 'this.file.properties.fstack_memory_project == null || file.folder == "Codex Memory/Projects/" + this.file.properties.fstack_memory_project + "/Records"'
 formulas:
   record: 'link(file.path, title)'
   project: 'file.folder.split("/")[2]'

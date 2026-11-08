@@ -178,6 +178,10 @@ class MemoryHookTests(unittest.TestCase):
         self.assertEqual(self.hook("Stop"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
         entry = self.cli("inbox")[0]
+        projects = self.vault / "Codex Memory" / "Projects"
+        project = projects / "pilot"
+        record = project / "Records" / f'{entry["id"]}.md'
+        self.assertIn('project_link: "[[Codex Memory/Projects/pilot/pilot|pilot]]"', record.read_text(encoding="utf-8"))
         self.stage(self.token("turn-2"), {"action": "approve", "id": entry["id"]}, "turn-2")
         self.assertEqual(self.hook("Stop", "turn-2"), {})
         self.assertEqual(self.cli("inbox"), [])
@@ -185,8 +189,8 @@ class MemoryHookTests(unittest.TestCase):
         self.stage(self.token("turn-3"), {"action": "forget", "id": entry["id"]}, "turn-3")
         self.assertEqual(self.hook("Stop", "turn-3"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
-        project = self.vault / "Codex Memory" / "Projects" / "pilot"
-        self.assertEqual({path.name for path in project.iterdir()}, {"Project.md", "Records"})
+        self.assertEqual({path.name for path in project.iterdir()}, {"Records", "pilot.md"})
+        self.assertIn("[[Codex Memory/Projects|Все проекты]]", (project / "pilot.md").read_text(encoding="utf-8"))
         tombstone, = (project / "Records").iterdir()
         self.assertEqual(tombstone.name, f'{entry["id"]}-forgotten.json')
         self.assertEqual(json.loads(tombstone.read_bytes()), {"id": entry["id"], "supersedes": None})

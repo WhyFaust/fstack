@@ -169,7 +169,8 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(forget_results, [{"id": correction["id"], "status": "forgotten"}])
         tombstone = self.tombstone_path(binding, correction["id"])
         self.assertEqual(json.loads(tombstone.read_bytes()), {"id": correction["id"], "supersedes": previous["id"]})
-        self.assertEqual({child.name for child in path.parent.parent.iterdir()}, {"Project.md", "Records"})
+        self.assertEqual({child.name for child in path.parent.parent.iterdir()}, {"Records", "Project.md"})
+        self.assertTrue((path.parent.parent / "Project.md").is_file())
         self.assertFalse(path.exists())
         path.write_bytes(stale)
         self.assertEqual(self.store.search(binding, "порог"), [])
@@ -360,8 +361,209 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get(binding, draft["id"]), approved)
         path = self.entry_path(binding, "Records", draft["id"])
         raw = path.read_text(encoding="utf-8")
-        self.assertIn("[[Codex Memory/Projects/sk-platform-integration/Project|sk-platform-integration]]", raw)
+        self.assertIn("[[Codex Memory/Projects/sk-platform-integration/sk-platform-integration|sk-platform-integration]]", raw)
         self.assertIn(f'[[Codex Memory/Projects/sk-platform-integration/Records/{previous["id"]}]]', raw)
+
+    def test_named_project_migration_preserves_edits_and_waits_for_records_before_pruning(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        other_repo = self.temp / "other"
+        other_repo.mkdir()
+        other = self.store.setup(self.vault, other_repo, "other", "auto")
+        neighbor = self.store.save(other, self.candidate, approved=True)
+        neighbor_path = self.entry_path(other, "Records", neighbor["id"])
+        neighbor_bytes = neighbor_path.read_bytes()
+        self.assertIn(b'[[Codex Memory/Projects/other/other|other]]', neighbor_bytes)
+
+        projects = binding.root / "Projects"
+        page = projects / "pilot" / "pilot.md"
+        page.unlink()
+        with self.assertRaisesRegex(StoreError, "project page is unavailable"):
+            self.store.setup(self.vault, self.repo, "pilot", "auto")
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 1})
+        self.assertFalse(page.exists())
+        legacy = page.with_name("Project.md")
+        legacy_text = (
+            "---\nfstack_memory_project: 'pilot'\naliases:\n  - My project\n---\n\n"
+            "# My project\n\nHandwritten notes. [Evidence](./evidence.md) ![[./image.png]]\n\n"
+            "[[Codex Memory/Home|Все проекты]] · [[Codex Memory/Templates/Review|Шаблон обзора]]\n\n"
+            "![[Codex Memory/Library.base#Inbox]]\n"
+        )
+        legacy.write_text(legacy_text, encoding="utf-8")
+        hub = binding.root / "Projects.md"
+        hub.unlink()
+        home = binding.root / "Home.md"
+        home_text = "---\nfstack_memory_home: 1\n---\n\nPersonal dashboard.\n\n```base\nviews: []\n```\n"
+        home.write_text(home_text, encoding="utf-8")
+        library = binding.root / "Library.base"
+        library_text = library.read_text(encoding="utf-8")
+        scope = 'this.file.properties.fstack_memory_project == null || file.folder == "Codex Memory/Projects/" + this.file.properties.fstack_memory_project + "/Records"'
+        old_scope = '!this.file.path.endsWith("/Project.md") || file.inFolder(this.file.folder)'
+        library.write_text(library_text.replace(scope, old_scope) + "\n# Customized library\n", encoding="utf-8")
+
+        entry = self.store.save(binding, self.candidate, approved=True)
+        record = self.entry_path(binding, "Records", entry["id"])
+        old_record = record.read_text(encoding="utf-8")
+        self.assertIn('project_link: "[[Codex Memory/Projects/pilot/Project|pilot]]"', old_record)
+        self.assertEqual(self.store.get(binding, entry["id"]), entry)
+        self.assertEqual(self.store.setup(self.vault, self.repo, "pilot", "auto"), binding)
+        self.assertFalse(page.exists())
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding), {"updated": 2, "skipped": 0})
+        self.assertTrue(hub.is_file())
+        self.assertTrue(home.read_text(encoding="utf-8").startswith(home_text))
+        self.assertIn("[[Codex Memory/Projects|Все проекты]]", home.read_text(encoding="utf-8"))
+        self.assertEqual(library.read_text(encoding="utf-8"), library_text + "\n# Customized library\n")
+        copied = legacy_text.replace("[[Codex Memory/Home|Все проекты]]", "[[Codex Memory/Projects|Все проекты]]")
+        self.assertEqual(page.read_text(encoding="utf-8"), copied)
+        new_record = record.read_text(encoding="utf-8")
+        self.assertEqual(new_record, old_record.replace("/pilot/Project|pilot", "/pilot/pilot|pilot"))
+        self.assertEqual(page.parent, legacy.parent)
+
+        record.write_text(old_record, encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        record.write_text(new_record.replace("/pilot|pilot]]", "/pilot]]"), encoding="utf-8")
+        self.assertEqual(self.store.get(binding, entry["id"]), entry)
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 1, "skipped": 0})
+        self.assertFalse(legacy.exists())
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 0})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 0})
+        self.assertEqual(neighbor_path.read_bytes(), neighbor_bytes)
+
+    def test_named_project_collision_and_divergent_copies_are_preserved(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        projects = binding.root / "Projects"
+        page = projects / "pilot" / "pilot.md"
+        stock = page.read_text(encoding="utf-8")
+        personal = "Unmanaged note."
+        page.write_text(personal, encoding="utf-8")
+        with self.assertRaisesRegex(StoreError, "project page is occupied"):
+            self.store.setup(self.vault, self.repo, "pilot", "auto")
+        legacy = page.with_name("Project.md")
+        legacy.write_text(stock.replace("[[Codex Memory/Projects|Все проекты]]", "[[Codex Memory/Home|Все проекты]]"),
+                          encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        self.assertEqual(page.read_text(encoding="utf-8"), personal)
+        page.unlink()
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        edited = legacy.read_text(encoding="utf-8") + "\nEdited after copying.\n"
+        legacy.write_text(edited, encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        self.assertEqual(legacy.read_text(encoding="utf-8"), edited)
+        self.assertEqual(page.read_text(encoding="utf-8"), stock)
+
+    def test_unmanaged_projects_hub_blocks_new_project_links_and_pruning(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        projects = binding.root / "Projects"
+        page = projects / "pilot" / "pilot.md"
+        legacy = page.with_name("Project.md")
+        stock = page.read_text(encoding="utf-8")
+        legacy.write_text(stock.replace("[[Codex Memory/Projects|Все проекты]]", "[[Codex Memory/Home|Все проекты]]"),
+                          encoding="utf-8")
+        hub = binding.root / "Projects.md"
+        hub.write_text("# User projects\n", encoding="utf-8")
+        home = binding.root / "Home.md"
+        home_text = home.read_text(encoding="utf-8").replace("[[Codex Memory/Projects|Все проекты]]", "User navigation")
+        home.write_text(home_text, encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 1})
+        page.unlink()
+        with self.assertRaisesRegex(OSError, "projects hub is occupied"):
+            self.store.migrate(binding)
+        with self.assertRaisesRegex(OSError, "projects hub is occupied"):
+            self.store.setup(self.vault, self.repo, "other", "auto")
+        self.assertFalse((projects / "other" / "other.md").exists())
+        self.assertFalse(page.exists())
+        self.assertTrue(legacy.exists())
+        self.assertEqual(home.read_text(encoding="utf-8"), home_text)
+        self.assertEqual(hub.read_text(encoding="utf-8"), "# User projects\n")
+
+    def test_project_slug_uses_legacy_filename_in_place(self):
+        binding = self.setup_store()
+        folder = binding.root / "Projects" / "project"
+        page = folder / "Project.md"
+        stock = page.read_text(encoding="utf-8")
+        legacy = stock.replace("[[Codex Memory/Projects|Все проекты]]", "[[Codex Memory/Home|Все проекты]]")
+        page.write_text(legacy + "\n[Local note](./note.md)\n", encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 0})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 0})
+        self.assertEqual({item.name for item in folder.iterdir()}, {"Project.md", "Records"})
+        self.assertEqual(page.read_text(encoding="utf-8"), stock + "\n[Local note](./note.md)\n")
+
+    def test_migrate_relinks_late_forgotten_markdown_without_restoring_it(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        page = binding.root / "Projects" / "pilot" / "pilot.md"
+        page.rename(page.with_name("Project.md"))
+        entry = self.store.save(binding, self.candidate, approved=True)
+        record = self.entry_path(binding, "Records", entry["id"])
+        stale = record.read_text(encoding="utf-8")
+        self.assertIn('project_link: "[[Codex Memory/Projects/pilot/Project|pilot]]"', stale)
+        legacy = self.entry_path(binding, "Forgotten", entry["id"])
+        legacy.parent.mkdir()
+        legacy.write_text(f'---\nfstack_forgotten: 1\nid: "{entry["id"]}"\n---\n', encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding), {"updated": 2, "skipped": 0})
+        expected = stale.replace("/pilot/Project|pilot", "/pilot/pilot|pilot")
+        self.assertEqual(record.read_text(encoding="utf-8"), expected)
+        self.assertTrue(self.tombstone_path(binding, entry["id"]).is_file())
+
+        record.write_text(stale, encoding="utf-8")
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 0})
+        self.assertEqual(record.read_text(encoding="utf-8"), expected)
+        self.assertEqual(self.store.search(binding, "конфигурации"), [])
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 2, "skipped": 0})
+
+    def test_prune_retains_legacy_project_page_while_approved_record_is_missing(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        page = binding.root / "Projects" / "pilot" / "pilot.md"
+        legacy = page.with_name("Project.md")
+        page.rename(legacy)
+        entry = self.store.save(binding, self.candidate, approved=True)
+        record = self.entry_path(binding, "Records", entry["id"])
+        delayed = record.read_bytes()
+        record.unlink()
+        marker = self.legacy_approval(binding, entry["id"])
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 1})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 0, "skipped": 2})
+        self.assertTrue(legacy.is_file())
+        self.assertTrue(marker.is_file())
+        record.write_bytes(delayed)
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        self.assertEqual(self.store.migrate(binding, prune_legacy=True), {"pruned": 2, "skipped": 0})
+        self.assertFalse(legacy.exists())
+        self.assertFalse(marker.exists())
+
+    def test_missing_pages_block_writes_but_allow_reading_and_status_migration(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        entry = self.store.save(binding, self.candidate, approved=False)
+        record = self.entry_path(binding, "Records", entry["id"])
+        original = "\n".join(
+            line for line in record.read_text(encoding="utf-8").split("\n")
+            if not line.startswith("project_link:")
+        )
+        record.write_text(original, encoding="utf-8")
+        page = record.parent.parent / "pilot.md"
+        delayed = page.read_bytes()
+        page.unlink()
+        with self.assertRaisesRegex(StoreError, "project page is unavailable"):
+            self.store.setup(self.vault, self.repo, "pilot", "auto")
+        with self.assertRaisesRegex(StoreError, "project page is unavailable"):
+            self.store.save(binding, dict(self.candidate, title="Other"), approved=True)
+        with self.assertRaisesRegex(StoreError, "project page is unavailable"):
+            self.store.approve(binding, entry["id"])
+        self.assertEqual(record.read_text(encoding="utf-8"), original)
+        self.assertEqual(self.store.inbox(binding), [entry])
+        self.legacy_approval(binding, entry["id"])
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 1})
+        migrated = record.read_text(encoding="utf-8")
+        self.assertIn('fstack_status: "approved"', migrated)
+        self.assertNotIn("project_link:", migrated)
+        self.assertEqual(self.store.get(binding, entry["id"])["status"], "memory")
+        page.write_bytes(delayed)
+        self.assertEqual(self.store.migrate(binding), {"updated": 1, "skipped": 0})
+        self.assertIn('project_link: "[[Codex Memory/Projects/pilot/pilot|pilot]]"', record.read_text(encoding="utf-8"))
 
     def test_migration_reads_legacy_in_either_sync_order_and_prunes_only_equivalent_markers(self):
         binding = self.setup_store()

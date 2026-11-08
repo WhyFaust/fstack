@@ -16,7 +16,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from vault_views import HOME_MARKER, VAULT_FILES, ensure_library, install_views
+from vault_views import (
+    HOME_MARKER, VAULT_FILES, ensure_library, ensure_projects_hub, install_views, is_projects_hub,
+    named_project_text, project_template,
+)
 
 
 class StoreError(ValueError):
@@ -64,7 +67,9 @@ TEXT_FIELDS = {"kind": 16, "title": 160, "body": 4000, "source": 300}
 METADATA_FIELDS = {"id", "kind", "title", "created", "source", "supersedes", "session_id", "turn_id"}
 GRAPH_FIELDS = {"fstack_status", "project_link", "supersedes_link"}
 GRAPH_LINKS = {
-    "project_link": re.compile(r"\[\[Codex Memory/Projects/(?P<slug>[a-z0-9][a-z0-9-]{0,47})/Project\|(?P=slug)\]\]"),
+    "project_link": re.compile(
+        r"\[\[Codex Memory/Projects/(?P<slug>[a-z0-9][a-z0-9-]{0,47})/(?:Project|(?P=slug))(?:\|(?P=slug))?\]\]"
+    ),
     "supersedes_link": re.compile(r"\[\[Codex Memory/Projects/[a-z0-9][a-z0-9-]{0,47}/Records/[0-9a-f]{64}\]\]"),
 }
 VIEW_NAMES = frozenset(VAULT_FILES)
@@ -407,12 +412,47 @@ def _parse_note(raw: str, entry_id: str, marker: str, *, include_body: bool = Tr
     return fields
 
 
-def _graph_properties(root: Path, supersedes: str | None) -> dict[str, str | None]:
-    project = root.name
-    prefix = f"Codex Memory/Projects/{project}"
+def _project_note(root: Path) -> Path:
+    return root / f'{"Project" if root.name == "project" else root.name}.md'
+
+
+def _is_project_note(raw: str | None, project: str) -> bool:
+    if raw is None or not raw.startswith("---\n"):
+        return False
+    metadata, end, _ = raw[4:].partition("\n---\n")
+    markers = [line.partition(":")[2].strip() for line in metadata.splitlines()
+               if line.partition(":")[0].rstrip() == "fstack_memory_project"]
+    return bool(end and len(markers) == 1 and re.fullmatch(
+        rf"""(?:{project}|"{project}"|'{project}')(?:[ \t]+#.*)?""", markers[0],
+    ))
+
+
+def _project_link(page: Path) -> str:
+    project = page.parent.name
+    return f"[[Codex Memory/Projects/{project}/{page.stem}|{project}]]"
+
+
+def _current_project_page(root: Path) -> Path | None:
+    page = _project_note(root)
+    if _is_project_note(_read_text(page), root.name):
+        return page
+    legacy = root / "Project.md"
+    if legacy != page and _is_project_note(_read_text(legacy), root.name):
+        return legacy
+    return None
+
+
+def _current_project_link(root: Path) -> str:
+    page = _current_project_page(root)
+    if page is None:
+        raise StoreError("Memory project page is unavailable")
+    return _project_link(page)
+
+
+def _graph_properties(root: Path, supersedes: str | None, project_link: str | None) -> dict[str, str | None]:
     return {
-        "project_link": f"[[{prefix}/Project|{project}]]",
-        "supersedes_link": f"[[{prefix}/Records/{supersedes}]]" if supersedes else None,
+        "project_link": project_link,
+        "supersedes_link": f"[[Codex Memory/Projects/{root.name}/Records/{supersedes}]]" if supersedes else None,
     }
 
 
@@ -618,9 +658,7 @@ class Store:
 
         def create_text(path: Path, text: str) -> bool:
             path = _path(path)
-            if not path.is_relative_to(root) or path.relative_to(root).as_posix() not in (
-                VIEW_NAMES | {f"Projects/{project}/Project.md"}
-            ):
+            if not path.is_relative_to(root) or path.relative_to(root).as_posix() not in VIEW_NAMES:
                 raise StoreError("Invalid vault view path")
             if path == root / "Home.md" and not self._home_marker(text):
                 raise StoreError("Invalid memory home marker")
@@ -631,11 +669,23 @@ class Store:
             self._check_home(root)
             return created
 
-        install_views(root, project, create_text)
+        install_views(root, create_text)
         self._check_home(root)
         binding = Binding(project, mode, root)
-        _refresh_library(binding.root)
-        _directory(self._project_root(binding) / "Records", create=True)
+        project_root = self._project_root(binding)
+        _directory(project_root, create=True)
+        with _mutation_lock(project_root, vault):
+            ensure_projects_hub(root, _read_text, _write_text)
+            _refresh_library(root)
+            if _current_project_page(project_root) is None:
+                page = _project_note(project_root)
+                if _file(page) or _file(project_root / "Project.md"):
+                    raise StoreError("Memory project page is occupied")
+                if _directory(project_root / "Records"):
+                    raise StoreError("Memory project page is unavailable")
+                _write_text(page, project_template(project))
+                _current_project_link(project_root)
+            _directory(project_root / "Records", create=True)
         _directory(settings.parent, create=True)
         _write_text(settings, json.dumps({"root": str(root), "project": project, "mode": mode}), replace=True)
         return binding
@@ -812,6 +862,7 @@ class Store:
         self, root: Path, fields: dict[str, str], approved: bool,
         session_id: str | None, turn_id: str | None,
     ) -> dict:
+        project_link = _current_project_link(root)
         identity = {key: value for key, value in fields.items() if key != "source"}
         entry_id = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         provenance = {
@@ -831,7 +882,7 @@ class Store:
                 created=datetime.now(UTC).isoformat(timespec="seconds"), **provenance,
             )
             metadata.update(
-                (key, value) for key, value in _graph_properties(root, fields.get("supersedes")).items()
+                (key, value) for key, value in _graph_properties(root, fields.get("supersedes"), project_link).items()
                 if value is not None
             )
             if approved:
@@ -881,6 +932,7 @@ class Store:
             return self._approve(root, entry_id)
 
     def _approve(self, root: Path, entry_id: str) -> dict:
+        project_link = _current_project_link(root)
         filename = f"{entry_id}.md"
         approvals, hidden = self._statuses(root)
         if entry_id in hidden:
@@ -896,7 +948,8 @@ class Store:
             approval = _approval_fields(fields)
         predecessor = approval.get("supersedes")
         _update_note(path, raw, fields, {
-            "fstack_status": "approved", "supersedes": predecessor, **_graph_properties(root, predecessor),
+            "fstack_status": "approved", "supersedes": predecessor,
+            **_graph_properties(root, predecessor, project_link),
         })
         if _is_forgotten(root, entry_id):
             raise StoreError("Memory entry is unavailable")
@@ -955,14 +1008,18 @@ class Store:
             _refresh_library(binding.root)
             if prune_legacy:
                 return self._prune_legacy(root)
+            ensure_projects_hub(binding.root, _read_text, _write_text)
             return self._migrate(root)
 
     @staticmethod
     def _migrate(root: Path) -> dict[str, int]:
+        updated, skipped = Store._migrate_project_note(root)
+        page = _current_project_page(root)
+        named = page == _project_note(root)
+        project_link = _project_link(page) if page is not None else None
         entry_ids = _tombstone_ids(root) | {
             path.stem for folder in ("Records", "Approved") for path in _files(root / folder)
         }
-        updated = skipped = 0
         for entry_id in sorted(entry_ids):
             filename = f"{entry_id}.md"
             record = root / "Records" / filename
@@ -983,24 +1040,81 @@ class Store:
                     if raw is None:
                         skipped += 1
                         continue
-                    path = record
                     fields = _parse_note(raw, entry_id, MEMORY_MARKER)
                     predecessor = (approval if approval is not None else fields).get("supersedes")
-                    updates = _graph_properties(root, predecessor)
+                    updates = _graph_properties(root, predecessor, project_link)
+                    if project_link is None or (not named and "project_link" in fields):
+                        del updates["project_link"]
                     if approval is not None:
                         updates.update(fstack_status="approved", supersedes=predecessor)
             except StoreError:
                 skipped += 1
                 continue
             if canonical is not None or legacy is not None:
-                if desired != canonical:
+                tombstone_changed = desired != canonical
+                if tombstone_changed:
                     _write_tombstone(_tombstone_paths(root, entry_id)[0], tombstone_raw, desired)
-                    updated += 1
-                elif conflict:
-                    skipped += 1
+                record_changed = named and Store._migrate_hidden_project_link(record, project_link)
+                updated += tombstone_changed or record_changed
+                skipped += conflict and not (tombstone_changed or record_changed)
             else:
-                updated += _update_note(path, raw, fields, updates)
+                updated += _update_note(record, raw, fields, updates)
         return {"updated": updated, "skipped": skipped}
+
+    @staticmethod
+    def _migrate_hidden_project_link(record: Path, project_link: str | None) -> bool:
+        try:
+            raw = _read_text(record)
+            if raw is None:
+                return False
+            fields = _parse_note(raw, record.stem, MEMORY_MARKER)
+        except StoreError:
+            return False
+        return _update_note(record, raw, fields, {"project_link": project_link})
+
+    @staticmethod
+    def _migrate_project_note(root: Path) -> tuple[int, int]:
+        legacy_path = root / "Project.md"
+        legacy = _read_text(legacy_path)
+        page = _project_note(root)
+        if legacy is None:
+            return 0, int(not _is_project_note(_read_text(page), root.name))
+        if not _is_project_note(legacy, root.name):
+            return 0, 1
+        desired = named_project_text(legacy)
+        if len(desired.encode("utf-8")) > MAX_FILE:
+            raise StoreError("Updated memory project page is too large")
+        if page == legacy_path:
+            return int(desired != legacy and _write_text(page, desired, replace=True, expected=legacy)), 0
+        if _write_text(page, desired):
+            return 1, 0
+        return 0, int(_read_text(page) != desired)
+
+    @staticmethod
+    def _prune_project_note(root: Path) -> tuple[int, int]:
+        legacy_path = root / "Project.md"
+        page = _project_note(root)
+        if page == legacy_path:
+            return 0, 0
+        legacy = _read_text(legacy_path)
+        if legacy is None:
+            return 0, 0
+        if not _is_project_note(legacy, root.name) or not is_projects_hub(_read_text(root.parent.parent / "Projects.md")):
+            return 0, 1
+        desired = named_project_text(legacy)
+        if _read_text(page) != desired or any(_files(root / "Approved")):
+            return 0, 1
+        expected = _project_link(page)
+        for record in _files(root / "Records"):
+            try:
+                fields = _parse(record, record.stem, MEMORY_MARKER)
+            except StoreError:
+                return 0, 1
+            if fields is not None and fields.get("project_link") not in (expected, expected.split("|")[0] + "]]"):
+                return 0, 1
+        if _read_text(legacy_path) != legacy or _read_text(page) != desired:
+            return 0, 1
+        return int(_delete(legacy_path)), 0
 
     @staticmethod
     def _prune_legacy(root: Path) -> dict[str, int]:
@@ -1029,4 +1143,5 @@ class Store:
                     continue
                 pruned += _delete(path)
             _remove_empty_directory(directory)
-        return {"pruned": pruned, "skipped": skipped}
+        removed, retained = Store._prune_project_note(root)
+        return {"pruned": pruned + removed, "skipped": skipped + retained}
