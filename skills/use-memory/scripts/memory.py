@@ -222,7 +222,7 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--vault", type=Path, required=True)
     init.add_argument("--repo", type=Path, required=True)
     init.add_argument("--project", required=True)
-    init.add_argument("--mode", choices=("auto", "inbox"), default="auto")
+    init.add_argument("--mode", choices=("auto", "inbox"))
     commands.add_parser("status")
     commands.add_parser("disable")
     search = commands.add_parser("search")

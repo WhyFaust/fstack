@@ -415,9 +415,13 @@ class Store:
         key = hashlib.sha256(_identity(cwd).encode("utf-8", "surrogatepass")).hexdigest()
         return self.state_dir / f"{key}.json"
 
-    def setup(self, vault: Path, repo: Path, project: str, mode: str) -> Binding:
-        project, mode = _project(project), _mode(mode)
+    def setup(self, vault: Path, repo: Path, project: str, mode: str | None) -> Binding:
+        project = _project(project)
         settings = self._binding_file(repo)
+        if mode is None:
+            prior = self._read_binding(settings)
+            mode = prior.mode if prior else "auto"
+        mode = _mode(mode)
         vault = _path(vault)
         if not _directory(vault / ".obsidian"):
             raise StoreError("Selected directory is not an Obsidian vault")
@@ -471,19 +475,25 @@ class Store:
         if root.name != "Codex Memory" or not self._home_marker(_read_text(root / "Home.md")):
             raise StoreError("Invalid memory home")
 
-    def resolve(self, cwd: Path) -> Binding | None:
-        raw = _read_text(self._binding_file(cwd))
+    @staticmethod
+    def _read_binding(path: Path) -> Binding | None:
+        raw = _read_text(path)
         if raw is None:
             return None
         try:
             settings = json.loads(raw)
             root = Path(settings["root"])
-            if not root.is_absolute() or root != _path(root):
+            if root.name != "Codex Memory" or not root.is_absolute() or root != _path(root):
                 raise StoreError("Invalid memory root path")
             binding = Binding(_project(settings["project"]), _mode(settings["mode"]), root)
         except (ValueError, TypeError, KeyError, RecursionError) as error:
             raise StoreError("Invalid memory binding") from error
-        self._check_home(root)
+        return binding
+
+    def resolve(self, cwd: Path) -> Binding | None:
+        binding = self._read_binding(self._binding_file(cwd))
+        if binding is not None:
+            self._check_home(binding.root)
         return binding
 
     def disable(self, cwd: Path) -> bool:

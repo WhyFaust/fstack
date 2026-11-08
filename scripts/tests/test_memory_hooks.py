@@ -168,6 +168,8 @@ class MemoryHookTests(unittest.TestCase):
 
     def test_stage_respects_inbox_mode_approval_and_forgetting(self):
         self.init(mode="inbox")
+        self.vault = self.vault.rename(self.root / "moved vault")
+        self.assertEqual(self.init()["mode"], "inbox")
         self.stage(self.token(), REMEMBER)
         self.assertEqual(self.hook("Stop"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
@@ -179,6 +181,7 @@ class MemoryHookTests(unittest.TestCase):
         self.stage(self.token("turn-3"), {"action": "forget", "id": entry["id"]}, "turn-3")
         self.assertEqual(self.hook("Stop", "turn-3"), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
+        self.assertEqual(self.init(mode="auto")["mode"], "auto")
 
     def test_stop_revalidates_binding_and_ignores_an_unstaged_assistant_message(self):
         self.init()
