@@ -190,6 +190,25 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.store.inbox(binding), [])
         self.assertEqual(self.store.search(binding, "порог"), [])
 
+    def test_interrupted_forget_publishes_known_supersedes_before_capture(self):
+        binding = self.setup_store()
+        previous = self.store.save(binding, self.candidate, approved=True)
+        changed = dict(self.candidate, body="Использовать пять секунд.", supersedes=previous["id"])
+        correction = self.store.save(binding, changed, approved=True)
+        capture = memory_store._capture_record
+
+        def interrupt_after_capture(record, captured):
+            self.assertTrue(capture(record, captured))
+            raise StoreError("Interrupted after capture")
+
+        with patch("memory_store._capture_record", side_effect=interrupt_after_capture):
+            with self.assertRaisesRegex(StoreError, "Interrupted after capture"):
+                self.store.forget(binding, correction["id"])
+        tombstone = self.entry_path(binding, "Forgotten", correction["id"])
+        self.assertIn(f'supersedes: "{previous["id"]}"', tombstone.read_text(encoding="utf-8"))
+        self.assertFalse(self.entry_path(binding, "Records", correction["id"]).exists())
+        self.store.forget(binding, correction["id"])
+
     def test_late_approved_copy_preserves_supersedes_when_forgotten(self):
         for operation in ("forget", "migrate", "save"):
             with self.subTest(operation=operation):
@@ -281,14 +300,14 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(hidden.read_text(encoding="utf-8"), approved)
         self.assertEqual(self.store.search(binding, "конфигурации"), [other])
         path.write_text(approved.replace(previous["id"], other["id"]), encoding="utf-8")
-        captured_approval = memory_store._captured_approval
+        record_approval = memory_store._record_approval
 
         def finish_forget_before_reader_sees_capture(target, entry_id):
-            with patch("memory_store._captured_approval", side_effect=captured_approval):
+            with patch("memory_store._record_approval", side_effect=record_approval):
                 self.store.forget(binding, draft["id"])
-            return captured_approval(target, entry_id)
+            return record_approval(target, entry_id)
 
-        with patch("memory_store._captured_approval", side_effect=finish_forget_before_reader_sees_capture):
+        with patch("memory_store._record_approval", side_effect=finish_forget_before_reader_sees_capture):
             self.assertEqual(self.store.search(binding, "конфигурации"), [other])
         self.assertFalse(path.exists())
         self.assertFalse(hidden.exists())

@@ -427,7 +427,7 @@ def _captured_record(record: Path) -> Path:
     return record.with_name(f".fstack-forget-{record.stem}")
 
 
-def _captured_approval(path: Path, entry_id: str) -> dict[str, str] | None:
+def _record_approval(path: Path, entry_id: str) -> dict[str, str] | None:
     if not _file(path):
         return None
     try:
@@ -628,7 +628,7 @@ class Store:
                 tombstones[path.stem] = tombstone
                 if "supersedes" not in tombstone and path.stem not in approvals:
                     captured = _captured_record(root / "Records" / path.name)
-                    approval = _captured_approval(captured, path.stem)
+                    approval = _record_approval(captured, path.stem)
                     if approval is not None:
                         inline[path.stem] = approval
                     latest = _parse(path, path.stem, FORGOTTEN_MARKER)
@@ -841,7 +841,8 @@ class Store:
         if raw is None:
             if not has_record and not has_marker:
                 raise StoreError("Memory entry is unavailable")
-            if not _write_text(tombstone, _markdown(FORGOTTEN_MARKER, approval or {"id": entry_id})):
+            observed = approval if approval is not None else _record_approval(record, entry_id)
+            if not _write_text(tombstone, _markdown(FORGOTTEN_MARKER, observed or {"id": entry_id})):
                 raise StoreError("Memory tombstone changed while forgetting an entry")
         self._finish_forget(tombstone, captured, entry_id, approval)
         if _capture_record(record, captured):
@@ -856,7 +857,7 @@ class Store:
         fields = _parse_note(raw, entry_id, FORGOTTEN_MARKER)
         if "supersedes" not in fields:
             if approval is None:
-                approval = _captured_approval(captured, entry_id)
+                approval = _record_approval(captured, entry_id)
             if approval is not None:
                 _update_note(tombstone, raw, fields, {"supersedes": approval.get("supersedes")})
         _delete(captured)
@@ -882,7 +883,7 @@ class Store:
                 forgotten = _read_text(tombstone)
                 if forgotten is not None:
                     if approval is None:
-                        approval = _captured_approval(_captured_record(record), entry_id)
+                        approval = _record_approval(_captured_record(record), entry_id)
                     if approval is None:
                         approval = _inline_approval(_parse(record, entry_id, MEMORY_MARKER, include_body=False))
                     if approval is None:
