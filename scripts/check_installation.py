@@ -26,9 +26,9 @@ def run(executable, arguments, environment, directory):
     return result.stdout
 
 
-def discovered_skills(executable, environment, directory):
+def discover_package(executable, environment, directory):
     with (directory / 'app-server.log').open('w', encoding='utf-8') as errors:
-        process = subprocess.Popen([executable, 'app-server', '--stdio', '--disable', 'apps',
+        process = subprocess.Popen([executable, 'app-server', '--stdio', '--strict-config', '--disable', 'apps',
                                     '--disable', 'remote_plugin', '-c', 'check_for_update_on_startup=false'], env=environment,
                                    cwd=directory, text=True, encoding='utf-8', stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=errors)
@@ -69,7 +69,10 @@ def discovered_skills(executable, environment, directory):
             request(1, 'initialize', {'clientInfo': {'name': 'fstack-installation-check', 'version': '1.0'},
                                     'capabilities': {'experimentalApi': True, 'explicitGatewayOauth': True}})
             send({'method': 'initialized'})
-            return request(2, 'skills/list', {'cwds': [str(directory)], 'forceReload': True})['data']
+            cwds = [str(directory)]
+            skills = request(2, 'skills/list', {'cwds': cwds, 'forceReload': True})['data']
+            hooks = request(3, 'hooks/list', {'cwds': cwds})['data']
+            return skills, hooks
         finally:
             process.terminate()
             try:
@@ -117,8 +120,7 @@ def check(executable, root=ROOT):
         for name, content in payloads.items():
             if (home / name).read_bytes() != content or state['files'][name] != digest(content):
                 raise ValueError(f'Установленная роль отличается от источника: {name}')
-        run(executable, ['app-server', '--strict-config', '--print-startup-config'], environment, directory)
-        entries = discovered_skills(executable, environment, directory)
+        entries, hook_entries = discover_package(executable, environment, directory)
         errors = [error for entry in entries for error in entry['errors']]
         skills = [skill for entry in entries for skill in entry['skills'] if skill.get('pluginId') == 'fstack@fstack']
         if errors or {skill['name'] for skill in skills} != expected or not all(skill['enabled'] for skill in skills):
@@ -126,8 +128,17 @@ def check(executable, root=ROOT):
         for skill in skills:
             if '$' + skill['name'] not in skill['interface']['defaultPrompt']:
                 raise ValueError(f'UI-подсказка использует другое имя: {skill["name"]}')
+        hook_errors = [error for entry in hook_entries for error in entry['errors']]
+        hooks = [hook for entry in hook_entries for hook in entry['hooks'] if hook.get('pluginId') == 'fstack@fstack']
+        events = {'sessionStart', 'userPromptSubmit', 'postToolUse', 'stop'}
+        if hook_errors or len(hooks) != len(events) or {hook['eventName'] for hook in hooks} != events:
+            raise ValueError(f'Обнаружение хуков памяти не совпадает с пакетом: {hook_errors}')
+        if any(hook['source'] != 'plugin' or hook['handlerType'] != 'command'
+               or hook['trustStatus'] != 'untrusted' or not Path(hook['sourcePath']).resolve().is_relative_to(installed_path)
+               for hook in hooks):
+            raise ValueError('Источник или состояние доверия установленных хуков памяти отличаются от ожидаемых')
     return {'status': 'passed', 'client': client_version, 'version': version,
-            'skills_discovered': len(expected), 'profile_roundtrip': 'unchanged',
+            'skills_discovered': len(expected), 'hooks_discovered': sorted(events), 'profile_roundtrip': 'unchanged',
             'roles_installed': sorted(installed_roles), 'model_availability': 'not_checked',
             'model_tasks': 'not_run', 'role_execution': 'not_run'}
 

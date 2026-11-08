@@ -9,7 +9,8 @@
   "skills": "./skills/",
   "extensions": {
     "com.openai": {
-      "onboardingSkill": "./skills/fstack-setup/SKILL.md"
+      "onboardingSkill": "./skills/fstack-setup/SKILL.md",
+      "hooks": "./hooks/hooks.json"
     }
   },
   "interface": {

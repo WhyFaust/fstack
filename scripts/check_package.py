@@ -102,16 +102,41 @@ def role_settings(role, name):
     require(role.get('model_reasoning_effort') == efforts[name], f'{name}: некорректный reasoning роли')
 
 
+def check_memory_hooks(root, relative):
+    config = contained_file(root, root, relative)
+    hooks = json.loads(config.read_text(encoding='utf-8'))['hooks']
+    require(set(hooks) == {'SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'},
+            'Неверный набор событий памяти')
+    runtime = contained_file(root, root, 'skills/use-memory/scripts/memory.py')
+    patterns = {
+        'command': r'"\$PLUGIN_ROOT/([^"]+)" hook (\w+)$',
+        'commandWindows': r'"\$env:PLUGIN_ROOT\\([^"]+)" hook (\w+); exit \$LASTEXITCODE$',
+    }
+    for event, groups in hooks.items():
+        require(len(groups) == 1 and len(groups[0]['hooks']) == 1, f'{event}: ожидалась одна команда памяти')
+        if event == 'PostToolUse':
+            require(groups[0].get('matcher') == '^Bash$', f'{event}: ожидался фильтр оболочки')
+        handler = groups[0]['hooks'][0]
+        require(handler['type'] == 'command', f'{event}: ожидался командный хук')
+        for field, pattern in patterns.items():
+            target = re.search(pattern, handler[field])
+            require(target and target[2] == event, f'{event}: неверная команда {field}')
+            script = contained_file(root, root, target[1].replace('\\', '/'))
+            require(script == runtime, f'{event}: команда запускает другой ресурс')
+
+
 def check(root=ROOT):
     manifest = json.loads((root / '.codex-plugin/plugin.json').read_text(encoding='utf-8'))
     require(manifest['name'] == 'fstack', 'Некорректное имя плагина')
     require(re.fullmatch(r'\d+\.\d+\.\d+', manifest['version']), 'Версия должна быть SemVer')
     check_versions(root)
     require(manifest['skills'] == './skills/', 'Некорректный каталог навыков')
-    onboarding = manifest.get('extensions', {}).get('com.openai', {}).get('onboardingSkill')
+    extension = manifest.get('extensions', {}).get('com.openai', {})
+    onboarding = extension.get('onboardingSkill')
     if onboarding:
         contained_file(root, root, onboarding)
     require(not manifest.get('hooks') and not manifest.get('mcpServers'), 'Неожиданная интеграция')
+    check_memory_hooks(root, extension['hooks'])
     catalog = json.loads((root / '.agents/plugins/marketplace.json').read_text(encoding='utf-8'))
     require(catalog['name'] == 'fstack' and len(catalog['plugins']) == 1, 'Некорректный marketplace')
     entry = catalog['plugins'][0]

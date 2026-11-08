@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "intro",
+      "type": "text",
+      "text": "# Память Codex\nПодхватить контекст, сохранить решение, проверить накопленное.",
+      "x": 0,
+      "y": 0,
+      "width": 1200,
+      "height": 140
+    },
+    {
+      "id": "recall",
+      "type": "text",
+      "text": "## Найти\nОткрой страницу проекта. Посмотри решения, поправки и предпочтения. Codex подбирает записи к текущему запросу.",
+      "x": 0,
+      "y": 240,
+      "width": 340,
+      "height": 240,
+      "color": "#24837B"
+    },
+    {
+      "id": "capture",
+      "type": "text",
+      "text": "## Сохранить\nЗафиксируй принятое решение и его область. Добавь дату и источник, если их можно проверить.",
+      "x": 430,
+      "y": 240,
+      "width": 340,
+      "height": 240,
+      "color": "#66800B"
+    },
+    {
+      "id": "review",
+      "type": "text",
+      "text": "## Проверить\nРазбери Inbox. Подтверди подходящие записи, внеси поправки к устаревшим и удали потерявшие смысл.",
+      "x": 860,
+      "y": 240,
+      "width": 340,
+      "height": 240,
+      "color": "#AD8301"
+    },
+    {
+      "id": "home",
+      "type": "file",
+      "file": "Codex Memory/Home.md",
+      "x": 0,
+      "y": 580,
+      "width": 340,
+      "height": 360
+    },
+    {
+      "id": "decision",
+      "type": "file",
+      "file": "Codex Memory/Templates/Decision.md",
+      "x": 430,
+      "y": 580,
+      "width": 340,
+      "height": 360
+    },
+    {
+      "id": "review-template",
+      "type": "file",
+      "file": "Codex Memory/Templates/Review.md",
+      "x": 860,
+      "y": 580,
+      "width": 340,
+      "height": 360
+    }
+  ],
+  "edges": [
+    {"id": "recall-capture", "fromNode": "recall", "fromSide": "right", "toNode": "capture", "toSide": "left"},
+    {"id": "capture-review", "fromNode": "capture", "fromSide": "right", "toNode": "review", "toSide": "left"},
+    {"id": "recall-home", "fromNode": "recall", "fromSide": "bottom", "toNode": "home", "toSide": "top"},
+    {"id": "capture-decision", "fromNode": "capture", "fromSide": "bottom", "toNode": "decision", "toSide": "top"},
+    {"id": "review-example", "fromNode": "review", "fromSide": "bottom", "toNode": "review-template", "toSide": "top"}
+  ]
+}
