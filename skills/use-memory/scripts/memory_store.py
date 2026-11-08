@@ -164,20 +164,30 @@ def _file(path: Path) -> bool:
     return info is not None
 
 
-def _read_text(path: Path) -> str | None:
+def _read_bytes(path: Path, limit: int) -> bytes | None:
     if not _file(path):
         return None
     try:
         with open(path, "rb", opener=_open_readonly) as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise StoreError("Memory path is not a regular file")
-            data = stream.read(MAX_FILE + 1)
+            return stream.read(limit)
     except FileNotFoundError:
         return None
     except OSError as error:
         raise StoreError("Cannot read memory file") from error
+
+
+def _read_text(path: Path) -> str | None:
+    data = _read_bytes(path, MAX_FILE + 1)
+    if data is None:
+        return None
     if len(data) > MAX_FILE:
         raise StoreError("Memory file is too large")
+    return _decode_text(data)
+
+
+def _decode_text(data: bytes) -> str:
     try:
         return data.decode("utf-8-sig").replace("\r\n", "\n")
     except UnicodeError as error:
@@ -419,7 +429,7 @@ def _project_note(root: Path) -> Path:
 def _is_project_note(raw: str | None, project: str) -> bool:
     if raw is None or not raw.startswith("---\n"):
         return False
-    metadata, end, _ = raw[4:].partition("\n---\n")
+    metadata, end, _ = raw.partition("\n---\n")
     markers = [line.partition(":")[2].strip() for line in metadata.splitlines()
                if line.partition(":")[0].rstrip() == "fstack_memory_project"]
     return bool(end and len(markers) == 1 and re.fullmatch(
@@ -432,12 +442,20 @@ def _project_link(page: Path) -> str:
     return f"[[Codex Memory/Projects/{project}/{page.stem}|{project}]]"
 
 
+def _has_project_marker(path: Path, project: str) -> bool:
+    prefix = _read_bytes(path, MAX_FILE)
+    if prefix is None:
+        return False
+    header = re.match(rb"(?:\xef\xbb\xbf)?---\r?\n(?:[^\n]*\n)*?---\r?\n", prefix)
+    return header is not None and _is_project_note(_decode_text(header.group()), project)
+
+
 def _current_project_page(root: Path) -> Path | None:
     page = _project_note(root)
-    if _is_project_note(_read_text(page), root.name):
+    if _has_project_marker(page, root.name):
         return page
     legacy = root / "Project.md"
-    if legacy != page and _is_project_note(_read_text(legacy), root.name):
+    if legacy != page and _has_project_marker(legacy, root.name):
         return legacy
     return None
 
@@ -1078,7 +1096,7 @@ class Store:
         legacy = _read_text(legacy_path)
         page = _project_note(root)
         if legacy is None:
-            return 0, int(not _is_project_note(_read_text(page), root.name))
+            return 0, int(not _has_project_marker(page, root.name))
         if not _is_project_note(legacy, root.name):
             return 0, 1
         desired = named_project_text(legacy)

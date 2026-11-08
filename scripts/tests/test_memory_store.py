@@ -352,6 +352,41 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 0})
         self.assertEqual(library.read_bytes(), large)
 
+    def test_large_project_pages_keep_their_links_and_content(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        folder = binding.root / "Projects" / "pilot"
+        header = b"\xef\xbb\xbf---\r\nfstack_memory_project: 'pilot' # Project marker\r\n---\r\n"
+        content = header.ljust(memory_store.MAX_FILE - 1, b" ") + "é\r\n".encode("utf-8")
+        for stem in ("pilot", "Project"):
+            with self.subTest(stem=stem):
+                page = folder / f"{stem}.md"
+                if stem == "Project":
+                    (folder / "pilot.md").unlink()
+                page.write_bytes(content)
+                self.assertEqual(self.store.setup(self.vault, self.repo, "pilot", "auto"), binding)
+                saved = self.store.save(binding, dict(self.candidate, title=f"Saved {stem}"), approved=True)
+                draft = self.store.save(binding, dict(self.candidate, title=f"Draft {stem}"), approved=False)
+                approved = self.store.approve(binding, draft["id"])
+                for entry in (saved, approved):
+                    record = self.entry_path(binding, "Records", entry["id"])
+                    self.assertIn(f'project_link: "[[Codex Memory/Projects/pilot/{stem}|pilot]]"',
+                                  record.read_text(encoding="utf-8"))
+                if stem == "pilot":
+                    self.assertEqual(self.store.migrate(binding), {"updated": 0, "skipped": 0})
+                self.assertEqual(page.read_bytes(), content)
+
+    def test_project_marker_in_body_keeps_legacy_page_selected(self):
+        binding = self.store.setup(self.vault, self.repo, "pilot", "auto")
+        page = binding.root / "Projects" / "pilot" / "pilot.md"
+        page.rename(page.with_name("Project.md"))
+        content = b"---\r\n---\r\nfstack_memory_project: pilot\r\n---\r\n" + b" " * memory_store.MAX_FILE
+        page.write_bytes(content)
+        saved = self.store.save(binding, self.candidate, approved=True)
+        record = self.entry_path(binding, "Records", saved["id"])
+        self.assertIn('project_link: "[[Codex Memory/Projects/pilot/Project|pilot]]"',
+                      record.read_text(encoding="utf-8"))
+        self.assertEqual(page.read_bytes(), content)
+
     def test_graph_links_allow_valid_slugs_that_resemble_secrets(self):
         binding = self.store.setup(self.vault, self.repo, "sk-platform-integration", "auto")
         previous = self.store.save(binding, self.candidate, approved=True)
