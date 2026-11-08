@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from vault_views import HOME_MARKER, VAULT_FILES, install_views
+from vault_views import HOME_MARKER, VAULT_FILES, ensure_library, install_views
 
 
 class StoreError(ValueError):
@@ -59,9 +59,13 @@ LOCK_TIMEOUT = 3
 MEMORY_MARKER = "fstack_memory: 1"
 APPROVED_MARKER = "fstack_approved: 1"
 FORGOTTEN_MARKER = "fstack_forgotten: 1"
-FOLDER_MARKERS = {"Records": MEMORY_MARKER, "Approved": APPROVED_MARKER, "Forgotten": FORGOTTEN_MARKER}
 TEXT_FIELDS = {"kind": 16, "title": 160, "body": 4000, "source": 300}
 METADATA_FIELDS = {"id", "kind", "title", "created", "source", "supersedes", "session_id", "turn_id"}
+GRAPH_FIELDS = {"fstack_status", "project_link", "supersedes_link"}
+GRAPH_LINKS = {
+    "project_link": re.compile(r"\[\[Codex Memory/Projects/(?P<slug>[a-z0-9][a-z0-9-]{0,47})/Project\|(?P=slug)\]\]"),
+    "supersedes_link": re.compile(r"\[\[Codex Memory/Projects/[a-z0-9][a-z0-9-]{0,47}/Records/[0-9a-f]{64}\]\]"),
+}
 VIEW_NAMES = frozenset(VAULT_FILES)
 
 
@@ -178,7 +182,7 @@ def _open_readonly(path: str, flags: int) -> int:
     return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
 
 
-def _write_text(path: Path, text: str, *, replace: bool = False) -> bool:
+def _write_text(path: Path, text: str, *, replace: bool = False, expected: str | None = None) -> bool:
     if not _directory(path.parent):
         raise StoreError("Missing memory directory")
     if _file(path) and not replace:
@@ -190,6 +194,8 @@ def _write_text(path: Path, text: str, *, replace: bool = False) -> bool:
             stream.write(text.encode("utf-8"))
             stream.flush()
             os.fsync(stream.fileno())
+        if expected is not None and _read_text(path) != expected:
+            raise StoreError("Memory note changed while preparing an update")
         if replace:
             os.replace(temp, path)
         elif os.name == "nt":
@@ -340,10 +346,16 @@ def _markdown(marker: str, fields: dict[str, str], body: str = "") -> str:
     return f"---\n{marker}\n{metadata}\n---\n\n{body}\n"
 
 
-def _parse(path: Path, entry_id: str, marker: str) -> dict[str, str] | None:
+def _parse(
+    path: Path, entry_id: str, marker: str, *, include_body: bool = True,
+) -> dict[str, str] | None:
     raw = _read_text(path)
     if raw is None:
         return None
+    return _parse_note(raw, entry_id, marker, include_body=include_body)
+
+
+def _parse_note(raw: str, entry_id: str, marker: str, *, include_body: bool = True) -> dict[str, str]:
     if not raw.startswith("---\n"):
         raise StoreError("Invalid memory file marker")
     metadata, end, body = raw[4:].partition("\n---\n")
@@ -351,16 +363,14 @@ def _parse(path: Path, entry_id: str, marker: str) -> dict[str, str] | None:
     if not end or lines.count(marker) != 1:
         raise StoreError("Incomplete memory metadata")
     fields = {}
-    if marker == MEMORY_MARKER:
-        allowed = METADATA_FIELDS
-    elif marker == APPROVED_MARKER:
-        allowed = {"id", "supersedes"}
-    else:
-        allowed = {"id"}
+    status_only = marker == MEMORY_MARKER and not include_body
+    allowed = METADATA_FIELDS | GRAPH_FIELDS if marker == MEMORY_MARKER else {"id", "supersedes"}
     for line in lines:
         if line == marker:
             continue
         field, sep, value = line.partition(": ")
+        if status_only and line.partition(":")[0] not in {"id", "fstack_status", "supersedes"}:
+            continue
         if not sep or field in fields or field not in allowed:
             raise StoreError("Invalid memory metadata")
         if value.startswith('"'):
@@ -379,16 +389,97 @@ def _parse(path: Path, entry_id: str, marker: str) -> dict[str, str] | None:
         if _entry_id(fields["supersedes"]) == entry_id:
             raise StoreError("Memory entry cannot supersede itself")
     if marker == MEMORY_MARKER:
-        body = _safe_text(body.strip(), 4000, multiline=True)
-        _safe_text(fields.get("title"), 160)
-        if fields.get("kind") not in KINDS:
-            raise StoreError("Invalid memory entry kind")
-        for field in fields.keys() - {"id", "title", "kind", "supersedes"}:
-            _safe_text(fields[field], 300)
-        fields["body"] = body
+        if "fstack_status" in fields and fields["fstack_status"] != "approved":
+            raise StoreError("Invalid memory approval status")
+        for field, pattern in GRAPH_LINKS.items():
+            if field in fields and not pattern.fullmatch(fields[field]):
+                raise StoreError("Invalid memory graph link")
+        if include_body:
+            _safe_text(fields.get("title"), 160)
+            if fields.get("kind") not in KINDS:
+                raise StoreError("Invalid memory entry kind")
+            for field in fields.keys() - GRAPH_FIELDS - {"id", "title", "kind", "supersedes"}:
+                _safe_text(fields[field], 300)
+            fields["body"] = _safe_text(body.strip(), 4000, multiline=True)
     elif body.strip():
         raise StoreError("Memory status marker cannot contain text")
     return fields
+
+
+def _graph_properties(root: Path, supersedes: str | None) -> dict[str, str | None]:
+    project = root.name
+    prefix = f"Codex Memory/Projects/{project}"
+    return {
+        "project_link": f"[[{prefix}/Project|{project}]]",
+        "supersedes_link": f"[[{prefix}/Records/{supersedes}]]" if supersedes else None,
+    }
+
+
+def _approval_fields(fields: dict[str, str]) -> dict[str, str]:
+    return {key: fields[key] for key in ("id", "supersedes") if key in fields}
+
+
+def _inline_approval(fields: dict[str, str] | None) -> dict[str, str] | None:
+    return _approval_fields(fields) if fields is not None and fields.get("fstack_status") == "approved" else None
+
+
+def _captured_record(record: Path) -> Path:
+    return record.with_name(f".fstack-forget-{record.stem}")
+
+
+def _captured_approval(path: Path, entry_id: str) -> dict[str, str] | None:
+    if not _file(path):
+        return None
+    try:
+        return _inline_approval(_parse(path, entry_id, MEMORY_MARKER, include_body=False))
+    except StoreError as error:
+        if isinstance(error.__cause__, OSError):
+            raise
+        return None
+
+
+def _capture_record(record: Path, captured: Path) -> bool:
+    if not _file(record):
+        return False
+    if _file(captured):
+        raise StoreError("Previous memory removal is incomplete")
+    try:
+        os.rename(record, captured)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise StoreError("Cannot capture memory note for removal") from error
+    return True
+
+
+def _refresh_library(root: Path) -> None:
+    try:
+        ensure_library(root, _read_text, _write_text)
+    except (StoreError, OSError):
+        pass
+
+
+def _update_note(path: Path, raw: str, fields: dict[str, str], updates: dict[str, str | None]) -> bool:
+    pending = {key: value for key, value in updates.items() if fields.get(key) != value}
+    if not pending:
+        return False
+    metadata, delimiter, body = raw[4:].partition("\n---\n")
+    lines = []
+    for line in metadata.split("\n"):
+        key = line.partition(": ")[0]
+        if key not in pending:
+            lines.append(line)
+        else:
+            value = pending.pop(key)
+            if value is not None:
+                lines.append(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+    lines.extend(f"{key}: {json.dumps(value, ensure_ascii=False)}" for key, value in pending.items())
+    updated = "---\n" + "\n".join(lines) + delimiter + body
+    if len(updated.encode("utf-8")) > MAX_FILE:
+        raise StoreError("Updated memory note is too large")
+    if not _write_text(path, updated, replace=True, expected=raw):
+        raise StoreError("Cannot update memory note")
+    return True
 
 
 def _files(directory: Path) -> Iterator[Path]:
@@ -458,7 +549,8 @@ class Store:
         install_views(root, project, create_text)
         self._check_home(root)
         binding = Binding(project, mode, root)
-        for folder in FOLDER_MARKERS:
+        _refresh_library(binding.root)
+        for folder in ("Records", "Forgotten"):
             _directory(self._project_root(binding) / folder, create=True)
         _directory(settings.parent, create=True)
         _write_text(settings, json.dumps({"root": str(root), "project": project, "mode": mode}), replace=True)
@@ -504,19 +596,61 @@ class Store:
         return binding.root / "Projects" / _project(binding.project)
 
     def _statuses(self, root: Path) -> tuple[dict[str, dict[str, str]], set[str]]:
-        _directory(root / "Records")
-        hidden = set()
-        for path in _files(root / "Forgotten"):
-            if _parse(path, path.stem, FORGOTTEN_MARKER) is not None:
-                hidden.add(path.stem)
         approvals = {}
         for path in _files(root / "Approved"):
             approval = _parse(path, path.stem, APPROVED_MARKER)
             if approval is not None:
                 approvals[path.stem] = approval
-                if "supersedes" in approval:
-                    hidden.add(approval["supersedes"])
-        return approvals, hidden
+        inline = {}
+        unreadable = {}
+        for path in _files(root / "Records"):
+            if path.stem in approvals:
+                continue
+            if not _file(path):
+                continue
+            try:
+                raw = _read_text(path)
+            except StoreError as error:
+                unreadable[path.stem] = error
+                continue
+            if raw is None:
+                continue
+            try:
+                approval = _inline_approval(_parse_note(raw, path.stem, MEMORY_MARKER, include_body=False))
+            except StoreError:
+                continue
+            if approval is not None:
+                inline[path.stem] = approval
+        tombstones = {}
+        for path in _files(root / "Forgotten"):
+            tombstone = _parse(path, path.stem, FORGOTTEN_MARKER)
+            if tombstone is not None:
+                tombstones[path.stem] = tombstone
+                if "supersedes" not in tombstone and path.stem not in approvals:
+                    captured = _captured_record(root / "Records" / path.name)
+                    approval = _captured_approval(captured, path.stem)
+                    if approval is not None:
+                        inline[path.stem] = approval
+                    latest = _parse(path, path.stem, FORGOTTEN_MARKER)
+                    if latest is not None:
+                        tombstones[path.stem] = latest
+        for entry_id, error in unreadable.items():
+            if entry_id not in tombstones:
+                raise error
+        approvals.update(inline)
+        confirmed = approvals | {
+            entry_id: fields for entry_id, fields in tombstones.items() if "supersedes" in fields
+        }
+        superseded = {item["supersedes"] for item in confirmed.values() if "supersedes" in item}
+        return approvals, tombstones.keys() | superseded
+
+    @staticmethod
+    def _public_record(record: dict[str, str], approval: dict[str, str] | None) -> dict[str, str]:
+        record = {key: value for key, value in record.items() if key not in GRAPH_FIELDS}
+        if approval is None:
+            return dict(record, status="inbox")
+        record.pop("supersedes", None)
+        return {**record, **approval, "status": "memory"}
 
     @staticmethod
     def _record(root: Path, entry_id: str, approval: dict[str, str] | None) -> dict[str, str] | None:
@@ -527,10 +661,7 @@ class Store:
         record = _parse(root / "Records" / filename, entry_id, MEMORY_MARKER)
         if record is None or _file(tombstone):
             return None
-        if approval is None:
-            return dict(record, status="inbox")
-        record.pop("supersedes", None)
-        return {**record, **approval, "status": "memory"}
+        return Store._public_record(record, approval)
 
     def search(self, binding: Binding, query: str, limit: int = 5) -> list[dict]:
         if not isinstance(query, str) or len(query) > 500 or type(limit) is not int or not 1 <= limit <= 50:
@@ -590,6 +721,7 @@ class Store:
             raise StoreError("Invalid memory approval")
         root = self._project_root(binding)
         with _mutation_lock(root, binding.root.parent):
+            _refresh_library(binding.root)
             return self._save(root, fields, approved and binding.mode == "auto", session_id, turn_id)
 
     def _save(
@@ -610,17 +742,28 @@ class Store:
         path = root / "Records" / f"{entry_id}.md"
         if approval is None and not _file(path):
             self._check_supersedes(root, fields, approvals, hidden)
-            body = fields.pop("body")
             metadata = dict(
-                id=entry_id, **fields, created=datetime.now(UTC).isoformat(timespec="seconds"), **provenance,
+                id=entry_id, **{key: value for key, value in fields.items() if key != "body"},
+                created=datetime.now(UTC).isoformat(timespec="seconds"), **provenance,
             )
-            _write_text(path, _markdown(MEMORY_MARKER, metadata, body))
-            if _file(root / "Forgotten" / path.name):
-                _delete(path)
-                raise StoreError("Memory entry is unavailable")
+            metadata.update(
+                (key, value) for key, value in _graph_properties(root, fields.get("supersedes")).items()
+                if value is not None
+            )
+            if approved:
+                metadata["fstack_status"] = "approved"
+            if _write_text(path, _markdown(MEMORY_MARKER, metadata, fields["body"])):
+                if _file(root / "Forgotten" / path.name):
+                    self._forget(root, entry_id)
+                    raise StoreError("Memory entry is unavailable")
+                approval = _inline_approval(metadata)
+                return self._public_record(dict(metadata, body=fields["body"]), approval)
         if approved:
             return self._approve(root, entry_id)
-        approval = _parse(root / "Approved" / path.name, entry_id, APPROVED_MARKER)
+        approvals, hidden = self._statuses(root)
+        if entry_id in hidden:
+            raise StoreError("Memory entry is unavailable")
+        approval = approvals.get(entry_id)
         record = self._record(root, entry_id, approval)
         if record is None:
             raise StoreError("Memory entry is unavailable")
@@ -650,6 +793,7 @@ class Store:
         entry_id = _entry_id(entry_id)
         root = self._project_root(binding)
         with _mutation_lock(root, binding.root.parent):
+            _refresh_library(binding.root)
             return self._approve(root, entry_id)
 
     def _approve(self, root: Path, entry_id: str) -> dict:
@@ -658,21 +802,22 @@ class Store:
         if entry_id in hidden:
             raise StoreError("Memory entry is unavailable")
         approval = approvals.get(entry_id)
-        record = self._record(root, entry_id, approval)
-        if record is None:
+        path = root / "Records" / filename
+        raw = _read_text(path)
+        tombstone = root / "Forgotten" / filename
+        if raw is None or _file(tombstone):
             raise StoreError("Inbox entry is unavailable")
+        fields = _parse_note(raw, entry_id, MEMORY_MARKER)
         if approval is None:
-            self._check_supersedes(root, record, approvals, hidden)
-            metadata = {"id": entry_id}
-            if "supersedes" in record:
-                metadata["supersedes"] = record["supersedes"]
-            marker_path = root / "Approved" / filename
-            _write_text(marker_path, _markdown(APPROVED_MARKER, metadata))
-            approval = _parse(marker_path, entry_id, APPROVED_MARKER)
-            record = self._record(root, entry_id, approval)
-            if approval is None or record is None:
-                raise StoreError("Memory entry is unavailable")
-        return record
+            self._check_supersedes(root, fields, approvals, hidden)
+            approval = _approval_fields(fields)
+        predecessor = approval.get("supersedes")
+        _update_note(path, raw, fields, {
+            "fstack_status": "approved", "supersedes": predecessor, **_graph_properties(root, predecessor),
+        })
+        if _file(tombstone):
+            raise StoreError("Memory entry is unavailable")
+        return self._public_record(fields, approval)
 
     def forget(self, binding: Binding, entry_id: str) -> dict:
         entry_id = _entry_id(entry_id)
@@ -684,9 +829,107 @@ class Store:
         filename = f"{entry_id}.md"
         tombstone = root / "Forgotten" / filename
         record = root / "Records" / filename
-        if not _file(tombstone):
-            if not (_file(record) or _file(root / "Approved" / filename) or _file(tombstone)):
+        captured = _captured_record(record)
+        marker = root / "Approved" / filename
+        raw = _read_text(tombstone)
+        has_marker = _file(marker)
+        has_record = _file(record)
+        try:
+            approval = _parse(marker, entry_id, APPROVED_MARKER) if has_marker else None
+        except StoreError:
+            approval = None
+        if raw is None:
+            if not has_record and not has_marker:
                 raise StoreError("Memory entry is unavailable")
-            _write_text(tombstone, _markdown(FORGOTTEN_MARKER, {"id": entry_id}))
-        _delete(record)
+            if not _write_text(tombstone, _markdown(FORGOTTEN_MARKER, approval or {"id": entry_id})):
+                raise StoreError("Memory tombstone changed while forgetting an entry")
+        self._finish_forget(tombstone, captured, entry_id, approval)
+        if _capture_record(record, captured):
+            self._finish_forget(tombstone, captured, entry_id, approval)
         return {"id": entry_id, "status": "forgotten"}
+
+    @staticmethod
+    def _finish_forget(tombstone: Path, captured: Path, entry_id: str, approval: dict[str, str] | None) -> None:
+        raw = _read_text(tombstone)
+        if raw is None:
+            raise StoreError("Memory tombstone disappeared during removal")
+        fields = _parse_note(raw, entry_id, FORGOTTEN_MARKER)
+        if "supersedes" not in fields:
+            if approval is None:
+                approval = _captured_approval(captured, entry_id)
+            if approval is not None:
+                _update_note(tombstone, raw, fields, {"supersedes": approval.get("supersedes")})
+        _delete(captured)
+
+    def migrate(self, binding: Binding, *, prune_legacy: bool = False) -> dict[str, int]:
+        root = self._project_root(binding)
+        with _mutation_lock(root, binding.root.parent):
+            _refresh_library(binding.root)
+            if prune_legacy:
+                return self._prune_legacy(root)
+            return self._migrate(root)
+
+    @staticmethod
+    def _migrate(root: Path) -> dict[str, int]:
+        entry_ids = {path.stem for folder in ("Records", "Approved", "Forgotten") for path in _files(root / folder)}
+        updated = skipped = 0
+        for entry_id in sorted(entry_ids):
+            filename = f"{entry_id}.md"
+            record = root / "Records" / filename
+            tombstone = root / "Forgotten" / filename
+            try:
+                approval = _parse(root / "Approved" / filename, entry_id, APPROVED_MARKER)
+                forgotten = _read_text(tombstone)
+                if forgotten is not None:
+                    if approval is None:
+                        approval = _captured_approval(_captured_record(record), entry_id)
+                    if approval is None:
+                        approval = _inline_approval(_parse(record, entry_id, MEMORY_MARKER, include_body=False))
+                    if approval is None:
+                        continue
+                    fields = _parse_note(forgotten, entry_id, FORGOTTEN_MARKER)
+                    predecessor = approval.get("supersedes")
+                    if "supersedes" in fields:
+                        skipped += fields.get("supersedes") != predecessor
+                        continue
+                    path, raw, updates = tombstone, forgotten, {"supersedes": predecessor}
+                else:
+                    raw = _read_text(record)
+                    if raw is None:
+                        skipped += 1
+                        continue
+                    path = record
+                    fields = _parse_note(raw, entry_id, MEMORY_MARKER)
+                    predecessor = (approval if approval is not None else fields).get("supersedes")
+                    updates = _graph_properties(root, predecessor)
+                    if approval is not None:
+                        updates.update(fstack_status="approved", supersedes=predecessor)
+            except StoreError:
+                skipped += 1
+                continue
+            updated += _update_note(path, raw, fields, updates)
+        return {"updated": updated, "skipped": skipped}
+
+    @staticmethod
+    def _prune_legacy(root: Path) -> dict[str, int]:
+        pruned = skipped = 0
+        for path in sorted(_files(root / "Approved")):
+            try:
+                raw = _read_text(path)
+                if raw is None:
+                    continue
+                approval = _parse_note(raw, path.stem, APPROVED_MARKER)
+                tombstone = _parse(root / "Forgotten" / path.name, path.stem, FORGOTTEN_MARKER)
+                if tombstone is not None:
+                    equivalent = tombstone == approval
+                else:
+                    record = _parse(root / "Records" / path.name, path.stem, MEMORY_MARKER)
+                    equivalent = _inline_approval(record) == approval
+                if not equivalent or _read_text(path) != raw:
+                    skipped += 1
+                    continue
+            except StoreError:
+                skipped += 1
+                continue
+            pruned += _delete(path)
+        return {"pruned": pruned, "skipped": skipped}
