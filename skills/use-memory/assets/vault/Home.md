@@ -13,18 +13,28 @@ aliases:
 
 ## Проекты
 
-```query
-path:"Codex Memory/Projects/" file:/^Project\.md$/
+```base
+filters:
+  and:
+    - 'file.inFolder("Codex Memory/Projects")'
+    - 'file.path.endsWith("/Project.md")'
+    - 'note.fstack_memory_project != null'
+formulas:
+  project: 'link(file.path, note.fstack_memory_project)'
+views:
+  - type: list
+    name: Проекты
+    order: [formula.project]
 ```
 
 ## Шаблоны
 
 | Заметка | Когда подходит |
 | --- | --- |
-| [[Codex Memory/Templates/Decision|Решение]] | Выбрали подход, который пригодится в следующих задачах |
-| [[Codex Memory/Templates/Correction|Поправка]] | Уточнили правило или исправили прежнее понимание |
-| [[Codex Memory/Templates/Preference|Предпочтение]] | Подтвердили устойчивый выбор в работе |
-| [[Codex Memory/Templates/Review|Обзор]] | Пора проверить Inbox и актуальность записей |
+| [Решение](Templates/Decision.md) | Выбрали подход, который пригодится в следующих задачах |
+| [Поправка](Templates/Correction.md) | Уточнили правило или исправили прежнее понимание |
+| [Предпочтение](Templates/Preference.md) | Подтвердили устойчивый выбор в работе |
+| [Обзор](Templates/Review.md) | Пора проверить Inbox и актуальность записей |
 
 ## Работа с памятью
 
