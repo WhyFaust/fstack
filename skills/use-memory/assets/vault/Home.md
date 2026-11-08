@@ -13,19 +13,7 @@ aliases:
 
 ## Проекты
 
-```base
-filters:
-  and:
-    - 'file.inFolder("Codex Memory/Projects")'
-    - 'file.path.endsWith("/Project.md")'
-    - 'note.fstack_memory_project != null'
-formulas:
-  project: 'link(file.path, note.fstack_memory_project)'
-views:
-  - type: list
-    name: Проекты
-    order: [formula.project]
-```
+[[Codex Memory/Projects|Все проекты]]
 
 ## Шаблоны
 

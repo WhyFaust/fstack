@@ -4,7 +4,7 @@ fstack_memory_project: "@PROJECT@"
 
 # @PROJECT@
 
-[[Codex Memory/Home|Все проекты]] · [[Codex Memory/Templates/Review|Шаблон обзора]]
+[[Codex Memory/Projects|Все проекты]] · [[Codex Memory/Templates/Review|Шаблон обзора]]
 
 ## Inbox
 
