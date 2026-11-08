@@ -1,0 +1,29 @@
+filters:
+  and:
+    - 'file.inFolder("Codex Memory/Projects")'
+    - 'file.folder.endsWith("/Records")'
+    - 'file.ext == "md"'
+    - 'fstack_memory == 1'
+    - 'file(file.path.replace("/Records/", "/Forgotten/")) == null'
+    - '!this.file.path.endsWith("/Project.md") || file.inFolder(this.file.folder)'
+formulas:
+  record: 'link(file.path, title)'
+  project: 'file.folder.split("/")[2]'
+properties:
+  formula.record:
+    displayName: Запись
+  formula.project:
+    displayName: Проект
+  note.kind:
+    displayName: Тип
+  note.created:
+    displayName: Дата
+views:
+  - type: table
+    name: Сохранённые
+    filters: 'file(file.path.replace("/Records/", "/Approved/")) != null'
+    order: [formula.record, formula.project, note.kind, note.created]
+  - type: table
+    name: Inbox
+    filters: 'file(file.path.replace("/Records/", "/Approved/")) == null'
+    order: [formula.record, formula.project, note.kind, note.created]

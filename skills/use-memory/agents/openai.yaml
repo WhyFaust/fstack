@@ -1,4 +1,4 @@
 interface:
-  display_name: Общая память и контекст через Notion
-  short_description: Общая память и контекст через Notion
+  display_name: Память проектов в Obsidian
+  short_description: Решения и предпочтения проекта в Obsidian
   default_prompt: Используй $fstack:use-memory из плагина fstack для указанной задачи с проверяемым результатом.

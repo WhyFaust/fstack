@@ -24,6 +24,23 @@ Copyright (c) 2025-2026 Cloudflare, Inc. [Лицензия MIT](https://github.c
 best practices" и контракт вызова в документации Claude Code "Extend Claude
 with skills".
 
+Приёмы разделения старта, контекста и записи, изоляции Markdown и
+подготовки данных перед применением изучены по трём исходникам под MIT.
+[Choirboy](https://github.com/howdeploy/choirboy-prompt/tree/70232c407435e0ccd6a72cdaca55fcc5bf7893f1),
+[VaultGoblin](https://github.com/WhyFaust/VaultGoblin/tree/b844efea318212f2b3dee97a1c55bf40f9a29789),
+[ObsidianDataWeave](https://github.com/howdeploy/ObsidianDataWeave/tree/ddc40c68941d66943824c668ed192aced866fce8).
+
+При проектировании обзора и шаблонов использованы идеи организации vault,
+читаемых таблиц и периодического обзора.
+[kepano-obsidian](https://github.com/kepano/kepano-obsidian/tree/473697347a0eaac790a6596229c741b3915f3b77),
+[Minimal](https://github.com/kepano/obsidian-minimal/tree/93321bdc23fc879966e1e3aa0cfeda77012f540f),
+[40 Questions](https://github.com/kepano/40-questions/tree/10e6de763e01eb00c7bd18a6cf02b90fbe1f239f).
+
+Карта следует спецификации Obsidian.md (Copyright (c) 2024 Obsidian.md, MIT).
+Для акцентов использованы три цвета Steph Ango (Copyright (c) 2023 Steph Ango, MIT).
+[JSON Canvas 1.0](https://github.com/obsidianmd/jsoncanvas/blob/456f843cb293df4f4ab1763e22ccb46a80b307c8/spec/1.0.md),
+[Flexoki](https://github.com/kepano/flexoki/tree/8d723bac4a9ac46adfdf99d42155286977aac72a).
+
 Логотип и обложка созданы встроенным ImageGen для fstack. В логотипе использован
 образ маскота Faust с кудрями, очками и худи; стопка модулей связывает его с проектом.
 
