@@ -158,6 +158,29 @@ class MemoryHookTests(unittest.TestCase):
         self.assertNotIn(CANDIDATE["body"].encode(), (self.state / "pending.sqlite3").read_bytes())
         self.assertEqual(self.cli("search", "heliotrope"), records)
 
+    def test_post_tool_use_reports_conflict_and_preserves_first_action(self):
+        self.init()
+        token = self.token()
+        first_command = self.stage(token, REMEMBER)
+        self.assertEqual(self.post(first_command), {})
+
+        second_candidate = dict(CANDIDATE, title="Juniper convention", body="Use the juniper marker.")
+        second_encoded, second_command = self.stage_command(
+            token, {"action": "remember", "candidate": second_candidate}
+        )
+        self.assertEqual(self.cli("stage", "--turn", token, "--payload", second_encoded), {"staged": True})
+        self.assertEqual(self.post(second_command, agent_id="another-agent"), {})
+        result = self.post(second_command, tool_use_id="call-second-stage")
+        self.assertEqual(result.get("decision"), "block")
+        self.assertTrue(result.get("reason"))
+
+        self.assertEqual(self.cli("search", "heliotrope"), [])
+        self.assertEqual(self.cli("search", "juniper"), [])
+        self.assertEqual(self.hook("Stop"), {})
+        records = self.cli("search", "heliotrope")
+        self.assertEqual([record["body"] for record in records], [CANDIDATE["body"]])
+        self.assertEqual(self.cli("search", "juniper"), [])
+
     def test_rejects_wrong_token_and_unsanctioned_data_fields(self):
         self.init()
         token = self.token()

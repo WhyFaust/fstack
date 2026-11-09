@@ -14,6 +14,7 @@ from pathlib import Path
 from hook_spool import (
     MAX_STAGE_BYTES,
     TOKEN,
+    PendingActionConflict,
     PendingRevocationError,
     PendingTurns,
     digest,
@@ -185,11 +186,19 @@ def hook(store: Store, event: str, payload: dict) -> dict:
             "Затем выполни отдельный точный вызов в оболочке из текущего cwd, подставив ASCII-строку "
             f"из JSON-ответа pack без кавычек вместо BASE64URL: "
             f"{prefix} stage --turn {token} --payload BASE64URL. "
-            "В режиме Plan пропусти stage. Не включай токен в ответ.",
+            "Подготовь одну операцию за ход. Ответ staged подтверждает проверку команды; "
+            "другую операцию хук отклонит. В режиме Plan пропусти stage. Не включай токен в ответ.",
         )
 
     if staged is not None:
-        pending.stage(key, staged[0], scope, staged[1])
+        try:
+            pending.stage(key, staged[0], scope, staged[1])
+        except PendingActionConflict:
+            return {
+                "decision": "block",
+                "reason": "На этот ход уже принята другая операция памяти fstack. "
+                "Она остаётся в очереди. Вторую операцию выполни в новом ходе.",
+            }
         return {}
     action_data = pending.consume(key, scope)
     if action_data is None:

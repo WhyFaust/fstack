@@ -30,6 +30,10 @@ class PendingRevocationError(StoreError):
     pass
 
 
+class PendingActionConflict(StoreError):
+    pass
+
+
 def _unique_fields(items: list[tuple[str, object]]) -> dict[str, object]:
     fields = dict(items)
     if len(fields) != len(items):
@@ -216,12 +220,22 @@ class PendingTurns:
             return
         serialized = json.dumps(action, ensure_ascii=False, separators=(",", ":"))
         with self._write() as connection:
-            if connection is not None and self._current(key, match[2]):
-                connection.execute(
-                    "UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? "
-                    "AND expires>=? AND (action IS NULL OR action=?)",
-                    (serialized, key, match[2], scope, int(time.time()), serialized),
-                )
+            if connection is None or not self._current(key, match[2]):
+                return
+            identity = (key, match[2], scope, int(time.time()))
+            result = connection.execute(
+                "UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? "
+                "AND expires>=? AND (action IS NULL OR action=?)",
+                (serialized, *identity, serialized),
+            )
+            if result.rowcount:
+                return
+            existing = connection.execute(
+                "SELECT 1 FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=? AND action<>?",
+                (*identity, serialized),
+            ).fetchone()
+            if existing and self._current(key, match[2]):
+                raise PendingActionConflict("Another memory action is already pending for this turn")
 
     def consume(self, key: str, scope: str) -> object:
         nonce = self._generation(key)
