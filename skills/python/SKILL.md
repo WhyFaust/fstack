@@ -1,10 +1,10 @@
 ---
 name: python
-description: 'Дополняет работу с Python правилами совместимости, окружения, данных, ошибок и ресурсов. Используй при реализации, диагностике или ревью Python; справки по typing, asyncio и автотестам читай по задаче.'
+description: 'Дополняет реализацию, диагностику и ревью Python-кода правилами версий, зависимостей, ошибок и владения ресурсами. Подключает справки по типизации, asyncio и автотестам по затронутой области.'
 license: MIT
 metadata:
   short-description: Python, окружение, типы и ресурсы
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

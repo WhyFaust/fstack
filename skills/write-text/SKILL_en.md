@@ -1,10 +1,10 @@
 ---
 name: write-text
-description: "Drafts original prose and adapts material to a new format, audience or platform. Use for posts, articles, emails, scripts, descriptions, titles, captions, comments and replies, and for writing ideas or outlines."
+description: 'Drafts posts, articles, emails, scripts, descriptions, titles, captions, comments and replies, proposes ideas and outlines, and adapts prose to a new audience, format or platform. Editing in the original format belongs to edit-text.'
 license: MIT
 metadata:
   short-description: Original prose, replies and format adaptation
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -1,10 +1,10 @@
 ---
 name: find-docs
-description: 'Устанавливает контракт внешнего API или библиотеки для применимой версии по Context7 и первоисточникам. Используй, когда гарантия зависимости влияет на решение. Локальную реализацию исследуй по коду, продукты OpenAI относятся к openai-docs.'
+description: "Устанавливает контракт внешнего API или библиотеки для нужной версии по Context7 и первоисточникам, если от гарантии зависит решение. Документацию продуктов OpenAI ведёт openai-docs."
 license: MIT
 metadata:
   short-description: Проверка API по документации нужной версии
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

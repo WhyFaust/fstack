@@ -1,10 +1,10 @@
 ---
 name: verify-project
-description: 'Проверяет конкретную версию через реальную границу UI, API, CLI или установки существующими средствами. Готовый сценарий желателен, но не обязателен; сохранение инструкции относится к prepare-verification.'
+description: 'Проверяет конкретную ревизию через UI, API или CLI, проверяет процесс установки и работу установленного пакета. Сохраняет наблюдаемый результат. Сохранение воспроизводимой инструкции относится к prepare-verification.'
 license: MIT
 metadata:
   short-description: Проверка проекта через реальный сценарий
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -20,9 +20,10 @@ Copyright (c) 2025-2026 Cloudflare, Inc. [Лицензия MIT](https://github.c
 распространяются по CC BY 4.0 (`docs/LICENSE`).
 
 Сверены 2026-11-07 документ OpenAI Developers "Build skills", справка Codex
-`openai_yaml.md` из `skill-creator`, Claude Platform Docs "Skill authoring
-best practices" и контракт вызова в документации Claude Code "Extend Claude
-with skills".
+`openai_yaml.md` из `skill-creator` и контракт вызова в документации Claude Code
+"Extend Claude with skills". Рекомендации Claude Platform Docs
+[Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
+сверены 2026-11-09 и адаптированы к каталогу fstack для Codex.
 
 Приёмы разделения старта, контекста и записи, изоляции Markdown и
 подготовки данных перед применением изучены по трём исходникам под MIT.

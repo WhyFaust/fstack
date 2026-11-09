@@ -1,11 +1,11 @@
 ---
 name: glab
-description: 'Выполняет операции GitLab через glab, когда нужной возможности нет в доступном MCP. Используй для MR, CI, артефактов и API с существующей авторизацией; сопровождение и слияние задаются отдельными методами.'
+description: "Выполняет разрешённые операции с MR, CI, артефактами и GitLab API через glab, когда нужная возможность MCP недоступна. Сопровождение и слияние задают отдельные методы."
 license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

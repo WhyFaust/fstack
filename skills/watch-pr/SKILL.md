@@ -1,6 +1,6 @@
 ---
 name: watch-pr
-description: 'Проверяет состояние GitHub PR или GitLab MR и сопровождает его до согласованной готовности. Используй для CI, обсуждений, approvals и конфликтов; слияние относится к ship-pr.'
+description: 'Читает статус GitHub PR или GitLab MR по текущему head и сопровождает изменение до согласованной готовности по CI, обсуждениям, approvals и конфликтам. Слияние относится к ship-pr.'
 license: MIT
 metadata:
   short-description: Состояние и сопровождение PR или MR

@@ -1,10 +1,10 @@
 ---
 name: debug-failure
-description: 'Находит причину наблюдаемого сбоя или нестабильности и проверяет ограниченное исправление. Используй при конкретном симптоме; объяснение кода без правок относится к investigate-code.'
+description: "Находит причину наблюдаемого сбоя или нестабильности и проверяет ограниченное исправление. Применяется при конкретном симптоме. Объяснение работы кода ведёт investigate-code."
 license: MIT
 metadata:
   short-description: Причина сбоя и проверка исправления
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
