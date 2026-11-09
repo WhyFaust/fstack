@@ -1,10 +1,10 @@
 ---
 name: watch-pr
-description: 'Проверяет состояние GitHub PR или GitLab MR и сопровождает его до согласованной готовности. Используй для CI, обсуждений, approvals и конфликтов; слияние относится к ship-pr.'
+description: 'Читает статус GitHub PR или GitLab MR по текущему head и сопровождает изменение до согласованной готовности по CI, обсуждениям, approvals и конфликтам. Слияние относится к ship-pr.'
 license: MIT
 metadata:
   short-description: Состояние и сопровождение PR или MR
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -18,6 +18,8 @@ metadata:
 Используй доступного провайдера и правила проекта, включая существующий
 git-pr-watch. Не запускай второй watcher поверх действующего. Уточняй только
 существенную недостающую границу действий.
+Если для операции GitLab нужен переход с MCP на CLI, до первого вызова
+прочитай fstack:glab и проверь условия перехода по этому навыку.
 
 Прочитай состояние текущей ревизии: checks/pipeline и попытки, обсуждения,
 approvals, конфликты, draft, mergeability и требования ветки. Сверь ревизию

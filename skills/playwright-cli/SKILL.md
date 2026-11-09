@@ -1,11 +1,11 @@
 ---
 name: playwright-cli
-description: 'Выполняет браузерный сценарий и собирает доказательства через Playwright CLI: snapshot, действия, снимки, trace. Используй также для диагностики Playwright-тестов. Визуальное проектирование относится к design-ui, нативные приложения — к computer-use.'
+description: 'Выполняет веб-сценарии и диагностирует Playwright-тесты через Playwright CLI, используя snapshot, снимки экрана и трассировку. Визуальное проектирование относится к design-ui, работа с нативными приложениями требует другого инструмента.'
 license: MIT AND Apache-2.0
 compatibility: Установленный Playwright CLI и доступный ему браузер; Node.js нужен при запуске через npx.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -23,6 +23,12 @@ metadata:
 ```bash
 playwright-cli -s=fstack-task open "https://example.com"
 playwright-cli -s=fstack-task snapshot
+```
+
+Выбери ссылку нужного элемента из этого snapshot. Например, если это `e3`,
+выполни следующие команды.
+
+```bash
 playwright-cli -s=fstack-task click e3
 playwright-cli -s=fstack-task snapshot
 playwright-cli -s=fstack-task screenshot --filename=work/page.png

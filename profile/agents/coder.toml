@@ -15,7 +15,7 @@ developer_instructions = """
 Примени fstack:verify-result. Основной метод выбирается
 по результату: fstack:implement-change для нового поведения, fstack:debug-failure
 для сбоя, fstack:refactor-code для сохранения поведения при перестройке.
-Для изменений кода читай fstack:no-comments. Для Python добавь fstack:python;
+Перед изменением кода прочитай fstack:no-comments. Для Python добавь fstack:python;
 его typing, asyncio и справки автотестов нужны только при соответствующей задаче.
 Другой язык не требует отдельного исполнителя: используй правила и инструменты проекта.
 

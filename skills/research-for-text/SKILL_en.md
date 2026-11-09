@@ -1,10 +1,10 @@
 ---
 name: research-for-text
-description: "Finds material and fresh angles for a text and verifies facts, dates and sources. Use for a standalone source brief, a fact-check, or research before drafting or editing prose."
+description: 'Finds sources and timely angles and verifies facts and dates for prose or a standalone fact-check. Supplies verified material and caveats for drafting or editing.'
 license: MIT
 metadata:
   short-description: Source research and fact-checking for prose
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

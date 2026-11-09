@@ -1,10 +1,10 @@
 ---
 name: refactor-code
-description: 'Упрощает существующий код с сохранением наблюдаемого поведения и совместимости. Используй для дублирования, неясного владения и лишних слоёв; намеренную смену поведения выполняет implement-change.'
+description: 'Устраняет дублирование, неясное владение состоянием и лишние слои с сохранением поведения и совместимости. Намеренная смена поведения относится к implement-change, уборка подготовленного diff — к simplify-change.'
 license: MIT
 metadata:
   short-description: Упрощение кода с сохранением контрактов
-  version: 1.1.1
+  version: 1.1.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

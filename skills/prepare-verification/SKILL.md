@@ -1,10 +1,10 @@
 ---
 name: prepare-verification
-description: 'Сохраняет короткую воспроизводимую инструкцию проверки приложения из существующих команд. Используй, когда нужен передаваемый сценарий; разовый запуск без готовой инструкции выполняет verify-project.'
+description: 'Сохраняет воспроизводимую инструкцию проверки проекта через UI, API, CLI или установку с помощью существующих команд. Разовый прогон относится к verify-project, обновление инструкции — к maintain-verification.'
 license: MIT
 metadata:
   short-description: Подготовка воспроизводимой проверки проекта
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
