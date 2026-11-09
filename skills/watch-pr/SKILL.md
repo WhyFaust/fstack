@@ -4,7 +4,7 @@ description: 'Проверяет состояние GitHub PR или GitLab MR �
 license: MIT
 metadata:
   short-description: Состояние и сопровождение PR или MR
-  version: 1.0.1
+  version: 1.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -18,6 +18,8 @@ metadata:
 Используй доступного провайдера и правила проекта, включая существующий
 git-pr-watch. Не запускай второй watcher поверх действующего. Уточняй только
 существенную недостающую границу действий.
+Если для операции GitLab нужен переход с MCP на CLI, до первого вызова
+прочитай fstack:glab и проверь условия перехода по этому навыку.
 
 Прочитай состояние текущей ревизии: checks/pipeline и попытки, обсуждения,
 approvals, конфликты, draft, mergeability и требования ветки. Сверь ревизию
