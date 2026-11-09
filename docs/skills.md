@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | `select-skills` | Один основной метод и необходимые предметные дополнения | [Открыть](../skills/select-skills/SKILL.md) |
 | `investigate-code` | Исследование кода по исходным данным | [Открыть](../skills/investigate-code/SKILL.md) |
+| `improve-codebase` | Приоритетный backlog улучшений и самодостаточные планы | [Открыть](../skills/improve-codebase/SKILL.md) |
 | `implement-change` | Реализация законченного изменения | [Открыть](../skills/implement-change/SKILL.md) |
 | `adapt-skill` | Создание, перенос и улучшение исходников навыков | [Открыть](../skills/adapt-skill/SKILL.md) |
 | `debug-failure` | Причина сбоя и проверка исправления | [Открыть](../skills/debug-failure/SKILL.md) |
@@ -94,6 +95,7 @@
 модели описаны в [оркестрации](orchestration.md).
 
 «Почему работает?» — investigate-code; «почему так решили?» — trace-history.
+«Что улучшить в проекте и как передать реализацию?» — improve-codebase.
 «Добавь поведение» — implement-change; «сломалось» — debug-failure;
 «сохрани поведение, упрости» — refactor-code; «проверь diff» — review-change.
 plan-work применяют до упорядочивания существенных зависимых этапов.

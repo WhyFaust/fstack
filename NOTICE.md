@@ -1,5 +1,17 @@
 # Источники
 
+Метод `improve-codebase` адаптирован из
+[shadcn/improve](https://github.com/shadcn/improve/tree/cac56e1ebd3c279aa9153616cfeac7b174ab90f9),
+ревизия `cac56e1ebd3c279aa9153616cfeac7b174ab90f9` (2026-09-12):
+`skills/improve/SKILL.md`, `references/audit-playbook.md`,
+`references/plan-template.md`, `references/closing-the-loop.md`
+(справки находятся внутри `skills/improve/`). Сохранены приёмы аудита,
+приоритизации, самодостаточных планов и сверки backlog; маршрутизация,
+доказательства и передача реализации согласованы с методами и профилем fstack.
+Copyright (c) 2026 shadcn. [Лицензия MIT](licenses/shadcn-improve-MIT.txt),
+исходный файл `LICENSE.md` в той же ревизии. Тексты изложены по-русски;
+клиентские команды и модельная оркестрация исходника не перенесены.
+
 fstack развивает личные навыки Faust и их вспомогательные материалы.
 Справки `playwright-cli` адаптированы и сокращены на русском языке из
 [Microsoft Playwright CLI](https://github.com/microsoft/playwright-cli).

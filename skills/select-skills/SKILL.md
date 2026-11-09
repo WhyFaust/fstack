@@ -4,7 +4,7 @@ description: 'Выбирает основной метод и предметны
 license: MIT
 metadata:
   short-description: Основной метод и применимые предметные навыки
-  version: 1.0.3
+  version: 1.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -28,6 +28,9 @@ metadata:
 Исследование поведения ведёт fstack:investigate-code, изменение поведения —
 fstack:implement-change, наблюдаемый сбой — fstack:debug-failure, перестройку
 без смены поведения — fstack:refactor-code, независимое ревью — fstack:review-change.
+Для приоритетного backlog улучшений кодовой базы и самодостаточных планов
+используй fstack:improve-codebase; он не заменяет объяснение отдельного пути
+или ревью готового diff.
 Выбери fstack:verify-result для оценки доказательств, fstack:verify-project
 для выполнения сценария через UI, API, CLI или установку. Для поиска официального
 контракта API сначала выбери применимый специализированный навык. Если он
