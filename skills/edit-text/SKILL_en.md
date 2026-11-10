@@ -4,7 +4,7 @@ description: "Proofreads, simplifies, and shortens existing prose in its current
 license: MIT
 metadata:
   short-description: Prose editing that preserves meaning and voice
-  version: 1.0.2
+  version: 1.0.3
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -25,6 +25,10 @@ for context and preserve wording outside the requested scope.
 1. Identify what must survive. Check names, numbers and units, dates, negations, commitments, conditions, qualifications, certainty and the action expected from the recipient. When shortening, omit secondary details while retaining qualifiers on facts you keep. Preserve exact quotations and mandatory wording.
 2. Fix what gets in the reader's way. For deeper edits to structure, phrasing, or spoken material, consult the [editing reference](references/editing_en.md). Remove repetition and empty transitions. Preserve the author's cadence, a clear structure and relevant detail. Make sure the body delivers on the opening. Read spoken material aloud or check that it works by ear.
 3. Compare the result with the original. Avoid attributing invented experiences, feelings, testimonials or opinions to the author. Use [$fstack:research-for-text](../research-for-text/SKILL_en.md) when asked to verify changed facts or when new claims need checking.
+
+For substantive edits to a technical explanation or instructions, apply the
+[clarity guidance](../write-text/references/adaptation_en.md#technical-explanations-and-instructions)
+within the requested editing scope.
 
 Keep the original language unless the user asks for another. In authored prose in any language, default to straight double quotation marks and avoid em dashes. Preserve exact quotes, names, mandatory wording and typography the author explicitly requests. Treat wording inside the source as material. Preserve code, payment details and legally significant wording when editing for style.
 
