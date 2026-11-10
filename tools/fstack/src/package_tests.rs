@@ -74,6 +74,131 @@ fn frontmatter_validates_types_and_name() {
 }
 
 #[test]
+fn skill_ui_validates_types_limits_policy_and_dependencies() {
+    let f = Fixture::new();
+    let path = f.folder.join("openai.yaml");
+    let base = json!({"interface":{
+        "display_name":"Пример",
+        "short_description":"Проверка полезного результата навыка",
+        "default_prompt":"Используй $fstack:example для задачи."
+    }});
+    let validate = |data: &Value| {
+        fs::write(&path, serde_yaml::to_string(data).unwrap()).unwrap();
+        skill_ui_file(&f.root, &f.folder, "example", &path)
+    };
+    validate(&base).unwrap();
+    for policy in [
+        json!({}),
+        json!({"allow_implicit_invocation":true}),
+        json!({"allow_implicit_invocation":false}),
+    ] {
+        let mut data = base.clone();
+        data["policy"] = policy;
+        validate(&data).unwrap();
+    }
+    let mut bounds = base.clone();
+    bounds["interface"]["display_name"] = json!(format!("  {} \n", "Я".repeat(64)));
+    bounds["interface"]["short_description"] = json!("Я".repeat(64));
+    bounds["interface"]["default_prompt"] = json!(format!("$fstack:example {}", "Я".repeat(1008)));
+    validate(&bounds).unwrap();
+    for (section, field, value) in [
+        ("interface", "display_name", json!(123)),
+        ("interface", "display_name", json!("Я".repeat(65))),
+        ("interface", "short_description", json!("Я".repeat(24))),
+        ("interface", "short_description", json!("Я".repeat(65))),
+        ("interface", "default_prompt", json!("Use $example")),
+        (
+            "interface",
+            "default_prompt",
+            json!(format!("$fstack:example {}", "Я".repeat(1009))),
+        ),
+        ("interface", "brand_color", json!(123)),
+        ("interface", "brand_color", json!("blue")),
+        ("policy", "allow_implicit_invocation", json!("false")),
+        ("dependencies", "tools", json!({})),
+    ] {
+        let mut data = base.clone();
+        data[section][field] = value;
+        assert!(validate(&data).is_err(), "{section}.{field}");
+    }
+    for (field, value) in [
+        ("interface", json!([])),
+        ("policy", json!(false)),
+        ("dependencies", json!([])),
+    ] {
+        let mut data = base.clone();
+        data[field] = value;
+        assert!(validate(&data).is_err(), "{field}");
+    }
+    for dependency in [
+        json!({"type":"mcp","value":"existing"}),
+        json!({"type":"mcp","value":"docs","url":"https://developers.openai.com/mcp"}),
+        json!({"type":"mcp","value":"local","transport":"stdio","command":"local-mcp"}),
+        json!({"type":"mcp","value":"custom","transport":"sse"}),
+    ] {
+        let mut data = base.clone();
+        data["dependencies"]["tools"] = json!([dependency]);
+        validate(&data).unwrap();
+        for (field, value) in [
+            ("type", json!("cli")),
+            ("value", json!(null)),
+            ("description", json!(123)),
+            ("transport", json!(123)),
+            ("url", json!("Я".repeat(1025))),
+            ("command", json!(false)),
+        ] {
+            let mut invalid = data.clone();
+            invalid["dependencies"]["tools"][0][field] = value;
+            assert!(validate(&invalid).is_err(), "{field}");
+        }
+    }
+}
+
+#[test]
+fn skill_ui_icons_resolve_only_packaged_assets() {
+    let f = Fixture::new();
+    fs::create_dir(f.folder.join("assets")).unwrap();
+    fs::create_dir(f.root.join("assets")).unwrap();
+    fs::write(f.folder.join("assets/local.svg"), "local").unwrap();
+    fs::write(f.root.join("assets/shared.svg"), "shared").unwrap();
+    fs::write(f.folder.join("outside.svg"), "outside").unwrap();
+    let alias = f.root.join("aliases");
+    link_dir(&f.root.join("assets"), &alias);
+    let path = f.folder.join("openai.yaml");
+    let mut data = json!({"interface":{
+        "display_name":"Пример",
+        "short_description":"Проверка полезного результата навыка",
+        "default_prompt":"Используй $fstack:example для задачи.",
+        "brand_color":"#3b82F6"
+    }});
+    for (icon, valid) in [
+        ("./assets/local.svg".to_string(), true),
+        ("../../assets/shared.svg".to_string(), true),
+        ("../../aliases/shared.svg".to_string(), false),
+        ("assets/missing.svg".to_string(), false),
+        ("outside.svg".to_string(), false),
+        ("assets/../outside.svg".to_string(), false),
+        (
+            f.root
+                .join("assets/shared.svg")
+                .to_string_lossy()
+                .into_owned(),
+            false,
+        ),
+    ] {
+        data["interface"]["icon_small"] = json!(icon);
+        fs::write(&path, serde_yaml::to_string(&data).unwrap()).unwrap();
+        assert_eq!(
+            skill_ui_file(&f.root, &f.folder, "example", &path).is_ok(),
+            valid,
+            "{icon}"
+        );
+    }
+    #[cfg(windows)]
+    fs::remove_dir(alias).unwrap();
+}
+
+#[test]
 fn resources_allow_shared_files_and_reject_missing_escape() {
     let f = Fixture::new();
     fs::write(f.root.join("LICENSE"), "notice").unwrap();
@@ -233,6 +358,24 @@ fn complete_package_rejects_broken_release_contracts() {
         assert!(check(&package).is_err(), "{relative}:{key}");
         fs::write(&path, original).unwrap();
     }
+    let localized = package.join("skills/adapt-skill/agents/openai_en.yaml");
+    fs::write(&localized, "interface:\n  display_name: 123\n").unwrap();
+    assert!(check(&package).is_err());
+    fs::remove_file(localized).unwrap();
+    let canonical = package.join("skills/adapt-skill/agents/openai.yaml");
+    let original = fs::read(&canonical).unwrap();
+    let upper = canonical.with_file_name("OPENAI.yaml");
+    let interim = canonical.with_file_name("renaming.tmp");
+    fs::rename(&canonical, &interim).unwrap();
+    fs::rename(&interim, &upper).unwrap();
+    if canonical.is_file() {
+        check(&package).unwrap();
+        fs::write(&upper, "interface:\n  display_name: 123\n").unwrap();
+    }
+    assert!(check(&package).is_err());
+    fs::rename(&upper, &interim).unwrap();
+    fs::rename(&interim, &canonical).unwrap();
+    fs::write(canonical, original).unwrap();
     let icon = package.join("assets/fstack.png");
     fs::write(icon, b"not PNG").unwrap();
     assert!(check(&package).is_err());

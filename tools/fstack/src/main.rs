@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
 type Result<T> = std::result::Result<T, String>;
@@ -222,6 +222,139 @@ fn metadata(path: &Path) -> Result<Value> {
         "Отсутствуют автор или источник",
     )?;
     Ok(data)
+}
+
+fn metadata_text(value: &Value, field: &str, max: usize) -> Result<String> {
+    let text = string(value, field)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    require(
+        !text.is_empty() && text.chars().count() <= max,
+        format!("{field}: ожидалось 1–{max} символов"),
+    )?;
+    Ok(text)
+}
+
+fn lexical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for part in path.components() {
+        if part == Component::ParentDir {
+            normalized.pop();
+        } else if part != Component::CurDir {
+            normalized.push(part.as_os_str());
+        }
+    }
+    normalized
+}
+
+fn skill_ui_file(root: &Path, folder: &Path, name: &str, path: &Path) -> Result<()> {
+    let ui = yaml(&read(path)?)?;
+    require(ui.is_object(), "Метаданные UI должны быть объектом")?;
+    for field in ["interface", "policy", "dependencies"] {
+        require(
+            ui[field].is_null() || ui[field].is_object(),
+            format!("{field}: ожидался объект"),
+        )?;
+    }
+    let interface = &ui["interface"];
+    metadata_text(interface, "display_name", 64)?;
+    let description = metadata_text(interface, "short_description", 64)?;
+    require(description.chars().count() >= 25, "Короткое UI description")?;
+    let prompt = metadata_text(interface, "default_prompt", 1024)?;
+    require(
+        prompt.contains(&format!("$fstack:{name}")),
+        "default_prompt без полного имени навыка",
+    )?;
+    if let Some(value) = ui["policy"].get("allow_implicit_invocation") {
+        require(
+            value.is_null() || value.is_boolean(),
+            "Некорректная доступность",
+        )?;
+    }
+    if let Some(value) = interface.get("brand_color").filter(|v| !v.is_null()) {
+        require(
+            value
+                .as_str()
+                .is_some_and(|v| rx!(r"\A#[0-9a-fA-F]{6}\z").is_match(v.trim())),
+            "brand_color: ожидался #RRGGBB",
+        )?;
+    }
+    for field in ["icon_small", "icon_large"] {
+        if let Some(value) = interface.get(field).filter(|v| !v.is_null()) {
+            let relative = Path::new(value.as_str().ok_or("Путь иконки должен быть строкой")?);
+            require(
+                !relative.is_absolute(),
+                "Путь иконки должен быть относительным",
+            )?;
+            let shared = relative
+                .components()
+                .any(|part| part == Component::ParentDir);
+            if !shared {
+                require(
+                    relative
+                        .components()
+                        .find(|part| *part != Component::CurDir)
+                        == Some(Component::Normal("assets".as_ref())),
+                    "Иконка должна находиться в assets/",
+                )?;
+            }
+            let assets = if shared { root } else { folder }.join("assets");
+            if shared {
+                let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+                require(
+                    lexical_path(&cwd.join(folder).join(relative))
+                        .starts_with(lexical_path(&cwd.join(&assets))),
+                    "Общий путь иконки должен находиться в assets/ пакета",
+                )?;
+            }
+            contained(&assets, folder, relative, false)?;
+        }
+    }
+    if let Some(tools) = ui["dependencies"].get("tools") {
+        for tool in tools
+            .as_array()
+            .ok_or("dependencies.tools: ожидался список")?
+        {
+            let kind = metadata_text(tool, "type", 64)?;
+            require(
+                kind.eq_ignore_ascii_case("mcp"),
+                "Поддерживается зависимость mcp",
+            )?;
+            metadata_text(tool, "value", 1024)?;
+            for (field, max) in [
+                ("description", 1024),
+                ("transport", 64),
+                ("url", 1024),
+                ("command", 1024),
+            ] {
+                if tool.get(field).is_some_and(|v| !v.is_null()) {
+                    metadata_text(tool, field, max)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn skill_ui(root: &Path, folder: &Path, name: &str) -> Result<()> {
+    let agents = folder.join("agents");
+    let canonical = agents.join("openai.yaml");
+    skill_ui_file(root, folder, name, &canonical)
+        .map_err(|error| format!("{}: {error}", canonical.display()))?;
+    for path in entries(&agents)? {
+        let file = path.file_name().unwrap().to_string_lossy();
+        let file = if cfg!(windows) {
+            file.to_ascii_lowercase()
+        } else {
+            file.into_owned()
+        };
+        if file.starts_with("openai_") && file.ends_with(".yaml") {
+            skill_ui_file(root, folder, name, &path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn skill_structure(path: &Path) -> Result<()> {
@@ -603,26 +736,7 @@ pub(crate) fn check(root: &Path) -> Result<String> {
             format!("{name}: отсутствует SKILL.md"),
         )?;
         resources(&folder, root)?;
-        let ui = yaml(&read(&folder.join("agents/openai.yaml"))?)?;
-        let interface = &ui["interface"];
-        let description = string(interface, "short_description")?;
-        require(
-            (25..=64).contains(&description.chars().count()),
-            format!("{name}: длина UI description"),
-        )?;
-        let prompt = string(interface, "default_prompt")?;
-        require(
-            prompt.contains(&format!("${name}")) || prompt.contains(&format!("$fstack:{name}")),
-            "default_prompt без имени навыка",
-        )?;
-        if let Some(value) = ui["policy"].get("allow_implicit_invocation") {
-            require(value.is_boolean(), "Некорректная доступность")?;
-        }
-        for field in ["icon_small", "icon_large"] {
-            if truthy(&interface[field]) {
-                contained(&folder, &folder, string(interface, field)?, false)?;
-            }
-        }
+        skill_ui(root, &folder, name)?;
     }
     let interface = &manifest["interface"];
     let mut assets = vec![
