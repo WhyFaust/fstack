@@ -39,12 +39,12 @@ These are options, not rules for every post. Do not add sales to an ordinary use
 
 ## Technical explanations and instructions
 
-Check whether the intended reader can understand what happens and why without code or context they cannot access. Introduce necessary objects and unfamiliar terms through their role; do not explain what the audience already knows. Preserve necessary code, depth and material conditions. If space is too limited, narrow the point within scope or suggest another format without changing the requested one unless agreed.
+Check whether the intended reader can understand what happens and why without code or context they cannot access. Introduce necessary objects and unfamiliar terms through their role; do not explain what the audience already knows. Add explanations and definitions only when the reader needs them; preserve precise technical meaning and do not substitute guesses for unknowns. Preserve necessary code, depth and material conditions. If space is too limited, narrow the point within scope or suggest another format without changing the requested one unless agreed.
 
 - Make the actor, action and affected object clear when established. Do not invent an actor to force active voice. Resolve ambiguous pronouns and noun chains; use a consistent name for each object while preserving distinctions between concepts.
 - Rebuild overloaded sentences around the main action. Connect shorter sentences so that sequence, conditions and consequences remain clear. Do not split a sentence just to meet a word count, impose a uniform rhythm or replace precise terms with vague ones. State a cause only when supported; coincidence or sequence alone does not prove causation.
 - In instructions, separate actions from explanations. Put the execution condition and any established risk warning before the affected action. Number steps when order matters; do not automatically turn a coherent explanation into bullets.
-- Compare the result with the source: retain facts, numbers with units, negations, constraints and certainty. Do not change code, commands, paths, identifiers, error messages or exact quotations for style. Do not add facts, causes or guarantees to make the prose flow.
+- Compare the result with the source: retain facts, numbers with units, negations, constraints and certainty. Preserve claim scope and evidence boundaries: information missing from a particular source does not establish that it is absent or unknown in general. Do not change code, commands, paths, identifiers, error messages or exact quotations for style. Do not add facts, causes or guarantees to make the prose flow.
 
 Use these methods in Russian and English with the language's syntax and the requested voice. Clarity does not require a controlled dictionary, banned grammatical forms or a report by rule number. For a short answer, fix the specific obstacle to understanding.
 

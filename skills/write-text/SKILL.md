@@ -4,7 +4,7 @@ description: 'Пишет посты, статьи, письма, сценари�
 license: MIT
 metadata:
   short-description: Авторские тексты, комментарии и новые форматы
-  version: 1.0.3
+  version: 1.0.4
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
