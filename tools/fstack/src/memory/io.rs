@@ -94,7 +94,7 @@ pub fn info(path: &Path) -> Result<Option<fs::Metadata>> {
         Err(e) => Err(err(e)),
     }
 }
-pub fn directory(path: &Path, create: bool, private: bool) -> Result<bool> {
+pub fn directory(path: &Path, create: bool, _private: bool) -> Result<bool> {
     let mut parents = path.ancestors().collect::<Vec<_>>();
     parents.reverse();
     for p in parents {
@@ -106,12 +106,14 @@ pub fn directory(path: &Path, create: bool, private: bool) -> Result<bool> {
             if !create {
                 return Ok(false);
             }
-            let mut b = fs::DirBuilder::new();
+            let b = fs::DirBuilder::new();
             #[cfg(unix)]
-            {
+            let b = {
                 use std::os::unix::fs::DirBuilderExt;
-                b.mode(if private { 0o700 } else { 0o777 });
-            }
+                let mut b = b;
+                b.mode(if _private { 0o700 } else { 0o777 });
+                b
+            };
             match b.create(p) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -136,13 +138,15 @@ pub fn file(path: &Path) -> Result<bool> {
     }
 }
 pub fn options() -> OpenOptions {
-    let mut o = OpenOptions::new();
+    let o = OpenOptions::new();
     #[cfg(unix)]
-    {
+    let o = {
         use std::os::unix::fs::OpenOptionsExt;
+        let mut o = o;
         o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .mode(0o600);
-    }
+        o
+    };
     o
 }
 pub fn read_limit(path: &Path, limit: usize) -> Result<Option<String>> {

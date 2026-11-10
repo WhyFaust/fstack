@@ -289,13 +289,16 @@ fn system_powershell() -> Result<PathBuf> {
 fn private_backup(path: &Path) -> Result<()> {
     fs::create_dir_all(path.parent().ok_or("Нет каталога резервных копий")?)
         .map_err(|e| e.to_string())?;
-    let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(path)
+            .map_err(|e| e.to_string())?;
     }
-    builder.create(path).map_err(|e| e.to_string())?;
+    #[cfg(not(unix))]
+    fs::create_dir(path).map_err(|e| e.to_string())?;
     #[cfg(windows)]
     {
         let script = "$ErrorActionPreference = 'Stop'; $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $acl = [System.Security.AccessControl.DirectorySecurity]::new(); $acl.SetSecurityDescriptorSddlForm('D:P(A;OICI;FA;;;' + $sid + ')(A;OICI;FA;;;SY)', [System.Security.AccessControl.AccessControlSections]::Access); [System.IO.Directory]::SetAccessControl($env:FSTACK_BACKUP_PATH, $acl)";

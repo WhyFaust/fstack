@@ -14,6 +14,7 @@ pub(super) fn cache() -> PathBuf {
 }
 struct Fixture {
     _temp: tempfile::TempDir,
+    base: PathBuf,
     repo: PathBuf,
     vault: PathBuf,
     store: Store,
@@ -36,6 +37,7 @@ impl Fixture {
         let binding = store.setup(&vault, &repo, slug, Some(mode)).unwrap();
         Self {
             _temp: temp,
+            base: root,
             repo,
             vault,
             store,
@@ -161,7 +163,7 @@ fn inbox_manual_edits_dedup_and_scope() {
     let a = f.store.approve(&f.binding, id(&v)).unwrap();
     assert_eq!(a["body"], "Edited heliotrope");
     assert_eq!(f.save("Keep heliotrope", true), a);
-    let other = Store::new(Some(f._temp.path().join("second")), &f.store.package).unwrap();
+    let other = Store::new(Some(f.base.join("second")), &f.store.package).unwrap();
     let b = other
         .setup(&f.vault, &f.repo, "pilot", Some("auto"))
         .unwrap();
@@ -615,7 +617,7 @@ fn filesystem_rejects_links_and_atomic_replace_preserves_expected_content() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
-        let outside = f._temp.path().join("outside");
+        let outside = f.base.join("outside");
         fs::create_dir(&outside).unwrap();
         symlink(&outside, f.root().join("linked")).unwrap();
         assert!(io::directory(&f.root().join("linked"), true, false).is_err());
@@ -624,7 +626,7 @@ fn filesystem_rejects_links_and_atomic_replace_preserves_expected_content() {
         assert!(io::write(&f.root().join("link.md"), "bad", true, None).is_err());
         let token = f.token("one");
         let db = f.store.state.join("pending.sqlite3");
-        fs::hard_link(&db, f._temp.path().join("copied-db")).unwrap();
+        fs::hard_link(&db, f.base.join("copied-db")).unwrap();
         assert!(f
             .pending()
             .is_current(&token, &hooks::scope_id(&f.binding, &f.repo))
@@ -663,7 +665,7 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
         "-m",
         "init",
     ]);
-    let linked = f._temp.path().join("linked worktree");
+    let linked = f.base.join("linked worktree");
     git(&["worktree", "add", "--detach", linked.to_str().unwrap()]);
     let nested = linked.join("nested");
     fs::create_dir(&nested).unwrap();
@@ -675,7 +677,7 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
         scope::identity(&f.repo).unwrap(),
         scope::identity(&nested).unwrap()
     );
-    let forged = f._temp.path().join("forged");
+    let forged = f.base.join("forged");
     fs::create_dir(&forged).unwrap();
     fs::copy(linked.join(".git"), forged.join(".git")).unwrap();
     assert!(f.store.resolve(&forged).is_err());
@@ -781,7 +783,12 @@ fn legacy_project_slug_updates_in_place_and_keeps_unmanaged_hub() {
     fs::write(&page, raw).unwrap();
     f.store.migrate(&f.binding, false).unwrap();
     assert!(page.exists());
-    assert!(!f.root().join("project.md").exists() || cfg!(windows));
+    let project_pages = fs::read_dir(f.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().eq_ignore_ascii_case("project.md"))
+        .collect::<Vec<_>>();
+    assert_eq!(project_pages, vec![OsString::from("Project.md")]);
     assert_eq!(f.store.migrate(&f.binding, true).unwrap()["pruned"], 0);
     let g = Fixture::new("auto", "pilot");
     let old = g.root().join("Project.md");
@@ -844,15 +851,15 @@ fn revocation_marker_survives_failed_generation_replace() {
 fn state_symlinks_non_utf8_paths_and_unsafe_git_path_fail_closed() {
     use std::os::unix::{ffi::OsStringExt, fs::symlink};
     let f = Fixture::new("auto", "pilot");
-    let outside = f._temp.path().join("outside");
+    let outside = f.base.join("outside");
     fs::create_dir(&outside).unwrap();
-    let state = f._temp.path().join("linked-state");
+    let state = f.base.join("linked-state");
     symlink(&outside, &state).unwrap();
     assert!(pending::Pending::new(&state, &f.repo)
         .issue(&"a".repeat(64), "scope", None)
         .is_err());
     assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
-    let bad = f._temp.path().join(OsString::from_vec(vec![0xff]));
+    let bad = f.base.join(OsString::from_vec(vec![0xff]));
     assert!(io::absolute(&bad).is_err());
 }
 #[test]
@@ -905,7 +912,7 @@ fn windows_path_prefix_case_and_separators_preserve_scope() {
     fs::write(&fake, "not Git").unwrap();
     let uppercase = PathBuf::from(f.repo.to_string_lossy().to_uppercase());
     assert!(scope::executable(&f.repo, &std::env::join_paths([uppercase]).unwrap()).is_err());
-    let junction = f._temp.path().join("outside-junction");
+    let junction = f.base.join("outside-junction");
     let result = std::process::Command::new("cmd")
         .args(["/c", "mklink", "/J"])
         .arg(&junction)
@@ -958,11 +965,7 @@ fn migration_does_not_modify_another_project_and_cross_profile_locking_hides_for
     f.store.migrate(&f.binding, true).unwrap();
     assert!(!marker.exists());
     assert_eq!(fs::read(&p).unwrap(), before);
-    let other_store = Store::new(
-        Some(f._temp.path().join("second-profile")),
-        &f.store.package,
-    )
-    .unwrap();
+    let other_store = Store::new(Some(f.base.join("second-profile")), &f.store.package).unwrap();
     let b = other_store
         .setup(&f.vault, &f.repo, "pilot", Some("auto"))
         .unwrap();
