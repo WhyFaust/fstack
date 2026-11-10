@@ -8,3 +8,5 @@ dist/
 .env.*
 !.env.example
 *.log
+
+/tools/fstack/target/

@@ -13,6 +13,8 @@ from pathlib import Path
 
 from hook_spool import (
     MAX_STAGE_BYTES,
+    REVIEW_REQUIRED,
+    REVIEW_UNCONFIRMED,
     TOKEN,
     PendingActionConflict,
     PendingRevocationError,
@@ -36,6 +38,8 @@ RECEIPT = {"staged": True}
 def memory_action(value: object) -> dict:
     if isinstance(value, dict):
         action = value.get("action")
+        if action == "skip" and value.keys() == {"action"}:
+            return {"action": "skip"}
         if action in ("remember", "draft") and value.keys() == {"action", "candidate"}:
             return {"action": action, "candidate": _candidate(value["candidate"])}
         if action in ("approve", "forget") and value.keys() == {"action", "id"}:
@@ -118,7 +122,9 @@ def extra_context(event: str, context: str) -> dict:
 def hook(store: Store, event: str, payload: dict) -> dict:
     if payload.get("hook_event_name") != event:
         return {}
-    if event == "Stop" and payload.get("stop_hook_active") is not False:
+    if event == "Stop" and not isinstance(payload.get("stop_hook_active"), bool):
+        return {}
+    if "agent_id" in payload or "agent_type" in payload:
         return {}
     collaboration = payload.get("collaboration_mode")
     if isinstance(collaboration, dict):
@@ -181,7 +187,8 @@ def hook(store: Store, event: str, payload: dict) -> dict:
             "Сомнительное, но полезное знание можно направить в draft. "
             "В режиме inbox подготовленные знания поступают на ручную проверку. "
             "Для approve и forget нужно явное поручение пользователя. "
-            "В обычном режиме, если есть подходящая запись или явное поручение по памяти, "
+            'Если подходящей новой записи нет, подготовь {"action":"skip"} без текста и причин. '
+            "Не создавай запись ради отчёта. В обычном режиме результат оценки "
             f"передай структурированный JSON в {prefix} pack через stdin. "
             "Затем выполни отдельный точный вызов в оболочке из текущего cwd, подставив ASCII-строку "
             f"из JSON-ответа pack без кавычек вместо BASE64URL: "
@@ -200,12 +207,27 @@ def hook(store: Store, event: str, payload: dict) -> dict:
                 "Она остаётся в очереди. Вторую операцию выполни в новом ходе.",
             }
         return {}
-    action_data = pending.consume(key, scope)
+    action_data = pending.consume(key, scope, request_review=not payload["stop_hook_active"])
+    if action_data in (REVIEW_REQUIRED, REVIEW_UNCONFIRMED):
+        if action_data == REVIEW_UNCONFIRMED or payload["stop_hook_active"]:
+            return {"systemMessage": "Оценка памяти fstack не подтверждена; новая запись не создана."}
+        return {
+            "decision": "block",
+            "reason": "Перед завершением оцени долговечную память текущего проекта по fstack:use-memory. "
+            "Без новой просьбы пользователя подготовь обоснованное решение, поправку или предпочтение "
+            "через pack и stage: remember в auto, draft для кандидата или режима inbox. "
+            'Если подходящего знания нет, передай {"action":"skip"} тем же способом. '
+            "Не выдумывай записи, не читай историю чатов и не сохраняй секреты. "
+            "Используй последний токен из UserPromptSubmit; в Plan пропусти запись. "
+            "Если подготовка недоступна, сообщи об этом и заверши основную задачу.",
+        }
     if action_data is None:
         return {}
     try:
         request = memory_action(action_data)
         action = request["action"]
+        if action == "skip":
+            return {}
         if action == "approve":
             store.approve(binding, request["id"])
         elif action == "forget":

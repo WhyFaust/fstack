@@ -137,7 +137,7 @@ class MemoryHookTests(unittest.TestCase):
         command = self.stage(token, REMEMBER)
         self.assertEqual(self.post(command), {})
         self.assertEqual(self.cli("search", "heliotrope"), [])
-        for event in ({"stop_hook_active": True}, {"session_id": "another-session"}):
+        for event in ({"stop_hook_active": None}, {"session_id": "another-session"}, {"agent_id": "worker"}):
             with self.subTest(event=event):
                 self.assertEqual(self.hook("Stop", **event), {})
                 self.assertEqual(self.cli("search", "heliotrope"), [])
@@ -157,6 +157,62 @@ class MemoryHookTests(unittest.TestCase):
         self.cli("stage", "--turn", token, "--payload", encoded, ok=False)
         self.assertNotIn(CANDIDATE["body"].encode(), (self.state / "pending.sqlite3").read_bytes())
         self.assertEqual(self.cli("search", "heliotrope"), records)
+
+    def test_missing_review_continues_once_and_saves_from_resumed_turn(self):
+        for mode in ("auto", "inbox"):
+            with self.subTest(mode=mode):
+                self.init(mode=mode)
+                turn = f"review-{mode}"
+                token = self.token(turn)
+                self.assertEqual(self.hook("Stop", turn)["decision"], "block")
+                self.assertEqual(self.cli("search", "heliotrope"), [])
+                self.assertEqual(self.cli("inbox"), [])
+                if mode == "inbox":
+                    turn = f"{turn}-continued"
+                    token = self.token(turn)
+                candidate = dict(CANDIDATE, title=f"Heliotrope convention {mode}")
+                self.stage(token, {"action": "remember", "candidate": candidate}, turn)
+                self.assertEqual(self.hook("Stop", turn, stop_hook_active=True), {})
+                records = self.cli("search", "heliotrope") if mode == "auto" else self.cli("inbox")
+                self.assertEqual([record["body"] for record in records], [CANDIDATE["body"]])
+                self.assertEqual(self.hook("Stop", turn, stop_hook_active=True), {})
+                self.cli("forget", records[0]["id"])
+                self.assertFalse((self.root / "never-read.jsonl").exists())
+
+    def test_skip_acknowledges_review_without_a_record_and_missing_review_is_bounded(self):
+        self.init()
+        token = self.token()
+        self.stage(token, {"action": "skip"})
+        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.cli("inbox"), [])
+        self.assertEqual(self.cli("search", "heliotrope"), [])
+        self.cli("pack", payload={"action": "skip", "reason": "PRIVATE"}, ok=False)
+        for active in (False, True):
+            turn = f"missing-{active}"
+            self.token(turn)
+            self.assertEqual(self.hook("Stop", turn)["decision"], "block")
+            self.assertIn("systemMessage", self.hook("Stop", turn, stop_hook_active=active))
+            self.assertEqual(self.hook("Stop", turn), {})
+        self.assertEqual(self.cli("inbox"), [])
+        self.assertEqual(self.cli("search", "heliotrope"), [])
+
+    def test_plan_and_steering_revoke_a_review_continuation(self):
+        self.init()
+        token = self.token()
+        self.assertEqual(self.hook("Stop")["decision"], "block")
+        self.stage(token, REMEMBER)
+        self.assertEqual(self.hook("Stop", stop_hook_active=True, collaboration_mode={"mode": "plan"}), {})
+        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.cli("search", "heliotrope"), [])
+        token = self.token("turn-2")
+        self.assertEqual(self.hook("Stop", "turn-2")["decision"], "block")
+        new_token = self.token("turn-2")
+        encoded, command = self.stage_command(token, REMEMBER)
+        self.cli("stage", "--turn", token, "--payload", encoded, ok=False)
+        self.post(command, "turn-2")
+        self.stage(new_token, {"action": "skip"}, "turn-2")
+        self.assertEqual(self.hook("Stop", "turn-2", stop_hook_active=True), {})
+        self.assertEqual(self.cli("search", "heliotrope"), [])
 
     def test_post_tool_use_reports_conflict_and_preserves_first_action(self):
         self.init()
@@ -190,7 +246,7 @@ class MemoryHookTests(unittest.TestCase):
         self.cli("stage", "--turn", "../turn", "--payload", encoded, ok=False)
         self.cli("pack", payload={**REMEMBER, "path": str(self.root)}, ok=False)
         self.cli("pack", payload={**REMEMBER, "candidate": dict(CANDIDATE, body="x" * 40_000)}, ok=False)
-        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.hook("Stop")["decision"], "block")
         self.assertEqual(self.cli("inbox"), [])
 
     def test_stage_respects_inbox_mode_approval_and_forgetting(self):
@@ -288,7 +344,7 @@ class MemoryHookTests(unittest.TestCase):
         forged.parent.mkdir()
         data = json.dumps({"token": token, "stage": action})
         forged.write_text(data, encoding="utf-8")
-        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.hook("Stop")["decision"], "block")
         self.assertEqual(self.cli("show", entry["id"]), entry)
         self.assertEqual(forged.read_text(encoding="utf-8"), data)
 
@@ -299,7 +355,7 @@ class MemoryHookTests(unittest.TestCase):
         new_token = self.token()
         self.assertNotEqual(token, new_token)
         self.assertEqual(self.post(old_command), {})
-        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.hook("Stop")["decision"], "block")
         self.assertEqual(self.cli("search", "heliotrope"), [])
         token = self.token("turn-2")
         self.stage(token, REMEMBER, "turn-2")
@@ -392,7 +448,7 @@ class MemoryHookTests(unittest.TestCase):
             try:
                 self.assertTrue(saving.wait(5))
                 self.assertIn("hookSpecificOutput", self.hook("UserPromptSubmit", prompt="Withdraw"))
-                self.assertEqual(self.hook("Stop"), {})
+                self.assertEqual(self.hook("Stop")["decision"], "block")
                 self.assertEqual(self.cli("search", "heliotrope"), [])
             finally:
                 resume.set()
@@ -415,7 +471,7 @@ class MemoryHookTests(unittest.TestCase):
         ):
             with self.subTest(changed=changed):
                 self.assertEqual(self.post(command, **changed), {})
-        self.assertEqual(self.hook("Stop"), {})
+        self.assertEqual(self.hook("Stop")["decision"], "block")
         self.assertEqual(self.cli("search", "heliotrope"), [])
 
     def test_rejects_pending_state_inside_the_workspace(self):

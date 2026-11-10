@@ -24,6 +24,9 @@ TOKEN = re.compile(r"([0-9a-f]{64})\.([0-9a-f]{32})")
 TURN_KEY = re.compile(r"[0-9a-f]{64}")
 LOCAL_MODE = 0o777 if os.name == "nt" else 0o700
 REVOCATION_LIMIT = 4 * TURN_LIMIT
+REVIEW_REQUIRED = {"review_required": True}
+REVIEW_UNCONFIRMED = {"review_required": False}
+REVIEW_MARKER = json.dumps(REVIEW_REQUIRED, separators=(",", ":"))
 
 
 class PendingRevocationError(StoreError):
@@ -225,8 +228,8 @@ class PendingTurns:
             identity = (key, match[2], scope, int(time.time()))
             result = connection.execute(
                 "UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? "
-                "AND expires>=? AND (action IS NULL OR action=?)",
-                (serialized, *identity, serialized),
+                "AND expires>=? AND (action IS NULL OR action=? OR action=?)",
+                (serialized, *identity, serialized, REVIEW_MARKER),
             )
             if result.rowcount:
                 return
@@ -237,7 +240,7 @@ class PendingTurns:
             if existing and self._current(key, match[2]):
                 raise PendingActionConflict("Another memory action is already pending for this turn")
 
-    def consume(self, key: str, scope: str) -> object:
+    def consume(self, key: str, scope: str, *, request_review: bool = False) -> object:
         nonce = self._generation(key)
         if nonce is None:
             return None
@@ -250,7 +253,12 @@ class PendingTurns:
                     "SELECT action FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=?",
                     (key, nonce, scope, int(time.time())),
                 ).fetchone()
+            if row and row[0] is None and request_review and self._current(key, nonce):
+                connection.execute("UPDATE pending SET action=? WHERE turn=?", (REVIEW_MARKER, key))
+                return REVIEW_REQUIRED
             connection.execute("DELETE FROM pending WHERE turn=?", (key,))
-        if row and row[0] and self._current(key, nonce):
+        if row and self._current(key, nonce):
+            if row[0] is None or row[0] == REVIEW_MARKER:
+                return REVIEW_UNCONFIRMED
             return json.loads(row[0])
         return None
