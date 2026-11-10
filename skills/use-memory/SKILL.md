@@ -2,10 +2,10 @@
 name: use-memory
 description: 'Находит и сохраняет долговечные решения, поправки и предпочтения подключённого проекта в Obsidian. Сам проверяет результат обычного хода без просьбы запомнить. Охватывает поиск, Inbox и явно порученную настройку vault; прогресс незавершённой задачи относится к checkpoint-task.'
 license: MIT
-compatibility: Локальный Codex с поддержкой хуков плагинов, Python 3.11+ и vault Obsidian. На Windows используется PowerShell. Для привязки worktree нужен Git.
+compatibility: Локальный Codex с поддержкой хуков плагинов, готовый пакет fstack и vault Obsidian. На Windows используется PowerShell. Для привязки worktree нужен Git.
 metadata:
   short-description: Долговечная память проектов в Obsidian
-  version: 4.1.1
+  version: 1.1.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -1,2 +1,4 @@
 * text=auto eol=lf
 *.png binary
+licenses/native-runtime.txt -text -whitespace
+licenses/native-runtime-rust-1.90.0.html -text -whitespace

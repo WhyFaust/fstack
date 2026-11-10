@@ -4,7 +4,7 @@ description: "Создаёт, переносит и дорабатывает н�
 license: MIT
 metadata:
   short-description: Создание, перенос и улучшение навыков
-  version: 1.1.0
+  version: 1.1.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

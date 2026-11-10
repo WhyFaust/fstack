@@ -5,17 +5,19 @@
 - [Переход с прежнего формата](#переход-с-прежнего-формата)
 - [Запись из чата](#запись-из-чата)
 
-Запускай [memory.py](../scripts/memory.py) из каталога подключённого проекта.
-Путь ниже обозначает файл в установленном навыке. На системах, где Python 3
-доступен как `python3`, используй это имя вместо `python`.
+Запускай `bin/fstack memory` из каталога подключённого проекта.
+Путь ниже обозначает готовый бинарник в установленном пакете fstack.
+На Windows это `bin/fstack.exe`, вызываемый через PowerShell.
+Python, Rust и Cargo пользователю не нужны. Бинарник находит ресурсы рядом
+с собой; для отдельной сборки разработчика есть `fstack --package ROOT memory ...`.
 
 ## Чтение и статус
 
 ```text
-python /path/to/memory.py status
-python /path/to/memory.py search "условия выпуска" --limit 5
-python /path/to/memory.py show ID
-python /path/to/memory.py inbox
+"/path/to/fstack/bin/fstack" memory status
+"/path/to/fstack/bin/fstack" memory search "условия выпуска" --limit 5
+"/path/to/fstack/bin/fstack" memory show ID
+"/path/to/fstack/bin/fstack" memory inbox
 ```
 
 ## Подключение и отключение
@@ -23,11 +25,11 @@ python /path/to/memory.py inbox
 Выполни команду только с явно выбранным vault, рабочей папкой и идентификатором
 проекта. Vault должен содержать каталог конфигурации `.obsidian`. Git worktree
 одного репозитория используют одну привязку. Для папки вне Git привязка действует
-из этой папки. Для `init` возьми Python, установленный вне рабочей папки.
-Хуки будут использовать этот интерпретатор. После смены Python повтори настройку.
+из этой папки. Хуки используют бинарник из установленного пакета,
+без поиска интерпретатора или программы в PATH.
 
 ```text
-python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
+"/path/to/fstack/bin/fstack" memory init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
 ```
 
 Первое подключение по умолчанию использует `auto`. Codex сам сохраняет
@@ -42,7 +44,7 @@ python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project
 Команда ниже снимает привязку текущего проекта на этом устройстве.
 
 ```text
-python /path/to/memory.py disable
+"/path/to/fstack/bin/fstack" memory disable
 ```
 
 ## Переход с прежнего формата
@@ -53,7 +55,7 @@ python /path/to/memory.py disable
 проекта первую фазу.
 
 ```text
-python /path/to/memory.py migrate
+"/path/to/fstack/bin/fstack" memory migrate
 ```
 
 Команда готовит именованную страницу в каталоге прежней `Project.md`,
@@ -62,7 +64,7 @@ python /path/to/memory.py migrate
 файлов, включая JSON, на всех устройствах запусти вторую фазу.
 
 ```text
-python /path/to/memory.py migrate --prune-legacy
+"/path/to/fstack/bin/fstack" memory migrate --prune-legacy
 ```
 
 Она удаляет перенесённые отметки, опустевшие каталоги `Approved` и `Forgotten`
@@ -78,13 +80,13 @@ python /path/to/memory.py migrate --prune-legacy
 и вызови отдельную команду в той же рабочей папке.
 
 ```bash
-"/absolute/path/to/python3" -E -s -B "/absolute/path/to/memory.py" stage --turn TOKEN --payload BASE64URL
+"/absolute/path/to/fstack/bin/fstack" memory stage --turn TOKEN --payload BASE64URL
 ```
 
 На Windows используй форму PowerShell.
 
 ```powershell
-& "C:\absolute\path\to\python.exe" -E -s -B "C:\absolute\path\to\memory.py" stage --turn TOKEN --payload BASE64URL
+& "C:\absolute\path\to\fstack\bin\fstack.exe" memory stage --turn TOKEN --payload BASE64URL
 ```
 
 Возьми готовый префикс команды и токен из контекста хука. Подставь только

@@ -483,7 +483,7 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
         hooks.len() == expected.len() && expected.iter().all(|e| hooks.contains_key(*e)),
         "Неверный набор событий памяти",
     )?;
-    contained(root, root, "skills/use-memory/scripts/memory.py", false)?;
+    contained(root, root, "tools/fstack/src/memory", true)?;
     for (event, groups) in hooks {
         let groups = groups.as_array().ok_or("Ожидался массив обработчиков")?;
         require(
@@ -553,7 +553,8 @@ fn references(
     Ok(())
 }
 
-fn check(root: &Path) -> Result<String> {
+pub(crate) fn check(root: &Path) -> Result<String> {
+    native_notices(root)?;
     let manifest = json_file(&root.join(".codex-plugin/plugin.json"))?;
     require(manifest["name"] == "fstack", "Некорректное имя плагина")?;
     versions(root, &manifest)?;
@@ -565,11 +566,8 @@ fn check(root: &Path) -> Result<String> {
     if truthy(&extension["onboardingSkill"]) {
         contained(root, root, string(extension, "onboardingSkill")?, false)?;
     }
-    require(
-        !truthy(&manifest["hooks"]) && !truthy(&manifest["mcpServers"]),
-        "Неожиданная интеграция",
-    )?;
-    hooks(root, string(extension, "hooks")?)?;
+    require(!truthy(&manifest["mcpServers"]), "Неожиданная интеграция")?;
+    hooks(root, string(&manifest, "hooks")?)?;
     let catalog = json_file(&root.join(".agents/plugins/marketplace.json"))?;
     require(
         catalog["name"] == "fstack" && catalog["plugins"].as_array().is_some_and(|v| v.len() == 1),
@@ -710,7 +708,7 @@ fn check(root: &Path) -> Result<String> {
             format!("Некорректный reasoning: {effort}"),
         )?;
     }
-    for path in ["profile/AGENTS.md", "scripts/sync_profile.py"] {
+    for path in ["profile/AGENTS.md", "tools/fstack/src/profile.rs"] {
         contained(root, root, path, false)?;
     }
     for path in descendants(root, &[".git", ".venv", "work"])? {
@@ -728,9 +726,21 @@ fn check(root: &Path) -> Result<String> {
 }
 
 fn main_result() -> Result<()> {
-    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    let mut arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    let package = package_root(&mut arguments)?;
     let command = arguments.first().and_then(|s| s.to_str()).unwrap_or("");
     match (command, arguments.len()) {
+        ("memory", _) => return memory::run(&arguments[1..], &package),
+        ("profile", _) => {
+            if let Err(error) = profile::run(&arguments[1..], &package) {
+                let value: Value = serde_json::from_str(&error).unwrap_or_else(|_| json!({"status":"error", "message": error}));
+                println!("{value}");
+                std::process::exit(if value["status"] == "conflict" { 1 } else { 2 });
+            }
+            return Ok(());
+        },
+        ("release", _) => return release::run(&arguments[1..], &package),
+        ("check-installation", _) => return installation::run(&arguments[1..], &package),
         ("check-package", 2) => println!("{}", check(Path::new(&arguments[1]))?),
         ("resources", 3) => resources(Path::new(&arguments[2]), Path::new(&arguments[1]))?,
         ("metadata", 2) => println!("{}", metadata(Path::new(&arguments[1]))?),
@@ -741,7 +751,7 @@ fn main_result() -> Result<()> {
             let role: Value = serde_json::from_str(&input).map_err(|e| e.to_string())?;
             role_settings(&role, arguments[1].to_str().ok_or("Некорректное имя роли")?)?;
         }
-        _ => return Err("Использование: fstack-check check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH | role-settings NAME (JSON stdin)".into()),
+        _ => return Err("Использование: fstack [--package ROOT] memory | profile | release | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH | role-settings NAME (JSON stdin)".into()),
     }
     Ok(())
 }
@@ -751,4 +761,137 @@ fn main() {
         eprintln!("Проверка не пройдена: {error}");
         std::process::exit(1);
     }
+}
+
+fn package_root(arguments: &mut Vec<std::ffi::OsString>) -> Result<PathBuf> {
+    if arguments.first().is_some_and(|a| a == "--package") {
+        require(
+            arguments.len() >= 3,
+            "После --package нужен каталог и команда",
+        )?;
+        let root = PathBuf::from(arguments.remove(1));
+        arguments.remove(0);
+        return root.canonicalize().map_err(|e| e.to_string());
+    }
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    executable
+        .ancestors()
+        .skip(1)
+        .find(|p| p.join(".codex-plugin/plugin.json").is_file())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "Не найден пакет рядом с исполняемым файлом; укажите --package ROOT".into())
+}
+
+mod installation;
+mod memory;
+#[cfg(test)]
+mod package_tests;
+mod profile;
+mod release;
+
+fn native_notices(root: &Path) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let inventory = json_file(&root.join("licenses/native-runtime.json"))?;
+    require(
+        inventory["schema"] == 1,
+        "Неверная схема уведомлений runtime",
+    )?;
+    for (key, relative) in [
+        ("cargo_lock_sha256", "tools/fstack/Cargo.lock"),
+        ("cargo_manifest_sha256", "tools/fstack/Cargo.toml"),
+    ] {
+        let bytes = fs::read(root.join(relative)).map_err(|e| e.to_string())?;
+        require(
+            inventory[key] == format!("{:x}", Sha256::digest(bytes)),
+            format!("Изменён {relative}; пересмотрите лицензии и обновите inventory runtime"),
+        )?;
+    }
+    require(
+        inventory["rust_version"] == "1.90.0",
+        "Пересмотрите уведомления стандартной библиотеки Rust",
+    )?;
+    let targets: BTreeSet<_> = inventory["targets"]
+        .as_array()
+        .ok_or("Нет платформ inventory")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    require(
+        targets
+            == [
+                "x86_64-unknown-linux-gnu",
+                "x86_64-pc-windows-msvc",
+                "x86_64-apple-darwin",
+                "aarch64-apple-darwin",
+            ]
+            .into_iter()
+            .collect(),
+        "Платформы inventory не совпадают с выпуском",
+    )?;
+    let files = inventory["notice_files"]
+        .as_object()
+        .ok_or("Нет файлов уведомлений")?;
+    require(
+        files.len() == 2
+            && files.contains_key("licenses/native-runtime.txt")
+            && files.contains_key("licenses/native-runtime-rust-1.90.0.html"),
+        "Неполный комплект уведомлений runtime",
+    )?;
+    for (relative, digest) in files {
+        let bytes = fs::read(contained(root, root, relative, false)?).map_err(|e| e.to_string())?;
+        require(
+            !bytes.is_empty() && digest == &format!("{:x}", Sha256::digest(bytes)),
+            format!("Изменено уведомление runtime: {relative}"),
+        )?;
+    }
+    let lock = toml_file(&root.join("tools/fstack/Cargo.lock"))?;
+    let locked = lock["package"].as_array().ok_or("Нет пакетов Cargo.lock")?;
+    let packages = inventory["packages"]
+        .as_array()
+        .ok_or("Нет зависимостей inventory")?;
+    require(!packages.is_empty(), "Пустой inventory runtime")?;
+    let excluded = inventory["excluded_packages"]
+        .as_array()
+        .ok_or("Нет перечня исключённых зависимостей inventory")?;
+    let mut seen = HashSet::new();
+    for package in packages.iter().chain(excluded) {
+        let name = string(package, "name")?;
+        let version = string(package, "version")?;
+        let source = string(package, "source")?;
+        require(
+            source.starts_with("registry+"),
+            "Неподдерживаемый источник зависимости inventory",
+        )?;
+        require(
+            seen.insert((name, version, source)),
+            "Повтор зависимости inventory",
+        )?;
+        require(
+            !packages.contains(package)
+                || nonempty(&package["license"]) && nonempty(&package["notice_source"]),
+            "Нет источника лицензии runtime",
+        )?;
+        require(
+            locked.iter().any(|p| {
+                p["name"] == name
+                    && p["version"] == version
+                    && p["source"] == package["source"]
+                    && p["checksum"] == package["checksum"]
+            }),
+            format!("Зависимость inventory не совпадает с lock: {name} {version}"),
+        )?;
+    }
+    require(
+        seen.len()
+            == locked
+                .iter()
+                .filter(|p| {
+                    p["source"]
+                        .as_str()
+                        .is_some_and(|s| s.starts_with("registry+"))
+                })
+                .count(),
+        "Inventory не покрывает точный набор registry-зависимостей Cargo.lock",
+    )?;
+    Ok(())
 }

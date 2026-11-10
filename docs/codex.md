@@ -77,7 +77,7 @@ Setup показывает эффективные настройки и сохр
 `approval_policy` и `sandbox_mode` ради установки fstack не меняются.
 Пример предлагает значения для нового профиля; существующий `config.toml`
 не заменяется целиком. Настройки ролей устанавливаются вместе с их TOML.
-Скрипт `sync_profile.py` этот файл не записывает: точечную правку выполняет
+Скрипт `fstack profile` этот файл не записывает: точечную правку выполняет
 Setup-агент по [справке конфигурации](../skills/fstack-setup/references/configuration.md).
 
 Записи marketplace и `[plugins."fstack@fstack"]` создаёт `codex plugin add`.
@@ -173,7 +173,7 @@ Allure Analysis, KISHKI, Notion, RTK и OpenAI Docs подключаются о�
 общего вопроса о разрешении. Запрос только проверки остаётся без изменений.
 
 Setup сам определяет целевой `CODEX_HOME` и установленный источник по пути
-текущего навыка либо `installedPath`, проверяет Python 3.11+ и конфликты.
+текущего навыка либо `installedPath`, проверяет нативный бинарник и конфликты.
 После синхронизации он согласует конфигурацию, повторяет dry-run и проверяет
 TOML, эффективные настройки и обнаружение доступными средствами клиента.
 Вручную копировать роли, инструкции или пример конфигурации не требуется.
@@ -191,12 +191,13 @@ TOML, эффективные настройки и обнаружение дос
 
 ```powershell
 $installedPlugin = codex plugin add fstack@fstack --json | ConvertFrom-Json
-$profileSync = Join-Path $installedPlugin.installedPath 'scripts/sync_profile.py'
-python $profileSync
-python $profileSync --apply
+$profileSync = Join-Path $installedPlugin.installedPath 'bin/fstack.exe'
+& $profileSync profile
+& $profileSync profile --apply
 ```
 
-Для helper нужен Python 3.11+; сторонних Python-пакетов ему не требуется.
+Helper — нативный бинарник из проверенного пакета для вашей платформы.
+Python и Rust toolchain при обычной работе не нужны.
 `--home` выбирает целевой профиль вместо `CODEX_HOME` и значения по умолчанию.
 Dry-run не создаёт файлов и не разрешает выполнение пробных агентных задач.
 
@@ -204,7 +205,7 @@ Dry-run не создаёт файлов и не разрешает выполн
 запуск покажет конфликт. Сначала сравни файлы. Для осознанного первого принятия:
 
 ```powershell
-python $profileSync --apply --adopt
+& $profileSync profile --apply --adopt
 ```
 
 Флаг `--adopt` работает только с `--apply`. Изменённая или отсутствующая уже
