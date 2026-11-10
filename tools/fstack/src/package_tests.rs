@@ -109,13 +109,36 @@ fn link_dir(target: &Path, link: &Path) {
 }
 #[cfg(windows)]
 fn link_dir(target: &Path, link: &Path) {
-    assert!(std::process::Command::new("cmd")
-        .args(["/c", "mklink", "/J"])
-        .arg(link)
-        .arg(target)
-        .status()
-        .unwrap()
-        .success());
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let cmd_path = |path: &Path| {
+        std::ffi::OsString::from_wide(
+            &path
+                .as_os_str()
+                .encode_wide()
+                .map(|unit| {
+                    if unit == b'/' as u16 {
+                        b'\\' as u16
+                    } else {
+                        unit
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let output = std::process::Command::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(cmd_path(link))
+        .arg(cmd_path(target))
+        .output()
+        .expect("run mklink for resource-containment fixture");
+    assert!(
+        output.status.success(),
+        "mklink /J {} {} failed: {}\n{}",
+        link.display(),
+        target.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 #[test]
 fn nested_resource_directory_links_are_checked_after_valid_files() {

@@ -666,7 +666,8 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
         "init",
     ]);
     let linked = f.base.join("linked worktree");
-    git(&["worktree", "add", "--detach", linked.to_str().unwrap()]);
+    let git_linked = io::normalized(&linked);
+    git(&["worktree", "add", "--detach", &git_linked]);
     let nested = linked.join("nested");
     fs::create_dir(&nested).unwrap();
     f.store
