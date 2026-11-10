@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
@@ -18,29 +22,65 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            binary: fstack
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: fstack.exe
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: fstack
+          - os: macos-15
+            target: aarch64-apple-darwin
+            binary: fstack
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - run: cargo +1.90.0 build --release --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml
+      - run: cargo +1.90.0 fmt --manifest-path tools/fstack/Cargo.toml -- --check
+      - run: cargo +1.90.0 clippy --all-targets --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml -- -D warnings
+      - run: cargo +1.90.0 test --release --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml
+      - run: |
+          mkdir -p bin
+          cp 'tools/fstack/target/${{ matrix.target }}/release/${{ matrix.binary }}' 'bin/${{ matrix.binary }}'
+          'bin/${{ matrix.binary }}' --package . check-package .
+          'bin/${{ matrix.binary }}' --package . release check
+          'bin/${{ matrix.binary }}' --package . release artifact --target '${{ matrix.target }}' --binary 'bin/${{ matrix.binary }}' --output "$RUNNER_TEMP/fstack-artifacts"
+      - name: Verify Windows runtime dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $tools = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $dumpbin = Join-Path $tools.FullName 'bin\Hostx64\x64\dumpbin.exe'
+          $imports = & $dumpbin /dependents bin/fstack.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect runtime dependencies' }
+          $imports
+          if ($imports -match '(?i)(VCRUNTIME|MSVCP|sqlite3)[^\s]*\.dll') { throw 'Unexpected external runtime dependency' }
+      - name: Verify Linux runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          ldd bin/fstack
+          versions=$(readelf --version-info bin/fstack | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu)
+          printf '%s\n' "$versions"
+          highest=$(printf '%s\n2.35\n' "$versions" | sort -Vu | tail -1)
+          test "$highest" = 2.35
+      - uses: actions/upload-artifact@v7.0.2
         with:
-          python-version: '3.12'
-      - run: python -m pip install -r requirements-dev.txt
-      - run: python scripts/check_package.py
-      - run: python -m unittest discover -s scripts/tests -v
-      - if: runner.os == 'Linux'
-        run: git archive --format=zip --prefix=fstack/ --output=fstack-source.zip HEAD
-      - if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: fstack-source
-          path: fstack-source.zip
+          name: native-${{ matrix.target }}
+          path: ${{ runner.temp }}/fstack-artifacts
+          if-no-files-found: error
           retention-days: 7
 
   release:
     needs: package
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
@@ -48,11 +88,14 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@v7.1.0
+      - uses: actions/download-artifact@v8.0.2
         with:
-          python-version: '3.12'
-      - run: python -m pip install -r requirements-dev.txt
-      - run: python scripts/release.py publish
+          pattern: native-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/fstack-artifacts
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - run: cargo +1.90.0 build --release --locked --manifest-path tools/fstack/Cargo.toml
+      - run: tools/fstack/target/release/fstack --package . release publish --artifacts "$RUNNER_TEMP/fstack-artifacts"
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

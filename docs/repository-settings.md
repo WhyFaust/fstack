@@ -8,11 +8,15 @@ GitHub администратором; файл в репозитории не �
 | Параметр | Требование |
 | --- | --- |
 | Рабочая ветка | Изменения через отдельные ветки и PR |
-| Проверки PR | package (ubuntu-latest), package (windows-latest) текущего head/merge snapshot |
+| Проверки PR | Все jobs `package` из актуальной матрицы [workflow](../.github/workflows/release.yml) для текущего head/merge snapshot |
 | История main | Без force-push и удаления |
 | Метод слияния | Итоговый Conventional Commit, предпочтительно squash |
 | Workflow token | contents: read для проверок; contents: write только для release |
 | Релиз | Проверенный github.sha; восстановление только точного производного коммита версии; обычный push |
+
+При настройке required checks копируй точные имена jobs из последнего прогона
+workflow. После изменения матрицы сверяй этот список: прежнее имя проверки
+не получает статус от нового job и может заблокировать слияние.
 
 ## Совместимость защиты с релизом
 

@@ -7,10 +7,10 @@
   },
   "repository": "https://github.com/WhyFaust/fstack",
   "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
   "extensions": {
     "com.openai": {
-      "onboardingSkill": "./skills/fstack-setup/SKILL.md",
-      "hooks": "./hooks/hooks.json"
+      "onboardingSkill": "./skills/fstack-setup/SKILL.md"
     }
   },
   "interface": {

@@ -2,6 +2,18 @@
 
 Read to choose a structure, change format or reading mode, or resolve a material ambiguity. There is no list of supported platforms: one platform can host different kinds of text, and one kind of text can work in several places.
 
+## Contents
+
+- [Purpose](#choose-by-purpose)
+- [Structure](#structure-for-the-task)
+- [Technical explanations and instructions](#technical-explanations-and-instructions)
+- [Openings and participation](#openings-and-participation)
+- [Conversation context](#account-for-the-conversation)
+- [Comments and replies](#comments-and-replies)
+- [Clarification](#when-to-clarify)
+- [Constraints](#check-the-actual-constraints)
+- [Carrying the message across](#carry-the-message-across)
+
 ## Choose by purpose
 
 Start with the explicit request and established context. Then determine what the result is for and how people will encounter it. Do not substitute a familiar platform format for the request.
@@ -24,6 +36,17 @@ Give a standalone post one main purpose. Connect the reader's questions: what ha
 | Poll | Ask one clear question for a meaningful choice or discussion. When options are needed, make them distinct; allow another answer when the list is not exhaustive. Make the response method clear for the destination field |
 
 These are options, not rules for every post. Do not add sales to an ordinary useful piece or turn every question into a poll. Use frameworks such as AIDA when requested or appropriate, without printing stage names in the final copy. The balance of useful and promotional text, item count and headline depend on the material. Do not invent discounts, scarcity, product results or promises to analyze responses later.
+
+## Technical explanations and instructions
+
+Check whether the intended reader can understand what happens and why without code or context they cannot access. Introduce necessary objects and unfamiliar terms through their role; do not explain what the audience already knows. Add explanations and definitions only when the reader needs them. Check each new explanation as a separate factual claim, including its exact meaning, conditions, scope and quantitative relationships; use a simple boundary case or counterexample where relevant. Omit a nonessential explanation whose accuracy has not been established rather than guess. Preserve necessary code, depth and material conditions. If space is too limited, narrow the point within scope or suggest another format without changing the requested one unless agreed.
+
+- Make the actor, action and affected object clear when established. Do not invent an actor to force active voice. Resolve ambiguous pronouns and noun chains; use a consistent name for each object while preserving distinctions between concepts.
+- Rebuild overloaded sentences around the main action. Connect shorter sentences so that sequence, conditions and consequences remain clear. Do not split a sentence just to meet a word count, impose a uniform rhythm or replace precise terms with vague ones. State a cause only when supported; coincidence or sequence alone does not prove causation.
+- In instructions, separate actions from explanations. Put the execution condition and any established risk warning before the affected action. Number steps when order matters; do not automatically turn a coherent explanation into bullets.
+- Compare the result with the source: retain facts, numbers with units, negations, constraints and certainty. Preserve claim scope and evidence boundaries: information missing from a particular source does not establish that it is absent or unknown in general. Do not change code, commands, paths, identifiers, error messages or exact quotations for style. Do not add facts, causes or guarantees to make the prose flow.
+
+Use these methods in Russian and English with the language's syntax and the requested voice. Clarity does not require a controlled dictionary, banned grammatical forms or a report by rule number. For a short answer, fix the specific obstacle to understanding.
 
 ## Openings and participation
 

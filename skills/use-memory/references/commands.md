@@ -5,17 +5,19 @@
 - [Переход с прежнего формата](#переход-с-прежнего-формата)
 - [Запись из чата](#запись-из-чата)
 
-Запускай [memory.py](../scripts/memory.py) из каталога подключённого проекта.
-Путь ниже обозначает файл в установленном навыке. На системах, где Python 3
-доступен как `python3`, используй это имя вместо `python`.
+Запускай `bin/fstack memory` из каталога подключённого проекта.
+Путь ниже обозначает готовый бинарник в установленном пакете fstack.
+На Windows это `bin/fstack.exe`, вызываемый через PowerShell.
+Python, Rust и Cargo пользователю не нужны. Бинарник находит ресурсы рядом
+с собой; для отдельной сборки разработчика есть `fstack --package ROOT memory ...`.
 
 ## Чтение и статус
 
 ```text
-python /path/to/memory.py status
-python /path/to/memory.py search "условия выпуска" --limit 5
-python /path/to/memory.py show ID
-python /path/to/memory.py inbox
+"/path/to/fstack/bin/fstack" memory status
+"/path/to/fstack/bin/fstack" memory search "условия выпуска" --limit 5
+"/path/to/fstack/bin/fstack" memory show ID
+"/path/to/fstack/bin/fstack" memory inbox
 ```
 
 ## Подключение и отключение
@@ -23,11 +25,11 @@ python /path/to/memory.py inbox
 Выполни команду только с явно выбранным vault, рабочей папкой и идентификатором
 проекта. Vault должен содержать каталог конфигурации `.obsidian`. Git worktree
 одного репозитория используют одну привязку. Для папки вне Git привязка действует
-из этой папки. Для `init` возьми Python, установленный вне рабочей папки.
-Хуки будут использовать этот интерпретатор. После смены Python повтори настройку.
+из этой папки. Хуки используют бинарник из установленного пакета,
+без поиска интерпретатора или программы в PATH.
 
 ```text
-python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
+"/path/to/fstack/bin/fstack" memory init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
 ```
 
 Первое подключение по умолчанию использует `auto`. Codex сам сохраняет
@@ -42,7 +44,7 @@ python /path/to/memory.py init --vault "/path/to/vault" --repo "/path/to/project
 Команда ниже снимает привязку текущего проекта на этом устройстве.
 
 ```text
-python /path/to/memory.py disable
+"/path/to/fstack/bin/fstack" memory disable
 ```
 
 ## Переход с прежнего формата
@@ -53,7 +55,7 @@ python /path/to/memory.py disable
 проекта первую фазу.
 
 ```text
-python /path/to/memory.py migrate
+"/path/to/fstack/bin/fstack" memory migrate
 ```
 
 Команда готовит именованную страницу в каталоге прежней `Project.md`,
@@ -62,7 +64,7 @@ python /path/to/memory.py migrate
 файлов, включая JSON, на всех устройствах запусти вторую фазу.
 
 ```text
-python /path/to/memory.py migrate --prune-legacy
+"/path/to/fstack/bin/fstack" memory migrate --prune-legacy
 ```
 
 Она удаляет перенесённые отметки, опустевшие каталоги `Approved` и `Forgotten`
@@ -78,24 +80,26 @@ python /path/to/memory.py migrate --prune-legacy
 и вызови отдельную команду в той же рабочей папке.
 
 ```bash
-"/absolute/path/to/python3" -E -s -B "/absolute/path/to/memory.py" stage --turn TOKEN --payload BASE64URL
+"/absolute/path/to/fstack/bin/fstack" memory stage --turn TOKEN --payload BASE64URL
 ```
 
 На Windows используй форму PowerShell.
 
 ```powershell
-& "C:\absolute\path\to\python.exe" -E -s -B "C:\absolute\path\to\memory.py" stage --turn TOKEN --payload BASE64URL
+& "C:\absolute\path\to\fstack\bin\fstack.exe" memory stage --turn TOKEN --payload BASE64URL
 ```
 
 Возьми готовый префикс команды и токен из контекста хука. Подставь только
 строку из `pack`. Хук принимает один вызов без пайпа, перенаправления
 и других команд. Результат `{"staged": true}` подтверждает проверку команды.
-Операцию принимает проверенный `PostToolUse`, а применяет `Stop`. Повтор той же
+Операцию принимает проверенный `PostToolUse`, а применяет `Stop`, в том числе
+после продолжения хода. Если `Stop` напомнил об оценке памяти, выполни её
+с последним токеном `UserPromptSubmit`. Повтор той же
 операции допустим. Другую операцию в том же ходе `PostToolUse` отклоняет с
 причиной, сохраняя первую. Второй операции нужен новый ход. Токен и base64url
 предназначены для вызова инструмента, в ответе пользователю их не повторяй.
 
-Пример объекта для `pack`
+Пример объекта для `pack` после проверки решения
 
 ```json
 {
@@ -103,7 +107,7 @@ python /path/to/memory.py migrate --prune-legacy
   "candidate": {
     "kind": "decision",
     "title": "Условия публикации пакета",
-    "body": "Публикуем только из main после прохождения матрицы Windows и Ubuntu."
+    "body": "Для выпуска этого пакета публикуем только из main после матрицы Windows и Ubuntu. Решение подтверждено владельцем; условия сверены с workflow выпуска."
   }
 }
 ```
@@ -111,6 +115,10 @@ python /path/to/memory.py migrate --prune-legacy
 `action` принимает `remember` для обоснованной долговечной записи
 или `draft` для кандидата, который нужно проверить. `kind` принимает
 `decision`, `preference` или `correction`.
+Если новых долговечных знаний нет, передай `{"action":"skip"}` через те же
+`pack` и `stage`. Поля текста и причины для `skip` не допускаются.
+Подтверждение не создаёт заметку или Inbox-кандидата и удаляется из очереди
+при `Stop`. В Plan не вызывай `stage`, включая `skip`.
 В `candidate` можно передать `source` со ссылкой и `supersedes`
 с идентификатором предыдущей записи. Для обработки Inbox и удаления передай
 `{"action":"approve","id":"ID"}` или `{"action":"forget","id":"ID"}`.
