@@ -28,6 +28,7 @@ fstack добавляет в Codex небольшие методы для раб
 | Разобраться в коде и выбрать улучшения | `investigate-code`, `improve-codebase` |
 | Добавить возможность, исправить сбой или упростить код | `implement-change`, `debug-failure`, `refactor-code` |
 | Спроектировать изменение или интерфейс | `design-change`, `design-ui` |
+| Проверить свойство автомата и показать трассу | `model-check-state` |
 | Проверить diff, доказательства или пользовательский сценарий | `review-change`, `verify-result`, `verify-project` |
 | Написать, отредактировать текст или проверить факты | `write-text`, `edit-text`, `research-for-text` |
 | Разобрать присланную статью, PDF или книгу и выполнить поручение по материалу | `deepread` |
