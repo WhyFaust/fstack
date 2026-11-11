@@ -3,6 +3,40 @@
 PR меняет код и workflow. Правила защиты ветки включаются отдельно в настройках
 GitHub администратором; файл в репозитории не активирует их сам по себе.
 
+## Защита основных веток
+
+[Декларация ruleset](../.github/release-branches.ruleset.json) запрещает удаление
+и force-push основной ветки и всех `marketplace/*`, включая будущие платформы.
+Список bypass пуст: правило распространяется и на администратора. Владелец
+репозитория по-прежнему может изменить сами настройки GitHub; это защита от
+случайной операции с веткой, а не лишение владельца административных прав.
+Обычные fast-forward push релизного workflow сохраняются.
+
+Перед применением прочитай существующие правила и выбери ID подходящего
+ruleset. Не заменяй более строгие или несвязанные правила этой декларацией.
+В PowerShell для нового правила:
+
+```powershell
+gh api repos/WhyFaust/fstack/rulesets
+gh api --method POST repos/WhyFaust/fstack/rulesets --input .github/release-branches.ruleset.json
+```
+
+Для обновления существующего используй `--method PUT` с адресом
+`repos/WhyFaust/fstack/rulesets/ID`. Применение требует отдельного разрешения
+на настройки GitHub. Проверь ответ: `enforcement: active`, условия веток,
+оба запрета и отсутствие bypass. Затем прочитай применённые правила:
+
+```powershell
+gh api repos/WhyFaust/fstack/rules/branches/main
+gh api repos/WhyFaust/fstack/rules/branches/marketplace%2Fx86_64-pc-windows-msvc
+gh api repos/WhyFaust/fstack/branches --paginate
+```
+
+Проверяй каждую существующую платформенную ветку; намеренно удалять или
+переписывать её для проверки не нужно. `enforcement: disabled` и наличие
+декларации в Git сами по себе не защищают ветки.
+[Контракт REST API rulesets](https://docs.github.com/en/rest/repos/rules).
+
 ## Проверяемый контракт
 
 | Параметр | Требование |
