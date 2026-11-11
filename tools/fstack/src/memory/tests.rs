@@ -128,12 +128,13 @@ fn ordinary_prompts_leave_memory_inactive_without_reading_vault() {
 }
 
 #[test]
-fn explicit_mode_is_scoped_to_one_request_and_session() {
+fn explicit_mode_persists_in_one_chat_until_disabled() {
     let f = Fixture::new("auto", "pilot");
     for prompt in [
         "/faust-mode task",
         " $fstack:faust-mode task",
         "$faust-mode\ntask",
+        "[$fstack:faust-mode](C:/Codex Home/skills/faust-mode/SKILL.md) task",
     ] {
         let output = f.hook("UserPromptSubmit", "active", json!({"prompt":prompt}));
         assert!(output["hookSpecificOutput"]["additionalContext"]
@@ -146,10 +147,19 @@ fn explicit_mode_is_scoped_to_one_request_and_session() {
         json!({})
     );
     assert_eq!(
-        f.hook("UserPromptSubmit", "next", json!({"prompt":"Продолжи"})),
+        f.hook(
+            "UserPromptSubmit",
+            "next",
+            json!({"prompt":"Продолжи","session_id":"another"})
+        ),
         json!({})
     );
-    assert_eq!(f.hook("Stop", "next", json!({})), json!({}));
+    assert_eq!(f.hook("SessionStart", "next", json!({})), json!({}));
+    let followup = f.hook("UserPromptSubmit", "next", json!({"prompt":"Продолжи"}));
+    assert!(followup["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("stage --turn"));
     let token = f.token("steered");
     post(
         &f,
@@ -160,15 +170,28 @@ fn explicit_mode_is_scoped_to_one_request_and_session() {
         ),
         json!({}),
     );
+    let disabled = f.hook(
+        "UserPromptSubmit",
+        "steered",
+        json!({"prompt":"/faust-mode-off Без навыков"}),
+    );
+    assert!(disabled["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .is_some_and(|context| !context.contains("stage --turn")));
+    assert_eq!(f.hook("Stop", "next", json!({})), json!({}));
+    assert_eq!(f.hook("Stop", "steered", json!({})), json!({}));
     assert_eq!(
-        f.hook(
-            "UserPromptSubmit",
-            "steered",
-            json!({"prompt":"Без навыков"})
-        ),
+        f.hook("UserPromptSubmit", "direct", json!({"prompt":"Продолжи"})),
         json!({})
     );
-    assert_eq!(f.hook("Stop", "steered", json!({})), json!({}));
+    let resumed = f.hook(
+        "UserPromptSubmit",
+        "resumed",
+        json!({"prompt":"/faust-mode"}),
+    );
+    assert!(resumed["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .is_some_and(|context| context.contains("stage --turn")));
     assert!(f
         .store
         .search(&f.binding, "survive", 5)
@@ -207,7 +230,14 @@ fn explicit_mode_activates_without_binding_and_in_plan_without_memory() {
                 .display()
                 .to_string()
         ));
-    assert!(!store.state.exists());
+    assert!(!store.state.join("pending.sqlite3").exists());
+    let followup = json!({"hook_event_name":"UserPromptSubmit", "session_id":"new", "turn_id":"next", "cwd":f.repo,"prompt":"Продолжи"});
+    assert!(
+        hooks::hook(&store, "UserPromptSubmit", &followup, &f.repo).unwrap()["hookSpecificOutput"]
+            ["additionalContext"]
+            .as_str()
+            .is_some()
+    );
 }
 fn id(v: &Value) -> &str {
     v["id"].as_str().unwrap()
@@ -1062,7 +1092,10 @@ fn prompt_only_exposes_ids_and_disabled_project_never_issues_token() {
         1
     );
     assert!(f.store.disable(&f.repo).unwrap());
-    assert_eq!(f.hook("UserPromptSubmit", "disabled", json!({})), json!({}));
+    let disabled = f.hook("UserPromptSubmit", "disabled", json!({"prompt":"Продолжи"}));
+    assert!(disabled["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .is_some_and(|context| !context.contains("stage --turn")));
     assert_eq!(f.hook("Stop", "disabled", json!({})), json!({}));
 }
 #[test]

@@ -34,14 +34,41 @@ fn prefix() -> Result<String> {
 fn extra(event: &str, context: String) -> Value {
     json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":context}})
 }
-fn faust_mode(prompt: &str) -> bool {
-    matches!(
-        prompt.split_whitespace().next(),
-        Some("/faust-mode" | "$fstack:faust-mode" | "$faust-mode")
-    )
+fn mode_command(prompt: &str) -> Option<bool> {
+    let prompt = prompt.trim_start();
+    match prompt.split_whitespace().next() {
+        Some("/faust-mode" | "$fstack:faust-mode" | "$faust-mode") => Some(true),
+        Some("/faust-mode-off") => Some(false),
+        _ if prompt
+            .strip_prefix("[$fstack:faust-mode](")
+            .and_then(|link| link.split_once(')'))
+            .is_some_and(|(target, rest)| {
+                !target.is_empty() && rest.chars().next().is_none_or(char::is_whitespace)
+            }) =>
+        {
+            Some(true)
+        }
+        _ => None,
+    }
+}
+fn chat_mode(store: &Store, cwd: &Path, session: &str, command: Option<bool>) -> Result<bool> {
+    let enable = command == Some(true);
+    let dir = store.state.join("faust-mode-sessions");
+    if !io::state(&store.state, cwd, enable)? || !io::directory(&dir, enable, true)? {
+        return Ok(false);
+    }
+    let marker = dir.join(pending::digest(&[session]));
+    match command {
+        Some(true) => {
+            io::write(&marker, "", false, None)?;
+            Ok(true)
+        }
+        Some(false) => io::delete(&marker),
+        None => io::file(&marker),
+    }
 }
 fn activation(event: &str, package: &Path) -> Value {
-    extra(event, format!("Для текущего запроса явно включён faust-mode. Загрузи fstack:faust-mode из файла {} и выполняй поручение по нему. Режим не переносится на следующий запрос без команды.", package.join("skills/faust-mode/SKILL.md").display()))
+    extra(event, format!("В этом чате включён faust-mode до команды /faust-mode-off. Используй инструкции fstack:faust-mode из файла {}. Если они уже загружены, повторно не читай.", package.join("skills/faust-mode/SKILL.md").display()))
 }
 fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
     if payload["tool_name"] != "Bash"
@@ -132,20 +159,31 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     } else {
         None
     };
-    let activated =
-        event == "UserPromptSubmit" && payload["prompt"].as_str().is_some_and(faust_mode);
-    if event == "UserPromptSubmit" && !activated {
+    let prompt_submit = event == "UserPromptSubmit";
+    if !prompt_submit && (plan || !pending.active(&key)?) {
         return Ok(json!({}));
     }
-    if plan {
-        return Ok(if activated {
-            activation(event, &store.package)
+    let command = if prompt_submit {
+        payload["prompt"].as_str().and_then(mode_command)
+    } else {
+        None
+    };
+    let enabled = chat_mode(store, cwd, session, command)?;
+    if command == Some(false) {
+        return Ok(if enabled {
+            extra(
+                event,
+                "Faust-mode выключен для этого чата. Выполняй запрос напрямую.".into(),
+            )
         } else {
             json!({})
         });
     }
-    if event != "UserPromptSubmit" && !pending.active(&key)? {
+    if !enabled {
         return Ok(json!({}));
+    }
+    if plan {
+        return Ok(activation(event, &store.package));
     }
     let staged = if event == "PostToolUse" {
         posted(payload)?
@@ -156,7 +194,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         return Ok(json!({}));
     }
     let Some(b) = store.resolve(cwd)? else {
-        return Ok(if activated {
+        return Ok(if prompt_submit {
             activation(event, &store.package)
         } else {
             json!({})
