@@ -614,8 +614,12 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            let output=std::process::Command::new(system_powershell().unwrap()).args(["-NoProfile","-NonInteractive","-Command","$ErrorActionPreference='Stop'; $acl=Get-Acl -LiteralPath $env:FSTACK_TEST_BACKUP; @{Protected=$acl.AreAccessRulesProtected; Owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Rules=@($acl.Access | ForEach-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value })} | ConvertTo-Json -Compress"]).env("FSTACK_TEST_BACKUP",backup).output().unwrap();
-            assert!(output.status.success());
+            let output=std::process::Command::new(system_powershell().unwrap()).args(["-NoProfile","-NonInteractive","-Command","$ErrorActionPreference='Stop'; $acl=Get-Acl -LiteralPath $env:FSTACK_TEST_BACKUP; @{Protected=$acl.AreAccessRulesProtected; Owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Rules=@($acl.Access | ForEach-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value })} | ConvertTo-Json -Compress"]).env_remove("PSModulePath").env("FSTACK_TEST_BACKUP",backup).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             let acl: Value = serde_json::from_slice(&output.stdout).unwrap();
             assert_eq!(acl["Protected"], true);
             let rules: std::collections::BTreeSet<_> = acl["Rules"]
