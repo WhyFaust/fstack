@@ -40,8 +40,8 @@ fn faust_mode(prompt: &str) -> bool {
         Some("/faust-mode" | "$fstack:faust-mode" | "$faust-mode")
     )
 }
-fn activation(event: &str) -> Value {
-    extra(event, "Для текущего запроса явно включён faust-mode. Загрузи fstack:faust-mode и выполняй поручение по нему. Режим не переносится на следующий запрос без команды.".into())
+fn activation(event: &str, package: &Path) -> Value {
+    extra(event, format!("Для текущего запроса явно включён faust-mode. Загрузи fstack:faust-mode из файла {} и выполняй поручение по нему. Режим не переносится на следующий запрос без команды.", package.join("skills/faust-mode/SKILL.md").display()))
 }
 fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
     if payload["tool_name"] != "Bash"
@@ -139,7 +139,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     }
     if plan {
         return Ok(if activated {
-            activation(event)
+            activation(event, &store.package)
         } else {
             json!({})
         });
@@ -157,7 +157,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     }
     let Some(b) = store.resolve(cwd)? else {
         return Ok(if activated {
-            activation(event)
+            activation(event, &store.package)
         } else {
             json!({})
         });
@@ -194,7 +194,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             .unwrap();
         output["hookSpecificOutput"]["additionalContext"] = json!(format!(
             "{} {context}",
-            activation(event)["hookSpecificOutput"]["additionalContext"]
+            activation(event, &store.package)["hookSpecificOutput"]["additionalContext"]
                 .as_str()
                 .unwrap()
         ));
