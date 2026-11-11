@@ -1611,3 +1611,37 @@ fn later_stop_recovers_trusted_stage_when_original_stop_never_committed_claim() 
         );
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_publish_preserves_atomic_new_and_replace_for_long_unicode_paths() {
+    use std::os::windows::ffi::OsStrExt;
+    let f = Fixture::new("auto", "pilot");
+    let parent = f
+        .vault
+        .join("решение".repeat(12))
+        .join("проверка".repeat(12));
+    fs::create_dir_all(&parent).unwrap();
+    let target = parent.join("заметка.md");
+    assert!(target.as_os_str().encode_wide().count() >= 260);
+    assert!(io::write(&target, "one", false, None).unwrap());
+    assert!(!io::write(&target, "lost", false, None).unwrap());
+    assert_eq!(io::read(&target).unwrap().as_deref(), Some("one"));
+    assert!(io::write(&target, "two", true, Some("one")).unwrap());
+    assert_eq!(io::read(&target).unwrap().as_deref(), Some("two"));
+
+    for (path, expected) in [
+        (
+            r"\\server\share\каталог\new.md",
+            r"\\?\UNC\server\share\каталог\new.md",
+        ),
+        (r"\\?\C:\каталог\new.md", r"\\?\C:\каталог\new.md"),
+        (r"C:/каталог/new.md", r"\\?\C:\каталог\new.md"),
+    ] {
+        let units = io::windows_publish_path(Path::new(path));
+        assert_eq!(
+            units,
+            expected.encode_utf16().chain(Some(0)).collect::<Vec<_>>()
+        );
+    }
+}

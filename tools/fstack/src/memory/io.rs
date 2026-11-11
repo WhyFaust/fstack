@@ -235,21 +235,30 @@ fn publish(source: &Path, target: &Path, replace: bool) -> std::io::Result<()> {
     }
 }
 #[cfg(windows)]
+pub(super) fn windows_publish_path(path: &Path) -> Vec<u16> {
+    use std::{os::windows::ffi::OsStrExt, path::Prefix};
+    let path: PathBuf = path.components().collect();
+    let (prefix, skip) = match path.components().next() {
+        Some(Component::Prefix(p)) => match p.kind() {
+            Prefix::Disk(_) if path.is_absolute() => (r"\\?\", 0),
+            Prefix::UNC(_, _) => (r"\\?\UNC\", 2),
+            _ => ("", 0),
+        },
+        _ => ("", 0),
+    };
+    prefix
+        .encode_utf16()
+        .chain(path.as_os_str().encode_wide().skip(skip))
+        .chain(Some(0))
+        .collect()
+}
+#[cfg(windows)]
 fn publish(source: &Path, target: &Path, replace: bool) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let target = target
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
+    let source = windows_publish_path(source);
+    let target = windows_publish_path(target);
     let flags = MOVEFILE_WRITE_THROUGH
         | if replace {
             MOVEFILE_REPLACE_EXISTING
