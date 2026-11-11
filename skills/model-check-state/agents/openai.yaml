@@ -1,0 +1,6 @@
+interface:
+  display_name: Формальная проверка автомата подсистемы
+  short_description: Формальная проверка автомата подсистемы
+  default_prompt: Используй $fstack:model-check-state, чтобы связать переходы с кодом, проверить свойство и показать проверенную трассу в Mermaid.
+policy:
+  allow_implicit_invocation: false
