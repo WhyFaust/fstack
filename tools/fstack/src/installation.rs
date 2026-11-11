@@ -217,6 +217,10 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         "--apply".into(),
     ];
     command(&native, &profile_args, &home, directory)?;
+    require(
+        !home.join("AGENTS.md").exists(),
+        "Установка создала общий AGENTS.md",
+    )?;
     profile_args.pop();
     let repeat: Value = serde_json::from_str(&command(&native, &profile_args, &home, directory)?)
         .map_err(|e| e.to_string())?;
@@ -233,7 +237,9 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
             .keys()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>()
-            == expected_files,
+            == expected_files
+            && state["schema"] == 2
+            && state.get("links_sha256").is_none(),
         "Состояние содержит другой набор файлов",
     )?;
     let installed_roles: std::collections::BTreeSet<_> = super::entries(&home.join("agents"))?
