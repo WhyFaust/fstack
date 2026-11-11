@@ -29,7 +29,7 @@
     <rect x="40" y="294" width="6" height="112" rx="3" fill="#69889a"/>
     <text x="65" y="330" fill="#426578" font-size="15" font-weight="700">profile/</text>
     <text x="65" y="362" fill="#322921" font-size="23" font-weight="700">Источник профиля</text>
-    <text x="65" y="388" fill="#6e6259" font-size="16">Роли и инструкции координатора</text>
+    <text x="65" y="388" fill="#6e6259" font-size="16">Роли и пример настроек</text>
     <path d="M 390 360 H 608" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
     <text x="500" y="343" fill="#6e6259" font-size="15" text-anchor="middle">Setup по запросу</text>
     <rect x="630" y="294" width="330" height="112" rx="15" fill="#e7eff3" stroke="#b6cbd5"/>

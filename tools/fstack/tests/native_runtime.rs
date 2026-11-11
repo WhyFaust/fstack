@@ -104,6 +104,7 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
     let before = runtime.json(&["profile"], None);
     assert_ne!(before["status"], "unchanged");
     runtime.json(&["profile", "--apply"], None);
+    assert!(!runtime.home.join("AGENTS.md").exists());
     assert_eq!(runtime.json(&["profile"], None)["status"], "unchanged");
     let vault = runtime.root.parent().unwrap().join("vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();

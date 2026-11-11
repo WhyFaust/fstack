@@ -56,50 +56,22 @@ fn read(path: &Path) -> Result<Option<Vec<u8>>> {
         Err(e) => Err(e.to_string()),
     }
 }
-fn merge(
-    content: Option<&[u8]>,
-    links: &str,
-    expected: Option<&str>,
-    adopt: bool,
-) -> Result<(Vec<u8>, String)> {
+fn retire_block(content: Option<&[u8]>, expected: &str) -> Result<Vec<u8>> {
     let text = std::str::from_utf8(content.unwrap_or_default()).map_err(|e| e.to_string())?;
-    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let block = format!(
-        "{START}{newline}{}{newline}{END}",
-        links.replace("\r\n", "\n").replace('\n', newline)
-    );
     let updated = match (text.matches(START).count(), text.matches(END).count()) {
-        (0, 0) => {
-            if expected.is_some() {
-                return Err(conflict(vec!["AGENTS.md:managed-block".into()]));
-            }
-            format!(
-                "{}{}{block}{newline}",
-                text,
-                if text.is_empty() {
-                    String::new()
-                } else if text.ends_with('\n') {
-                    newline.into()
-                } else {
-                    newline.repeat(2)
-                }
-            )
-        }
+        (0, 0) => return Err(conflict(vec!["AGENTS.md:managed-block".into()])),
         (1, 1) if text.find(START) < text.find(END) => {
             let begin = text.find(START).unwrap();
             let end = text.find(END).unwrap() + END.len();
             let current = &text[begin..end];
-            if expected.is_some_and(|v| digest(current.as_bytes()) != v) {
+            if digest(current.as_bytes()) != expected {
                 return Err(conflict(vec!["AGENTS.md:managed-block".into()]));
             }
-            if expected.is_none() && current != block && !adopt {
-                return Err(conflict(vec!["AGENTS.md:unmanaged-block".into()]));
-            }
-            format!("{}{block}{}", &text[..begin], &text[end..])
+            format!("{}{}", &text[..begin], &text[end..])
         }
         _ => return Err(conflict(vec!["AGENTS.md:invalid-markers".into()])),
     };
-    Ok((updated.into_bytes(), digest(block.as_bytes())))
+    Ok(updated.into_bytes())
 }
 #[derive(Debug)]
 struct Plan {
@@ -152,11 +124,6 @@ fn plan(home: &Path, root: &Path, adopt: bool) -> Result<Plan> {
     if payloads.is_empty() {
         return Err("Нет ролей в пакете".into());
     }
-    let links = fs::read_to_string(root.join("profile/AGENTS.md")).map_err(|e| e.to_string())?;
-    let links = links.trim();
-    if links.is_empty() || links.contains(START) || links.contains(END) {
-        return Err("Некорректный управляемый блок в пакете".into());
-    }
     let state_content = read(&target(home, STATE)?)?;
     let state: Value = state_content
         .as_ref()
@@ -166,7 +133,9 @@ fn plan(home: &Path, root: &Path, adopt: bool) -> Result<Plan> {
         .unwrap_or(Value::Null);
     let mut owned = BTreeMap::new();
     if state_content.is_some() {
-        if state["schema"].as_u64() != Some(1) {
+        if !matches!(state["schema"].as_u64(), Some(1 | 2))
+            || (state["schema"] == 2 && state.get("links_sha256").is_some())
+        {
             return Err("Некорректное состояние fstack/profile.json".into());
         }
         let files = state["files"]
@@ -187,10 +156,8 @@ fn plan(home: &Path, root: &Path, adopt: bool) -> Result<Plan> {
         if keys != current && keys != legacy {
             return Err("Состав управляемого профиля отличается от поддерживаемого".into());
         }
-        for value in files
-            .values()
-            .chain(std::iter::once(&state["links_sha256"]))
-        {
+        let legacy_hash = (state["schema"] == 1).then_some(&state["links_sha256"]);
+        for value in files.values().chain(legacy_hash) {
             if value.as_str().is_none_or(|v| {
                 v.len() != 64
                     || !v
@@ -226,14 +193,15 @@ fn plan(home: &Path, root: &Path, adopt: bool) -> Result<Plan> {
         }
         before.insert(name.clone(), current);
     }
-    let agents = read(&target(home, "AGENTS.md")?)?;
-    let merged = merge(
-        agents.as_deref(),
-        links,
-        state["links_sha256"].as_str(),
-        adopt,
-    );
-    if let Err(error) = &merged {
+    let retired_block = if state["schema"] == 1 {
+        let agents = read(&target(home, "AGENTS.md")?)?;
+        let retired = retire_block(agents.as_deref(), state["links_sha256"].as_str().unwrap());
+        before.insert("AGENTS.md".into(), agents);
+        retired.map(Some)
+    } else {
+        Ok(None)
+    };
+    if let Err(error) = &retired_block {
         if let Ok(value) = serde_json::from_str::<Value>(error) {
             if let Some(paths) = value["paths"].as_array() {
                 conflicts.extend(paths.iter().filter_map(|v| v.as_str().map(str::to_owned)));
@@ -247,14 +215,14 @@ fn plan(home: &Path, root: &Path, adopt: bool) -> Result<Plan> {
     if !conflicts.is_empty() {
         return Err(conflict(conflicts));
     }
-    let (updated, hash) = merged?;
-    before.insert("AGENTS.md".into(), agents);
+    if let Some(updated) = retired_block? {
+        payloads.insert("AGENTS.md".into(), Some(updated));
+    }
     before.insert(STATE.into(), state_content);
-    payloads.insert("AGENTS.md".into(), Some(updated));
     payloads.insert(
         STATE.into(),
         Some(json_bytes(
-            &json!({"files":hashes,"links_sha256":hash,"schema":1,"version":version}),
+            &json!({"files":hashes,"schema":2,"version":version}),
         )?),
     );
     payloads.retain(|name, bytes| before.get(name) != Some(bytes));
@@ -514,7 +482,6 @@ mod tests {
             r#"{"version":"2.0.0"}"#,
         )
         .unwrap();
-        fs::write(root.join("profile/AGENTS.md"), "Canonical instructions\n").unwrap();
         for name in ["auditor", "coder", "reviewer", "verifier", "allure_analyst"] {
             fs::write(root.join(format!("profile/agents/{name}.toml")),format!("name = \"{name}\"\ndescription = \"Role\"\ndeveloper_instructions = \"Instructions\"\n")).unwrap();
         }
@@ -592,10 +559,11 @@ mod tests {
             fs::read(home.join(RETIRED)).unwrap(),
             b"User-owned Python role"
         );
-        assert!(!fs::read_to_string(home.join("AGENTS.md"))
-            .unwrap()
-            .replace("\r\n", "")
-            .contains('\n'));
+        assert_eq!(
+            fs::read(home.join("AGENTS.md")).unwrap(),
+            b"User instructions\r\n"
+        );
+        assert!(!backup.join("AGENTS.md").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -604,7 +572,7 @@ mod tests {
                 0o700
             );
             assert_eq!(
-                fs::metadata(backup.join("AGENTS.md"))
+                fs::metadata(backup.join("agents/coder.toml"))
                     .unwrap()
                     .permissions()
                     .mode()
@@ -649,6 +617,71 @@ mod tests {
         }
     }
     #[test]
+    fn fresh_and_updated_profiles_leave_global_instructions_unmanaged() {
+        let (_dir, root, home) = fixture();
+        apply(&home, &root, false).unwrap();
+        assert!(!home.join("AGENTS.md").exists());
+        let unrelated = [b"Unmanaged instructions\r\n".as_slice(), &[0xff, 0xfe]].concat();
+        for schema_exists in [false, true] {
+            if !schema_exists {
+                fs::remove_file(home.join(STATE)).unwrap();
+            }
+            atomic_write(&home.join("AGENTS.md"), &unrelated).unwrap();
+            atomic_write(&home.join("AGENTS.override.md"), b"User override").unwrap();
+            atomic_write(&root.join("profile/agents/coder.toml"), format!("name = \"coder\"\ndescription = \"Role {schema_exists}\"\ndeveloper_instructions = \"Instructions\"\n").as_bytes()).unwrap();
+            let planned = plan(&home, &root, !schema_exists).unwrap();
+            assert!(!planned.before.contains_key("AGENTS.md"));
+            assert!(!planned.changes.contains_key("AGENTS.md"));
+            apply(&home, &root, !schema_exists).unwrap();
+            assert_eq!(fs::read(home.join("AGENTS.md")).unwrap(), unrelated);
+            assert_eq!(
+                fs::read(home.join("AGENTS.override.md")).unwrap(),
+                b"User override"
+            );
+        }
+    }
+    #[test]
+    fn current_roles_migrate_global_block_once_and_preserve_surrounding_bytes() {
+        let (_dir, root, home) = fixture();
+        apply(&home, &root, false).unwrap();
+        let block = format!("{START}\r\nOpt-in instructions\n{END}");
+        let original = format!("\u{feff}User prefix\r\n{block}\nUser suffix\r\n");
+        atomic_write(&home.join("AGENTS.md"), original.as_bytes()).unwrap();
+        let mut state: Value =
+            serde_json::from_slice(&fs::read(home.join(STATE)).unwrap()).unwrap();
+        state["schema"] = json!(1);
+        state["links_sha256"] = json!(digest(block.as_bytes()));
+        atomic_write(&home.join(STATE), &json_bytes(&state).unwrap()).unwrap();
+        let before = snapshot(&home);
+        assert_eq!(
+            plan(&home, &root, false)
+                .unwrap()
+                .changes
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["AGENTS.md", STATE]
+        );
+        assert_eq!(snapshot(&home), before);
+        let result = apply(&home, &root, false).unwrap();
+        let backup = Path::new(result["backup"].as_str().unwrap());
+        assert_eq!(
+            fs::read(backup.join("AGENTS.md")).unwrap(),
+            original.as_bytes()
+        );
+        assert_eq!(
+            fs::read(backup.join(STATE)).unwrap(),
+            before[Path::new(STATE)]
+        );
+        assert_eq!(
+            fs::read(home.join("AGENTS.md")).unwrap(),
+            "\u{feff}User prefix\r\n\nUser suffix\r\n".as_bytes()
+        );
+        fs::remove_file(home.join("AGENTS.md")).unwrap();
+        assert_eq!(apply(&home, &root, false).unwrap()["status"], "unchanged");
+        assert!(!home.join("AGENTS.md").exists());
+    }
+    #[test]
     fn legacy_migration_and_invalid_states_are_transactional() {
         let (_dir, root, home) = fixture();
         legacy(&home);
@@ -669,7 +702,12 @@ mod tests {
         assert_eq!(receipt["created"], json!(["agents/verifier.toml"]));
         assert_eq!(receipt["removed"], json!([RETIRED]));
         let state: Value = serde_json::from_slice(&fs::read(home.join(STATE)).unwrap()).unwrap();
-        assert_eq!(state["schema"], 1);
+        assert_eq!(state["schema"], 2);
+        assert!(state.get("links_sha256").is_none());
+        assert_eq!(
+            fs::read(home.join("AGENTS.md")).unwrap(),
+            b"User text\r\n\r\n\r\nUser tail\r\n"
+        );
         assert!(state["files"].get(RETIRED).is_none());
         assert_eq!(apply(&home, &root, false).unwrap()["status"], "unchanged");
         for malformed in [
@@ -722,8 +760,10 @@ mod tests {
             format!("{END}{START}"),
             format!("{START}{END}{START}{END}"),
         ] {
-            assert!(merge(Some(text.as_bytes()), "new", None, true).is_err());
+            assert!(retire_block(Some(text.as_bytes()), &digest(text.as_bytes())).is_err());
         }
+        let block = format!("{START}\nEdited instructions\n{END}");
+        assert!(retire_block(Some(block.as_bytes()), &digest(b"Original block")).is_err());
     }
     #[test]
     fn rollback_restores_retirement_and_preserves_concurrent_edits() {

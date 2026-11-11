@@ -835,9 +835,7 @@ pub(crate) fn check(root: &Path) -> Result<String> {
             format!("Некорректный reasoning: {effort}"),
         )?;
     }
-    for path in ["profile/AGENTS.md", "tools/fstack/src/profile.rs"] {
-        contained(root, root, path, false)?;
-    }
+    contained(root, root, "tools/fstack/src/profile.rs", false)?;
     for path in descendants(root, &[".git", ".venv", "work"])? {
         if extension_matches(&path, "md") {
             let text = read(&path)?;
