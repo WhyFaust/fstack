@@ -15,6 +15,18 @@ pub struct Binding {
     pub mode: String,
     pub generation: Option<String>,
 }
+pub enum WriteOutcome {
+    Written(Value),
+    Forgotten,
+}
+impl WriteOutcome {
+    fn into_record(self) -> Result<Value> {
+        match self {
+            Self::Written(record) => Ok(record),
+            Self::Forgotten => Err("Memory entry is unavailable".into()),
+        }
+    }
+}
 pub struct Store {
     pub state: PathBuf,
     pub package: PathBuf,
@@ -639,12 +651,26 @@ impl Store {
         session: Option<&str>,
         turn: Option<&str>,
     ) -> Result<Value> {
+        self.save_outcome(b, value, approved, session, turn)?
+            .into_record()
+    }
+    pub fn save_outcome(
+        &self,
+        b: &Binding,
+        value: &Value,
+        approved: bool,
+        session: Option<&str>,
+        turn: Option<&str>,
+    ) -> Result<WriteOutcome> {
         let fields = fmt::candidate(value)?;
         let root = self.root(b)?;
         let _lock = io::lock(&root, b.root.parent().unwrap())?;
+        let id = fmt::stable_id(&fields);
+        if forgotten(&root, &id)? {
+            return Ok(WriteOutcome::Forgotten);
+        }
         let _ = views::ensure_library(&b.root, &self.package);
         let link = views::current_link(&root)?;
-        let id = fmt::stable_id(&fields);
         let mut provenance = Fields::new();
         for (k, v) in [("session_id", session), ("turn_id", turn)] {
             if let Some(v) = v {
@@ -682,11 +708,14 @@ impl Store {
             )? {
                 if forgotten(&root, &id)? {
                     self.forget_locked(&root, &id)?;
-                    return Err("Memory entry is unavailable".into());
+                    return Ok(WriteOutcome::Forgotten);
                 }
                 let approval = fmt::inline(&metadata);
                 metadata.insert("body".into(), fields["body"].clone());
-                return Ok(fmt::public(metadata, approval.as_ref()));
+                return Ok(WriteOutcome::Written(fmt::public(
+                    metadata,
+                    approval.as_ref(),
+                )));
             }
         }
         if approved {
@@ -696,27 +725,39 @@ impl Store {
         if h.contains(&id) {
             return Err("Memory entry is unavailable".into());
         }
-        self.public_record(&root, &id, a.get(&id))?
+        let entry = self.public_record(&root, &id, a.get(&id))?;
+        if forgotten(&root, &id)? {
+            return Ok(WriteOutcome::Forgotten);
+        }
+        entry
+            .map(WriteOutcome::Written)
             .ok_or("Memory entry is unavailable".into())
     }
     pub fn approve(&self, b: &Binding, id: &str) -> Result<Value> {
+        self.approve_outcome(b, id)?.into_record()
+    }
+    pub fn approve_outcome(&self, b: &Binding, id: &str) -> Result<WriteOutcome> {
         fmt::id(id)?;
         let root = self.root(b)?;
         let _lock = io::lock(&root, b.root.parent().unwrap())?;
         let _ = views::ensure_library(&b.root, &self.package);
         self.approve_locked(&root, id)
     }
-    fn approve_locked(&self, root: &Path, id: &str) -> Result<Value> {
+    fn approve_locked(&self, root: &Path, id: &str) -> Result<WriteOutcome> {
+        if forgotten(root, id)? {
+            return Ok(WriteOutcome::Forgotten);
+        }
         let link = views::current_link(root)?;
         let (a, h) = self.statuses(root)?;
         if h.contains(id) {
             return Err("Memory entry is unavailable".into());
         }
         let p = record(root, id);
-        let raw = io::read(&p)?.ok_or("Inbox entry is unavailable")?;
+        let raw = io::read(&p)?;
         if forgotten(root, id)? {
-            return Err("Inbox entry is unavailable".into());
+            return Ok(WriteOutcome::Forgotten);
         }
+        let raw = raw.ok_or("Inbox entry is unavailable")?;
         let fields = fmt::parse(&raw, id, MEMORY, true)?;
         let approval = match a.get(id) {
             Some(a) => a.clone(),
@@ -730,9 +771,9 @@ impl Store {
         updates.insert("supersedes".into(), approval.get("supersedes").cloned());
         update(&p, &raw, &fields, &updates)?;
         if forgotten(root, id)? {
-            return Err("Memory entry is unavailable".into());
+            return Ok(WriteOutcome::Forgotten);
         }
-        Ok(fmt::public(fields, Some(&approval)))
+        Ok(WriteOutcome::Written(fmt::public(fields, Some(&approval))))
     }
     pub fn forget(&self, b: &Binding, id: &str) -> Result<Value> {
         fmt::id(id)?;

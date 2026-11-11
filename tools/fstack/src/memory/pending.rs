@@ -12,6 +12,10 @@ pub enum Stop {
     Missing,
     Claimed,
 }
+pub enum Delivery {
+    Current { review: bool },
+    Replay,
+}
 pub struct Claim {
     pub key: String,
     nonce: String,
@@ -140,7 +144,7 @@ impl Pending {
                     expires INTEGER NOT NULL, action TEXT
                 );
                 CREATE TABLE IF NOT EXISTS issued_modes (
-                    turn TEXT PRIMARY KEY, nonce TEXT NOT NULL, epoch TEXT NOT NULL, session TEXT NOT NULL
+                    turn TEXT PRIMARY KEY, nonce TEXT NOT NULL, epoch TEXT NOT NULL, session TEXT NOT NULL, original_turn TEXT
                 );
                 CREATE TABLE IF NOT EXISTS claimed (
                     turn TEXT PRIMARY KEY, nonce TEXT NOT NULL, scope TEXT NOT NULL,
@@ -152,6 +156,14 @@ impl Pending {
                 );",
             )
             .map_err(io::err)?;
+            let has_turn: bool = conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM pragma_table_info('issued_modes') WHERE name='original_turn')",
+                [], |row| row.get(0),
+            ).map_err(io::err)?;
+            if !has_turn {
+                conn.execute("ALTER TABLE issued_modes ADD COLUMN original_turn TEXT", [])
+                    .map_err(io::err)?;
+            }
         }
         Ok(Some(conn))
     }
@@ -248,6 +260,7 @@ impl Pending {
         generation: Option<String>,
         epoch: &str,
         session: &str,
+        turn: &str,
     ) -> Result<String> {
         let nonce = match generation {
             Some(n) => n,
@@ -292,7 +305,7 @@ impl Pending {
             return Err("Pending memory turn limit exceeded".into());
         }
         conn.execute("INSERT INTO pending (turn,nonce,scope,expires) VALUES (?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,scope=excluded.scope,expires=excluded.expires,action=NULL",params![key,nonce,scope,now()+3600]).map_err(io::err)?;
-        conn.execute("INSERT INTO issued_modes VALUES (?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,epoch=excluded.epoch,session=excluded.session", params![key, nonce, epoch, session]).map_err(io::err)?;
+        conn.execute("INSERT INTO issued_modes VALUES (?,?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,epoch=excluded.epoch,session=excluded.session,original_turn=excluded.original_turn", params![key, nonce, epoch, session, turn]).map_err(io::err)?;
         Self::phase(&conn, scope, "capture")?;
         conn.execute_batch("COMMIT").map_err(io::err)?;
         Ok(format!("{key}.{nonce}"))
@@ -367,7 +380,7 @@ impl Pending {
         session: &str,
         turn: &str,
         epoch: &str,
-        review: bool,
+        delivery: Delivery,
     ) -> Result<Option<Stop>> {
         let _turn_lock = self.lock_turn(key)?;
         let Some(nonce) = self.generation(key)? else {
@@ -379,16 +392,22 @@ impl Pending {
         if !self.current(key, &nonce)? {
             return Ok(None);
         }
+        let replay = matches!(delivery, Delivery::Replay);
+        if digest(&[session, turn]) != key {
+            return Err("Invalid memory turn identity".into());
+        }
         let row: Option<Option<String>> = conn.query_row(
-            "SELECT action FROM pending p WHERE turn=? AND nonce=? AND scope=? AND expires>=?
-             AND COALESCE((SELECT m.epoch FROM issued_modes m WHERE m.turn=p.turn AND m.nonce=p.nonce), '')=?",
-            params![key, nonce, scope, now(), epoch],
+            "SELECT p.action FROM pending p
+             LEFT JOIN issued_modes m ON m.turn=p.turn AND m.nonce=p.nonce
+             WHERE p.turn=? AND p.nonce=? AND p.scope=? AND p.expires>=? AND COALESCE(m.epoch,'')=?
+             AND (NOT ? OR (m.session=? AND m.original_turn=? AND p.action IS NOT NULL AND p.action<>?))",
+            params![key, nonce, scope, now(), epoch, replay, session, turn, REVIEW],
             |r| r.get(0),
         ).optional().map_err(io::err)?;
         let Some(action) = row else {
             return Ok(None);
         };
-        if action.is_none() && review {
+        if action.is_none() && matches!(delivery, Delivery::Current { review: true }) {
             conn.execute(
                 "UPDATE pending SET action=? WHERE turn=?",
                 params![REVIEW, key],
@@ -417,21 +436,63 @@ impl Pending {
         Ok(Some(outcome))
     }
 
-    pub fn due(&self, scope: &str, session: &str, epoch: &str, key: &str) -> Result<Vec<String>> {
+    pub fn due(
+        &self,
+        scope: &str,
+        session: &str,
+        epoch: &str,
+        key: &str,
+    ) -> Result<Vec<(String, String)>> {
         let Some(conn) = self.connection(false, false)? else {
             return Ok(Vec::new());
         };
         let mut stmt = conn
             .prepare(
-                "SELECT turn FROM claimed WHERE scope=? AND session=? AND epoch=? AND expires>=?
-             ORDER BY (turn=?) DESC, attempted, expires, turn LIMIT 2",
+                "SELECT turn,nonce,original_turn,expires,attempted,(turn=?) AS current
+             FROM claimed WHERE scope=? AND session=? AND epoch=? AND expires>=?
+             UNION ALL
+             SELECT p.turn,p.nonce,m.original_turn,p.expires,0,0
+             FROM pending p JOIN issued_modes m ON m.turn=p.turn AND m.nonce=p.nonce
+             WHERE p.scope=? AND m.session=? AND m.epoch=? AND p.expires>=? AND p.turn<>?
+             AND m.original_turn IS NOT NULL AND p.action IS NOT NULL AND p.action<>?
+             ORDER BY current DESC, attempted, expires, turn",
             )
             .map_err(io::err)?;
         let rows = stmt
-            .query_map(params![scope, session, epoch, now(), key], |row| row.get(0))
+            .query_map(
+                params![
+                    key,
+                    scope,
+                    session,
+                    epoch,
+                    now(),
+                    scope,
+                    session,
+                    epoch,
+                    now(),
+                    key,
+                    REVIEW
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
             .map_err(io::err)?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(io::err)
+        let mut due = Vec::new();
+        for row in rows {
+            let (key, nonce, turn) = row.map_err(io::err)?;
+            if self.current(&key, &nonce)? {
+                due.push((key, turn));
+                if due.len() == 2 {
+                    break;
+                }
+            }
+        }
+        Ok(due)
     }
 
     pub fn operation(

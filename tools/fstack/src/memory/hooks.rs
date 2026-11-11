@@ -1,8 +1,8 @@
 use super::{
     action, decode, format, io,
-    pending::{self, Pending, Stop},
+    pending::{self, Delivery, Pending, Stop},
     scope as project_scope,
-    store::{Binding, Store},
+    store::{Binding, Store, WriteOutcome},
     Result,
 };
 use serde_json::{json, Value};
@@ -241,7 +241,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 Err(_) => search_failed = true,
             }
         }
-        let token = pending.issue(&key, &scope, generation, &epoch, session)?;
+        let token = pending.issue(&key, &scope, generation, &epoch, session, turn)?;
         let found = if search_failed {
             "поиск недоступен".into()
         } else if ids.is_empty() {
@@ -278,12 +278,24 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         session,
         turn,
         &epoch,
-        payload["stop_hook_active"] == false,
+        Delivery::Current {
+            review: payload["stop_hook_active"] == false,
+        },
     )?;
     let mut failed = false;
-    for key in pending.due(&scope, session, &epoch, &key)? {
-        let _turn_lock = pending.lock_turn(&key)?;
-        let Some(claim) = pending.operation(&key, &scope, session, &epoch)? else {
+    for (due_key, original_turn) in pending.due(&scope, session, &epoch, &key)? {
+        if due_key != key {
+            pending.claim(
+                &due_key,
+                &scope,
+                session,
+                &original_turn,
+                &epoch,
+                Delivery::Replay,
+            )?;
+        }
+        let _turn_lock = pending.lock_turn(&due_key)?;
+        let Some(claim) = pending.operation(&due_key, &scope, session, &epoch)? else {
             continue;
         };
         let result = (|| -> Result<&str> {
@@ -296,12 +308,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             let Some(binding) = store.bound(cwd)?.filter(|b| scope_id(b, cwd) == scope) else {
                 return Ok("cancelled");
             };
-            apply(store, &binding, &claim.data, session, &claim.turn)?;
-            Ok(if claim.data["action"] == "skip" {
-                "skipped"
-            } else {
-                "applied"
-            })
+            apply(store, &binding, &claim.data, session, &claim.turn)
         })();
         if let Ok(phase) = result {
             pending.finish(&scope, &claim, phase, true)?;
@@ -321,32 +328,36 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         );
     }
     if outcome == Some(Stop::Missing) {
-        return Ok(
-            json!({"systemMessage":"Оценка памяти fstack не подтверждена; новая запись не создана."}),
-        );
+        return Ok(json!({"systemMessage":"Оценка памяти fstack для этого хода не подтверждена."}));
     }
     Ok(json!({}))
 }
 
-fn apply(store: &Store, binding: &Binding, data: &Value, session: &str, turn: &str) -> Result<()> {
+fn apply(
+    store: &Store,
+    binding: &Binding,
+    data: &Value,
+    session: &str,
+    turn: &str,
+) -> Result<&'static str> {
     let request = action(data)?;
-    match request["action"].as_str().unwrap() {
-        "skip" => {}
-        "approve" => {
-            store.approve(binding, request["id"].as_str().unwrap())?;
-        }
+    let outcome = match request["action"].as_str().unwrap() {
+        "skip" => return Ok("skipped"),
+        "approve" => store.approve_outcome(binding, request["id"].as_str().unwrap())?,
         "forget" => {
             store.forget(binding, request["id"].as_str().unwrap())?;
+            return Ok("applied");
         }
-        a => {
-            store.save(
-                binding,
-                &request["candidate"],
-                a == "remember",
-                Some(session),
-                Some(turn),
-            )?;
-        }
-    }
-    Ok(())
+        a => store.save_outcome(
+            binding,
+            &request["candidate"],
+            a == "remember",
+            Some(session),
+            Some(turn),
+        )?,
+    };
+    Ok(match outcome {
+        WriteOutcome::Written(_) => "applied",
+        WriteOutcome::Forgotten => "discarded_forgotten",
+    })
 }
