@@ -329,7 +329,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     }
     println!(
         "{}",
-        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"hooks_discovered":events,"profile_roundtrip":"unchanged","roles_installed":ROLES,"model_availability":"not_checked","model_tasks":"not_run","role_execution":"not_run"})
+        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"hooks_discovered":events,"profile_roundtrip":"unchanged","roles_installed":ROLES,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
     );
     Ok(())
 }

@@ -197,6 +197,16 @@ fn explicit_mode_activates_without_binding_and_in_plan_without_memory() {
         .as_str()
         .unwrap()
         .contains("fstack:faust-mode"));
+    assert!(output["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains(
+            &store
+                .package
+                .join("skills/faust-mode/SKILL.md")
+                .display()
+                .to_string()
+        ));
     assert!(!store.state.exists());
 }
 fn id(v: &Value) -> &str {
