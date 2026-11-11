@@ -1,0 +1,6 @@
+interface:
+  display_name: DeepRead
+  short_description: Чтение источника и работа по нему
+  default_prompt: Используй $fstack:deepread, чтобы выполнить моё поручение по присланному материалу и сверить результат с источником.
+policy:
+  allow_implicit_invocation: false
