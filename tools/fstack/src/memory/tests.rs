@@ -1617,12 +1617,14 @@ fn later_stop_recovers_trusted_stage_when_original_stop_never_committed_claim() 
 fn windows_publish_preserves_atomic_new_and_replace_for_long_unicode_paths() {
     use std::os::windows::ffi::OsStrExt;
     let f = Fixture::new("auto", "pilot");
-    let parent = f
-        .vault
-        .join("решение".repeat(12))
-        .join("проверка".repeat(12));
+    let component = "проверка".repeat(8);
+    let mut parent = f.vault.join(&component);
+    let filename = "заметка.md";
+    while parent.join(filename).as_os_str().encode_wide().count() < 260 {
+        parent.push(&component);
+    }
     fs::create_dir_all(&parent).unwrap();
-    let target = parent.join("заметка.md");
+    let target = parent.join(filename);
     assert!(target.as_os_str().encode_wide().count() >= 260);
     assert!(io::write(&target, "one", false, None).unwrap());
     assert!(!io::write(&target, "lost", false, None).unwrap());
