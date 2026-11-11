@@ -82,6 +82,16 @@ fn manifest(root: &Path) -> Result<Value> {
     serde_json::from_slice(&fs::read(root.join(MANIFEST)).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
 }
+fn updated_manifest(mut data: Value, number: &str) -> Result<Option<Vec<u8>>> {
+    version(number)?;
+    if data["version"] == number {
+        return Ok(None);
+    }
+    data["version"] = json!(number);
+    Ok(Some(
+        (serde_json::to_string_pretty(&data).map_err(|e| e.to_string())? + "\n").into_bytes(),
+    ))
+}
 fn check_versions(root: &Path) -> Result<String> {
     let data = manifest(root)?;
     let current = data["version"].as_str().ok_or("Нет версии")?;
@@ -297,12 +307,7 @@ impl Release<'_> {
                     .map_err(|e| e.to_string())?;
             (base, data["version"].as_str().ok_or("Нет версии")?.into())
         };
-        let level = change_level(&self.cmd(&[
-            "git",
-            "log",
-            "--format=%B%x00",
-            &format!("{base}..HEAD"),
-        ])?);
+        let level = self.change_level_since(&base, "HEAD")?;
         let current = check_versions(self.root)?;
         let mut candidates = (0..=level)
             .map(|l| increment(&number, l))
@@ -327,12 +332,8 @@ impl Release<'_> {
         }
         if !candidates.contains(&current)
             && (level < 2
-                || !self.prepared_at_lower_level(
-                    &current,
-                    &candidates[1..usize::from(level)],
-                    &head,
-                    &records,
-                )?)
+                || !self
+                    .prepared_at_lower_level(&base, &number, &current, level, &head, &records)?)
         {
             return Err(format!(
                 "Версия {current} не соответствует опубликованной или ожидающей версии"
@@ -342,38 +343,124 @@ impl Release<'_> {
             json!({"version":proposed,"level":level,"base":base,"skills":self.changed(&base)?,"records":records}),
         )
     }
+    fn change_level_since(&self, base: &str, head: &str) -> Result<u8> {
+        Ok(change_level(&self.cmd(&[
+            "git",
+            "log",
+            "--format=%B%x00",
+            &format!("{base}..{head}"),
+        ])?))
+    }
+    fn manifest_at(&self, revision: &str) -> Result<Value> {
+        serde_json::from_slice(&self.bytes(&["git", "show", &format!("{revision}:{MANIFEST}")])?)
+            .map_err(|e| e.to_string())
+    }
+    fn last_version_change(
+        &self,
+        base: &str,
+        head: &str,
+        current: &str,
+    ) -> Result<Option<(String, String, Value)>> {
+        if self.manifest_at(head)?["version"] != current {
+            return Ok(None);
+        }
+        let commits = self.cmd(&[
+            "git",
+            "log",
+            "--first-parent",
+            "--format=%H",
+            &format!("{base}..{head}"),
+            "--",
+            MANIFEST,
+        ])?;
+        for commit in commits.lines() {
+            let line = self.cmd(&["git", "rev-list", "--parents", "-n", "1", commit])?;
+            let mut parents = line.split_whitespace().skip(1);
+            let Some(parent) = parents.next() else {
+                return Ok(None);
+            };
+            let previous = self.manifest_at(parent)?;
+            if previous["version"] != current {
+                return Ok(parents
+                    .next()
+                    .is_none()
+                    .then(|| (commit.into(), parent.into(), previous)));
+            }
+        }
+        Ok(None)
+    }
     fn prepared_at_lower_level(
         &self,
+        base: &str,
+        published: &str,
         current: &str,
-        lower_versions: &[String],
+        current_level: u8,
         head: &str,
         records: &[Value],
     ) -> Result<bool> {
-        let [major, minor, patch] = version(current)?;
-        for start in lower_versions {
-            let [start_major, start_minor, start_patch] = version(start)?;
-            if [major, minor] != [start_major, start_minor] || patch <= start_patch {
-                continue;
-            }
-            for reserved_patch in start_patch..patch {
-                let tag = format!("v{major}.{minor}.{reserved_patch}");
-                let Some(record) = records.iter().find(|r| r["tag_name"] == tag) else {
-                    return Ok(false);
-                };
-                if self
-                    .draft_source(record)?
-                    .is_none_or(|source| source == head)
-                {
-                    return Ok(false);
-                }
-            }
-            let tag = format!("v{current}");
-            return match records.iter().find(|r| r["tag_name"] == tag) {
-                Some(record) => Ok(self.draft_source(record)?.is_some()),
-                None => Ok(true),
-            };
+        let Some((commit, parent, previous)) = self.last_version_change(base, head, current)?
+        else {
+            return Ok(false);
+        };
+        let previous_number = previous["version"].as_str().ok_or("Нет версии")?.to_owned();
+        if self.cmd(&["git", "log", "-1", "--format=%s", &commit])?
+            != format!("chore(release): v{current}")
+            || !self.release_commit_matches(
+                &parent,
+                &commit,
+                updated_manifest(previous, current)?,
+            )?
+        {
+            return Ok(false);
         }
-        Ok(false)
+        self.cmd(&["git", "merge-base", "--is-ancestor", base, &parent])?;
+        let level = self.change_level_since(base, &parent)?;
+        if level == 0 || level >= current_level {
+            return Ok(false);
+        }
+        let [major, minor, patch] = version(current)?;
+        let [start_major, start_minor, start_patch] = version(&increment(published, level)?)?;
+        if [major, minor] != [start_major, start_minor] || patch <= start_patch {
+            return Ok(false);
+        }
+        for reserved_patch in start_patch..patch {
+            let tag = format!("v{major}.{minor}.{reserved_patch}");
+            let Some(record) = records.iter().find(|r| r["tag_name"] == tag) else {
+                return Ok(false);
+            };
+            let Some(source) = self.draft_source(record)? else {
+                return Ok(false);
+            };
+            if source == parent {
+                return Ok(false);
+            }
+            self.cmd(&["git", "merge-base", "--is-ancestor", &source, &parent])?;
+        }
+        let [previous_major, previous_minor, previous_patch] = version(&previous_number)?;
+        let previous_in_series = [major, minor] == [previous_major, previous_minor]
+            && (start_patch..patch).contains(&previous_patch);
+        let previous_candidates = (0..level)
+            .map(|bump| increment(published, bump))
+            .collect::<Result<Vec<_>>>()?;
+        if !previous_in_series
+            && !previous_candidates.contains(&previous_number)
+            && (level < 2
+                || !self.prepared_at_lower_level(
+                    base,
+                    published,
+                    &previous_number,
+                    level,
+                    &parent,
+                    records,
+                )?)
+        {
+            return Ok(false);
+        }
+        let tag = format!("v{current}");
+        match records.iter().find(|r| r["tag_name"] == tag) {
+            Some(record) => Ok(self.draft_source(record)?.is_some()),
+            None => Ok(true),
+        }
     }
     fn draft_source(&self, record: &Value) -> Result<Option<String>> {
         if record["draft"] != true || record["author"]["login"] != "github-actions[bot]" {
@@ -393,9 +480,7 @@ impl Release<'_> {
         let number = tag.strip_prefix('v').ok_or("Некорректный тег черновика")?;
         version(number)?;
         self.cmd(&["git", "merge-base", "--is-ancestor", sha, "HEAD"])?;
-        let saved: Value =
-            serde_json::from_str(&self.cmd(&["git", "show", &format!("{sha}:{MANIFEST}")])?)
-                .map_err(|e| e.to_string())?;
+        let saved = self.manifest_at(sha)?;
         if saved["version"] != number {
             return Err("Версия черновика не совпадает с манифестом его коммита".into());
         }
@@ -407,15 +492,7 @@ impl Release<'_> {
         Ok(Some(sha.into()))
     }
     fn version_contents(&self, number: &str) -> Result<Option<Vec<u8>>> {
-        version(number)?;
-        let mut data = manifest(self.root)?;
-        if data["version"] == number {
-            return Ok(None);
-        }
-        data["version"] = json!(number);
-        Ok(Some(
-            (serde_json::to_string_pretty(&data).map_err(|e| e.to_string())? + "\n").into_bytes(),
-        ))
+        updated_manifest(manifest(self.root)?, number)
     }
     fn artifacts(&self, sha: &str) -> Result<Vec<(String, Vec<u8>)>> {
         let directory = self.artifacts.ok_or("Публикация требует --artifacts DIR")?;
@@ -843,7 +920,18 @@ impl Release<'_> {
         if plan["level"] == 0 || subject != format!("chore(release): v{number}") {
             return Err(error.into());
         }
-        let contents = self.version_contents(number)?;
+        if !self.release_commit_matches(expected, candidate, self.version_contents(number)?)? {
+            return Err(error.into());
+        }
+        self.cmd(&["git", "checkout", "--detach", candidate])?;
+        Ok(())
+    }
+    fn release_commit_matches(
+        &self,
+        expected: &str,
+        candidate: &str,
+        contents: Option<Vec<u8>>,
+    ) -> Result<bool> {
         let changed = self.cmd(&["git", "diff", "--name-only", expected, candidate])?;
         if changed.lines().collect::<Vec<_>>()
             != if contents.is_some() {
@@ -855,15 +943,12 @@ impl Release<'_> {
                 .cmd(&["git", "diff", "--summary", expected, candidate])?
                 .is_empty()
         {
-            return Err(error.into());
+            return Ok(false);
         }
         if let Some(bytes) = contents {
-            if self.bytes(&["git", "show", &format!("{candidate}:{MANIFEST}")])? != bytes {
-                return Err(error.into());
-            }
+            return Ok(self.bytes(&["git", "show", &format!("{candidate}:{MANIFEST}")])? == bytes);
         }
-        self.cmd(&["git", "checkout", "--detach", candidate])?;
-        Ok(())
+        Ok(true)
     }
     fn publish(&self, repo: &str, event: &BTreeMap<String, String>) -> Result<()> {
         if event.get("GITHUB_ACTIONS").map(String::as_str) != Some("true")
@@ -1721,8 +1806,31 @@ mod tests {
         records.push(prepare("0.2.1"));
         git(&root, &["commit", "--allow-empty", "-m", "fix: second"]);
         assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.2.2");
+        let parent = git(&root, &["rev-parse", "HEAD"]);
+        save(
+            &root,
+            MANIFEST,
+            release.version_contents("0.2.2").unwrap().unwrap(),
+        );
+        commit(&root, "feat: manually changed version");
+        assert!(release.plan(records.clone()).is_err());
+        git(&root, &["reset", "--hard", &parent]);
+        save(
+            &root,
+            MANIFEST,
+            release.version_contents("0.1.0").unwrap().unwrap(),
+        );
+        commit(&root, "docs: set unrelated version");
+        prepare("0.2.2");
+        git(&root, &["commit", "--allow-empty", "-m", "feat: later"]);
+        assert!(release.plan(records.clone()).is_err());
+        git(&root, &["reset", "--hard", &parent]);
         let prepared = prepare("0.2.2");
         git(&root, &["commit", "--allow-empty", "-m", "feat: later"]);
+        let mut metadata = manifest(&root).unwrap();
+        metadata["description"] = json!("Updated description");
+        save(&root, MANIFEST, serde_json::to_vec(&metadata).unwrap());
+        commit(&root, "docs: clarify package description");
 
         assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.3.0");
         assert!(release.plan(records[..1].to_vec()).is_err());
@@ -1731,7 +1839,16 @@ mod tests {
         let mut foreign_reservation = records.clone();
         foreign_reservation[1]["author"]["login"] = json!("human");
         assert!(release.plan(foreign_reservation).is_err());
-        records[2]["author"]["login"] = json!("human");
+        let mut foreign_current = records.clone();
+        foreign_current[2]["author"]["login"] = json!("human");
+        assert!(release.plan(foreign_current).is_err());
+        prepare("0.2.1");
+        save(
+            &root,
+            MANIFEST,
+            release.version_contents("0.2.2").unwrap().unwrap(),
+        );
+        commit(&root, "docs: manually restored version");
         assert!(release.plan(records).is_err());
     }
 }
