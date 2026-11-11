@@ -70,7 +70,7 @@
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
-| `faust-mode` | Полный процесс только по явной команде | [Открыть](../skills/faust-mode/SKILL.md) |
+| `faust-mode` | Включение полного процесса на весь чат до `/faust-mode-off` | [Открыть](../skills/faust-mode/SKILL.md) |
 | `plan-work` | План законченных этапов, зависимостей и проверок | [Открыть](../skills/plan-work/SKILL.md) |
 | `delegate-work` | Поручения, владение и завершение подагентов | [Открыть](../skills/delegate-work/SKILL.md) |
 | `checkpoint-task` | Сохранение проверяемой точки продолжения | [Открыть](../skills/checkpoint-task/SKILL.md) |
