@@ -4,7 +4,7 @@ description: 'Устраняет дублирование, неясное вла
 license: MIT
 metadata:
   short-description: Упрощение кода с сохранением контрактов
-  version: 1.1.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -4,7 +4,7 @@ description: 'Выполняет явно разрешённое слияние 
 license: MIT
 metadata:
   short-description: Слияние проверенной ревизии PR или MR
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

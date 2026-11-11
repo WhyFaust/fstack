@@ -4,7 +4,7 @@ description: 'Подбирает источники и свежие поводы
 license: MIT
 metadata:
   short-description: Поиск материалов и проверка фактов для текста
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

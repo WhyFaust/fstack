@@ -4,7 +4,7 @@ description: 'Выстраивает существенные зависимые
 license: MIT
 metadata:
   short-description: План проверяемых этапов и зависимостей
-  version: 1.0.3
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

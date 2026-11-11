@@ -4,7 +4,7 @@ description: 'Возобновляет поручение после паузы,
 license: MIT
 metadata:
   short-description: Продолжение задачи со сверкой живого состояния
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

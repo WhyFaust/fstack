@@ -4,7 +4,7 @@ description: 'Проверяет конкретную ревизию через 
 license: MIT
 metadata:
   short-description: Проверка проекта через реальный сценарий
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

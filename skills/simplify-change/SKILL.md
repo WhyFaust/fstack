@@ -4,7 +4,7 @@ description: 'Убирает лишние слои, дублирование, в
 license: MIT
 metadata:
   short-description: Упрощение готового изменения без расширения задачи
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -4,7 +4,7 @@ description: 'Выбирает основной метод и нужные пр�
 license: MIT
 metadata:
   short-description: Основной метод и применимые предметные навыки
-  version: 1.1.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

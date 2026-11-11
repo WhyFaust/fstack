@@ -4,7 +4,7 @@ description: "Определяет владельца, срок жизни и о
 license: MIT
 metadata:
   short-description: Жизненный цикл и очистка собственных ресурсов
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

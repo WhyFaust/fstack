@@ -2,3 +2,5 @@ interface:
   display_name: "Research for text"
   short_description: "Source research and fact-checking for prose"
   default_prompt: "Use $fstack:research-for-text. Find material for my text, verify the facts and include direct source links."
+policy:
+  allow_implicit_invocation: false

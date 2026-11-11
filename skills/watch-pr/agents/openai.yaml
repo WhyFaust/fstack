@@ -2,3 +2,5 @@ interface:
   display_name: Состояние и сопровождение PR или MR
   short_description: Состояние и сопровождение PR или MR
   default_prompt: "Используй $fstack:watch-pr, чтобы сверить состояние текущей ревизии PR/MR и действовать до согласованной точки завершения."
+policy:
+  allow_implicit_invocation: false

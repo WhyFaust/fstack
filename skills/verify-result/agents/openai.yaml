@@ -3,3 +3,5 @@ interface:
   short_description: Проверки и доказательства готовности
   default_prompt: Используй $fstack:verify-result, чтобы выбрать достаточные проверки и оценить фактические доказательства
     результата.
+policy:
+  allow_implicit_invocation: false

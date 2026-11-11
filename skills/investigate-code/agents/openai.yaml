@@ -3,3 +3,5 @@ interface:
   short_description: Исследование кода по исходным данным
   default_prompt: Используй $fstack:investigate-code, чтобы объяснить указанный путь кода по первичным данным без
     изменений.
+policy:
+  allow_implicit_invocation: false

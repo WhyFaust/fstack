@@ -2,3 +2,5 @@ interface:
   display_name: "Написать текст"
   short_description: "Авторские тексты, комментарии и новые форматы"
   default_prompt: "Используй $fstack:write-text. Подготовь текст для моей задачи и аудитории, сохрани мой голос и опирайся на подтверждённые детали."
+policy:
+  allow_implicit_invocation: false

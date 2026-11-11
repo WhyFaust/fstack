@@ -2,3 +2,5 @@ interface:
   display_name: "Найти материал для текста"
   short_description: "Поиск материалов и проверка фактов для текста"
   default_prompt: "Используй $fstack:research-for-text. Найди материал для моего текста, проверь факты и приведи прямые ссылки."
+policy:
+  allow_implicit_invocation: false

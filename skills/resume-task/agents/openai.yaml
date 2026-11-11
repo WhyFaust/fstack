@@ -2,3 +2,5 @@ interface:
   display_name: Продолжение задачи со сверкой живого состояния
   short_description: Продолжение задачи со сверкой живого состояния
   default_prompt: Используй $fstack:resume-task из плагина fstack для указанной задачи с проверяемым результатом.
+policy:
+  allow_implicit_invocation: false

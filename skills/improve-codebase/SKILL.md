@@ -4,7 +4,7 @@ description: "Определяет, что улучшить в кодовой б
 license: MIT
 metadata:
   short-description: Аудит кодовой базы и планы улучшений
-  version: 1.0.1
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

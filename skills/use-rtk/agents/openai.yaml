@@ -2,3 +2,5 @@ interface:
   display_name: Сокращение шума RTK с сохранением доказательств
   short_description: Сокращение шума RTK с сохранением доказательств
   default_prompt: Используй $fstack:use-rtk для шумного вывода и сохрани первичные данные, от которых зависит вывод проверки.
+policy:
+  allow_implicit_invocation: false

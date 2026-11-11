@@ -3,3 +3,5 @@ interface:
   short_description: Критерии архитектуры, состояния и проверки
   default_prompt: Используй $fstack:engineering-principles из плагина fstack для оценки существенного решения о
     модели, состоянии и границах.
+policy:
+  allow_implicit_invocation: false

@@ -5,7 +5,7 @@ license: MIT AND Apache-2.0
 compatibility: Установленный Playwright CLI и доступный ему браузер; Node.js нужен при запуске через npx.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

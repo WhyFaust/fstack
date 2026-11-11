@@ -4,7 +4,7 @@ description: "Настраивает профиль установленного
 license: MIT
 compatibility: Codex с поддержкой плагинов и подагентов; нативный бинарник fstack для платформы.
 metadata:
-  version: 2.0.1
+  version: 3.0.0
   short-description: Установка профиля и выбор настроек в беседе
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack

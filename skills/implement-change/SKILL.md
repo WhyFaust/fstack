@@ -4,7 +4,7 @@ description: "Реализует новое или намеренно измен
 license: MIT
 metadata:
   short-description: Реализация законченного изменения
-  version: 1.0.3
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

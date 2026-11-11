@@ -4,7 +4,7 @@ description: "Ведёт разрешённую оркестрацию от ре
 license: MIT
 metadata:
   short-description: Поручения, владение и завершение подагентов
-  version: 1.1.0
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

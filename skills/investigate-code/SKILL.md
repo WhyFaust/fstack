@@ -4,7 +4,7 @@ description: "Объясняет поведение кода без правок
 license: MIT
 metadata:
   short-description: Исследование кода по исходным данным
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

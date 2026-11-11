@@ -4,7 +4,7 @@ description: "Выбирает предметный метод, когда ри�
 license: MIT
 metadata:
   short-description: Критерии архитектуры, состояния и проверки
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

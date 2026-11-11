@@ -3,3 +3,5 @@ interface:
   short_description: Работа с веб-интерфейсом через Playwright CLI
   default_prompt: Используй $fstack:playwright-cli, чтобы проверить нужное поведение веб-интерфейса в отдельной
     браузерной сессии.
+policy:
+  allow_implicit_invocation: false
