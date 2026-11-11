@@ -1635,6 +1635,15 @@ fn windows_publish_preserves_atomic_new_and_replace_for_long_unicode_paths() {
             r"\\server\share\каталог\new.md",
             r"\\?\UNC\server\share\каталог\new.md",
         ),
+        (
+            r"//server/share/каталог/new.md",
+            r"\\?\UNC\server\share\каталог\new.md",
+        ),
+        (
+            r"\\server/share/каталог/new.md",
+            r"\\?\UNC\server\share\каталог\new.md",
+        ),
+        (r"каталог/new.md", r"каталог/new.md"),
         (r"\\?\C:\каталог\new.md", r"\\?\C:\каталог\new.md"),
         (r"C:/каталог/new.md", r"\\?\C:\каталог\new.md"),
     ] {
@@ -1642,6 +1651,53 @@ fn windows_publish_preserves_atomic_new_and_replace_for_long_unicode_paths() {
         assert_eq!(
             units,
             expected.encode_utf16().chain(Some(0)).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn corrupt_tombstone_retains_accepted_write_until_repaired() {
+    for action in ["remember", "approve"] {
+        let f = Fixture::new("auto", "pilot");
+        let candidate = candidate("Repair heliotrope");
+        let target = format::stable_id(&format::candidate(&candidate).unwrap());
+        let request = if action == "approve" {
+            f.store
+                .save(&f.binding, &candidate, false, None, None)
+                .unwrap();
+            json!({"action":"approve","id":target})
+        } else {
+            json!({"action":"remember","candidate":candidate})
+        };
+        let scope = hooks::scope_id(&f.binding, &f.repo);
+        stage_action(&f, "original", &request);
+        let marker = f
+            .root()
+            .join("Records")
+            .join(format!("{target}-forgotten.json"));
+        fs::write(&marker, "").unwrap();
+        assert!(f
+            .hook("Stop", "original", json!({}))
+            .get("systemMessage")
+            .is_some());
+        assert_eq!(
+            f.pending().diagnostics(&scope).unwrap(),
+            json!({
+                "phase":"failure","staged":0,"pending":1
+            })
+        );
+        assert!(f.store.search(&f.binding, "heliotrope", 5).is_err());
+
+        fs::remove_file(marker).unwrap();
+        assert_eq!(f.hook("Stop", "next", json!({})), json!({}));
+        let entries = f.store.search(&f.binding, "heliotrope", 5).unwrap();
+        assert_eq!(entries.as_array().unwrap().len(), 1);
+        assert_eq!(entries[0]["id"], target);
+        assert_eq!(
+            f.pending().diagnostics(&scope).unwrap(),
+            json!({
+                "phase":"applied","staged":0,"pending":0
+            })
         );
     }
 }

@@ -237,20 +237,29 @@ fn publish(source: &Path, target: &Path, replace: bool) -> std::io::Result<()> {
 #[cfg(windows)]
 pub(super) fn windows_publish_path(path: &Path) -> Vec<u16> {
     use std::{os::windows::ffi::OsStrExt, path::Prefix};
-    let path: PathBuf = path.components().collect();
-    let (prefix, skip) = match path.components().next() {
+    let mut components = path.components();
+    let mut units = Vec::new();
+    match components.next() {
         Some(Component::Prefix(p)) => match p.kind() {
-            Prefix::Disk(_) if path.is_absolute() => (r"\\?\", 0),
-            Prefix::UNC(_, _) => (r"\\?\UNC\", 2),
-            _ => ("", 0),
+            Prefix::Disk(_) if path.is_absolute() => {
+                let normalized: PathBuf = path.components().collect();
+                units.extend(r"\\?\".encode_utf16());
+                units.extend(normalized.as_os_str().encode_wide());
+            }
+            Prefix::UNC(server, share) => {
+                let tail: PathBuf = components.collect();
+                units.extend(r"\\?\UNC\".encode_utf16());
+                units.extend(server.encode_wide());
+                units.push(u16::from(b'\\'));
+                units.extend(share.encode_wide());
+                units.extend(tail.as_os_str().encode_wide());
+            }
+            _ => units.extend(path.as_os_str().encode_wide()),
         },
-        _ => ("", 0),
-    };
-    prefix
-        .encode_utf16()
-        .chain(path.as_os_str().encode_wide().skip(skip))
-        .chain(Some(0))
-        .collect()
+        _ => units.extend(path.as_os_str().encode_wide()),
+    }
+    units.push(0);
+    units
 }
 #[cfg(windows)]
 fn publish(source: &Path, target: &Path, replace: bool) -> std::io::Result<()> {

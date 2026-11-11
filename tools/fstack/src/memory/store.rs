@@ -169,6 +169,10 @@ fn find_approval(mut known: Option<Fields>, paths: &[PathBuf], id: &str) -> Resu
 fn forgotten(root: &Path, id: &str) -> Result<bool> {
     Ok(io::file(&legacy(root, "Forgotten", id))? || io::file(&tombstone(root, id))?)
 }
+fn verified_forgotten(root: &Path, id: &str) -> Result<bool> {
+    let (_, canonical, legacy) = read_tombstones(root, id)?;
+    Ok(canonical.is_some() || legacy.is_some())
+}
 fn write_tombstone(root: &Path, id: &str, raw: Option<&str>, v: &Value) -> Result<()> {
     if !io::write(&tombstone(root, id), &format!("{v}\n"), raw.is_some(), raw)? {
         return Err("Memory tombstone changed while forgetting an entry".into());
@@ -666,7 +670,7 @@ impl Store {
         let root = self.root(b)?;
         let _lock = io::lock(&root, b.root.parent().unwrap())?;
         let id = fmt::stable_id(&fields);
-        if forgotten(&root, &id)? {
+        if verified_forgotten(&root, &id)? {
             return Ok(WriteOutcome::Forgotten);
         }
         let _ = views::ensure_library(&b.root, &self.package);
@@ -706,7 +710,7 @@ impl Store {
                 false,
                 None,
             )? {
-                if forgotten(&root, &id)? {
+                if verified_forgotten(&root, &id)? {
                     self.forget_locked(&root, &id)?;
                     return Ok(WriteOutcome::Forgotten);
                 }
@@ -726,7 +730,7 @@ impl Store {
             return Err("Memory entry is unavailable".into());
         }
         let entry = self.public_record(&root, &id, a.get(&id))?;
-        if forgotten(&root, &id)? {
+        if verified_forgotten(&root, &id)? {
             return Ok(WriteOutcome::Forgotten);
         }
         entry
@@ -744,7 +748,7 @@ impl Store {
         self.approve_locked(&root, id)
     }
     fn approve_locked(&self, root: &Path, id: &str) -> Result<WriteOutcome> {
-        if forgotten(root, id)? {
+        if verified_forgotten(root, id)? {
             return Ok(WriteOutcome::Forgotten);
         }
         let link = views::current_link(root)?;
@@ -754,7 +758,7 @@ impl Store {
         }
         let p = record(root, id);
         let raw = io::read(&p)?;
-        if forgotten(root, id)? {
+        if verified_forgotten(root, id)? {
             return Ok(WriteOutcome::Forgotten);
         }
         let raw = raw.ok_or("Inbox entry is unavailable")?;
@@ -770,7 +774,7 @@ impl Store {
         updates.insert("fstack_status".into(), Some("approved".into()));
         updates.insert("supersedes".into(), approval.get("supersedes").cloned());
         update(&p, &raw, &fields, &updates)?;
-        if forgotten(root, id)? {
+        if verified_forgotten(root, id)? {
             return Ok(WriteOutcome::Forgotten);
         }
         Ok(WriteOutcome::Written(fmt::public(fields, Some(&approval))))
