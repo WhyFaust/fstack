@@ -948,6 +948,54 @@ fn prompt_only_exposes_ids_and_disabled_project_never_issues_token() {
     assert_eq!(f.hook("Stop", "disabled", json!({})), json!({}));
 }
 #[test]
+fn prompt_search_failure_warns_without_exposing_notes_or_blocking_the_turn() {
+    let f = Fixture::new("auto", "pilot");
+    let v = f.save("Private sentinel heliotrope body", true);
+    let path = store::record(&f.root(), id(&v));
+    let raw = fs::read_to_string(&path).unwrap();
+    fs::write(&path, format!("{raw}\n```unsafe-memory-payload\n")).unwrap();
+    assert!(f.store.search(&f.binding, "heliotrope", 3).is_err());
+
+    let result = f.hook(
+        "UserPromptSubmit",
+        "damaged",
+        json!({"prompt":"heliotrope"}),
+    );
+    assert!(result["systemMessage"]
+        .as_str()
+        .is_some_and(|s| !s.is_empty()));
+    assert!(result.get("decision").is_none());
+    let text = result["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    let token = regex::Regex::new(r"stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})")
+        .unwrap()
+        .captures(text)
+        .unwrap()[1]
+        .to_owned();
+    let output = result.to_string();
+    for hidden in ["Private sentinel", "unsafe-memory-payload", id(&v)] {
+        assert!(!output.contains(hidden));
+    }
+    assert_eq!(
+        post(
+            &f,
+            "damaged",
+            stage_command(&token, &json!({"action":"skip"})),
+            json!({})
+        ),
+        json!({})
+    );
+    assert_eq!(f.hook("Stop", "damaged", json!({})), json!({}));
+
+    fs::write(&path, raw).unwrap();
+    for (turn, prompt) in [("recovered", "heliotrope"), ("empty", "nohits")] {
+        let result = f.hook("UserPromptSubmit", turn, json!({"prompt":prompt}));
+        assert!(result.get("systemMessage").is_none());
+        assert!(result.get("decision").is_none());
+    }
+}
+#[test]
 fn migration_does_not_modify_another_project_and_cross_profile_locking_hides_forget() {
     let f = Fixture::new("inbox", "pilot");
     let v = f.save("Current heliotrope", false);
