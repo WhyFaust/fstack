@@ -211,13 +211,11 @@ pub fn write(path: &Path, text: &str, replace: bool, expected: Option<&str>) -> 
             return Err("Memory note changed while preparing an update".into());
         }
         file(path)?;
-        let r = if replace {
-            fs::rename(&temp, path)
-        } else {
-            publish_new(&temp, path)
-        };
-        match r {
-            Ok(()) => Ok(true),
+        match publish(&temp, path, replace) {
+            Ok(()) => {
+                sync_parent(path)?;
+                Ok(true)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 file(path)?;
                 Ok(false)
@@ -229,12 +227,19 @@ pub fn write(path: &Path, text: &str, replace: bool, expected: Option<&str>) -> 
     result
 }
 #[cfg(unix)]
-fn publish_new(source: &Path, target: &Path) -> std::io::Result<()> {
-    fs::hard_link(source, target)
+fn publish(source: &Path, target: &Path, replace: bool) -> std::io::Result<()> {
+    if replace {
+        fs::rename(source, target)
+    } else {
+        fs::hard_link(source, target)
+    }
 }
 #[cfg(windows)]
-fn publish_new(source: &Path, target: &Path) -> std::io::Result<()> {
+fn publish(source: &Path, target: &Path, replace: bool) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
     let source = source
         .as_os_str()
         .encode_wide()
@@ -245,14 +250,28 @@ fn publish_new(source: &Path, target: &Path) -> std::io::Result<()> {
         .encode_wide()
         .chain(Some(0))
         .collect::<Vec<_>>();
-    if unsafe {
-        windows_sys::Win32::Storage::FileSystem::MoveFileExW(source.as_ptr(), target.as_ptr(), 0)
-    } == 0
-    {
+    let flags = MOVEFILE_WRITE_THROUGH
+        | if replace {
+            MOVEFILE_REPLACE_EXISTING
+        } else {
+            0
+        };
+    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), flags) } == 0 {
         Err(std::io::Error::last_os_error())
     } else {
         Ok(())
     }
+}
+#[cfg(unix)]
+pub fn sync_parent(path: &Path) -> Result<()> {
+    let parent = path.parent().ok_or("Missing parent")?;
+    File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(err)
+}
+#[cfg(windows)]
+pub fn sync_parent(_path: &Path) -> Result<()> {
+    Ok(())
 }
 pub fn delete(path: &Path) -> Result<bool> {
     if !file(path)? {
@@ -270,6 +289,22 @@ pub fn home() -> Result<PathBuf> {
         .ok_or("Home directory unavailable".into())
 }
 pub fn lock(project: &Path, vault: &Path) -> Result<File> {
+    directory(project, false, false)?;
+    #[cfg(unix)]
+    let m = info(project)?.ok_or("Memory project unavailable")?;
+    #[cfg(unix)]
+    let key = {
+        use std::os::unix::fs::MetadataExt;
+        hash(format!("{}:{}", m.dev(), m.ino()))
+    };
+    #[cfg(windows)]
+    let key = {
+        let (volume, index, _) = windows_info(project, true)?;
+        hash(format!("{volume}:{index}"))
+    };
+    lock_key(&key, Some(vault))
+}
+pub fn lock_key(key: &str, forbidden: Option<&Path>) -> Result<File> {
     #[cfg(test)]
     let cache = super::tests::cache();
     #[cfg(not(test))]
@@ -284,22 +319,9 @@ pub fn lock(project: &Path, vault: &Path) -> Result<File> {
         return Err("Memory locks require an absolute cache directory".into());
     }
     let dir = absolute(&cache.join("fstack/memory-locks"))?;
-    if within(&dir, vault) {
+    if forbidden.is_some_and(|path| within(&dir, path)) {
         return Err("Local memory lock directory is inside the vault".into());
     }
-    directory(project, false, false)?;
-    #[cfg(unix)]
-    let m = info(project)?.ok_or("Memory project unavailable")?;
-    #[cfg(unix)]
-    let key = {
-        use std::os::unix::fs::MetadataExt;
-        hash(format!("{}:{}", m.dev(), m.ino()))
-    };
-    #[cfg(windows)]
-    let key = {
-        let (volume, index, _) = windows_info(project, true)?;
-        hash(format!("{volume}:{index}"))
-    };
     directory(&dir, true, true)?;
     let p = dir.join(format!("{key}.lock"));
     file(&p)?;
@@ -335,6 +357,11 @@ pub fn state(dir: &Path, cwd: &Path, create: bool) -> Result<bool> {
 
 #[cfg(windows)]
 pub fn windows_info(path: &Path, directory: bool) -> Result<(u32, u64, u32)> {
+    windows_info_if_present(path, directory)?.ok_or("Memory path is unavailable".into())
+}
+
+#[cfg(windows)]
+pub fn windows_info_if_present(path: &Path, directory: bool) -> Result<Option<(u32, u64, u32)>> {
     use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
@@ -349,7 +376,11 @@ pub fn windows_info(path: &Path, directory: bool) -> Result<(u32, u64, u32)> {
                 0
             },
     );
-    let f = opts.open(path).map_err(err)?;
+    let f = match opts.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(err(error)),
+    };
     let mut metadata = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
     if unsafe { GetFileInformationByHandle(f.as_raw_handle(), metadata.as_mut_ptr()) } == 0 {
         return Err("Cannot inspect physical memory file".into());
@@ -358,9 +389,9 @@ pub fn windows_info(path: &Path, directory: bool) -> Result<(u32, u64, u32)> {
     if m.dwFileAttributes & 0x400 != 0 {
         return Err("Reparse points are not allowed in memory paths".into());
     }
-    Ok((
+    Ok(Some((
         m.dwVolumeSerialNumber,
         ((m.nFileIndexHigh as u64) << 32) | m.nFileIndexLow as u64,
         m.nNumberOfLinks,
-    ))
+    )))
 }

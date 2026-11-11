@@ -712,7 +712,12 @@ fn steering_revocation_survives_locked_database_and_failed_generation_replace() 
     assert!(next.is_some());
     conn.execute_batch("ROLLBACK").unwrap();
     assert!(!f.pending().is_current(&token, &scope).unwrap());
-    assert_eq!(f.pending().consume(&key, &scope, false).unwrap(), None);
+    assert_eq!(
+        f.pending()
+            .claim(&key, &scope, "session", "one", "", false)
+            .unwrap(),
+        None
+    );
     let token = f.token("blocked");
     let dir = f.store.state.join("pending-revocations");
     fs::remove_dir_all(&dir).unwrap();
@@ -733,7 +738,7 @@ fn pending_limits_expiry_private_storage_and_scope() {
     conn.execute("UPDATE pending SET expires=0", []).unwrap();
     assert!(!f.pending().is_current(&token, &scope).unwrap());
     assert!(pending::Pending::new(&f.repo.join("state"), &f.repo)
-        .issue(&"a".repeat(64), "scope", None)
+        .issue(&"a".repeat(64), "scope", None, "", "session")
         .is_err());
     #[cfg(unix)]
     {
@@ -985,7 +990,12 @@ fn revocation_marker_survives_failed_generation_replace() {
         .join("pending-revocations")
         .join(&token)
         .is_file());
-    assert_eq!(f.pending().consume(&key, &scope, false).unwrap(), None);
+    assert_eq!(
+        f.pending()
+            .claim(&key, &scope, "session", "one", "", false)
+            .unwrap(),
+        None
+    );
 }
 #[cfg(unix)]
 #[test]
@@ -997,7 +1007,7 @@ fn state_symlinks_non_utf8_paths_and_unsafe_git_path_fail_closed() {
     let state = f.base.join("linked-state");
     symlink(&outside, &state).unwrap();
     assert!(pending::Pending::new(&state, &f.repo)
-        .issue(&"a".repeat(64), "scope", None)
+        .issue(&"a".repeat(64), "scope", None, "", "session")
         .is_err());
     assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
     let bad = f.base.join(OsString::from_vec(vec![0xff]));
@@ -1179,4 +1189,306 @@ fn migration_does_not_modify_another_project_and_cross_profile_locking_hides_for
     assert!(other_store.get(&b, id(&v)).is_err());
     assert!(f.store.get(&f.binding, id(&v)).is_err());
     assert!(!store::record(&f.root(), id(&v)).exists());
+}
+
+fn stage_action(f: &Fixture, turn: &str, request: &Value) {
+    let token = f.token(turn);
+    assert_eq!(
+        post(f, turn, stage_command(&token, request), json!({})),
+        json!({})
+    );
+}
+
+fn read_mode_epoch(f: &Fixture) -> String {
+    io::read(
+        &f.store
+            .state
+            .join("faust-mode-sessions")
+            .join(pending::digest(&["session"])),
+    )
+    .unwrap()
+    .unwrap()
+}
+
+#[test]
+fn claimed_stop_recovers_after_project_unavailable_in_a_later_turn() {
+    let f = Fixture::new("auto", "pilot");
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    let request = json!({"action":"remember","candidate":candidate("Recovery heliotrope")});
+    stage_action(&f, "original", &request);
+    assert_eq!(
+        f.pending().diagnostics(&scope).unwrap(),
+        json!({"phase":"stage","staged":1,"pending":0})
+    );
+    let absent = f.root().with_file_name("unavailable");
+    fs::rename(f.root(), &absent).unwrap();
+    assert!(f
+        .hook("Stop", "original", json!({}))
+        .get("systemMessage")
+        .is_some());
+    assert_eq!(
+        f.pending().diagnostics(&scope).unwrap(),
+        json!({"phase":"failure","staged":0,"pending":1})
+    );
+    fs::rename(absent, f.root()).unwrap();
+    assert_eq!(
+        f.store.search(&f.binding, "heliotrope", 5).unwrap(),
+        json!([])
+    );
+
+    for (session, turn, mode) in [("other", "foreign", "default"), ("session", "plan", "plan")] {
+        f.hook(
+            "UserPromptSubmit",
+            turn,
+            json!({"session_id":session,"mode":mode,"prompt":"/faust-mode"}),
+        );
+        f.hook("Stop", turn, json!({"session_id":session,"mode":mode}));
+        assert_eq!(
+            f.store.search(&f.binding, "heliotrope", 5).unwrap(),
+            json!([])
+        );
+    }
+
+    stage_action(&f, "later", &json!({"action":"skip"}));
+    assert_eq!(f.hook("Stop", "later", json!({})), json!({}));
+    let result = f.store.search(&f.binding, "heliotrope", 5).unwrap();
+    assert_eq!(result.as_array().unwrap().len(), 1);
+    assert_eq!(result[0]["turn_id"], "original");
+    assert_eq!(result[0]["session_id"], "session");
+    assert_eq!(
+        f.pending().diagnostics(&scope).unwrap(),
+        json!({"phase":"applied","staged":0,"pending":0})
+    );
+    assert_eq!(f.hook("Stop", "original", json!({})), json!({}));
+}
+
+#[test]
+fn uncertain_stop_commit_is_idempotent_across_concurrent_retries() {
+    let f = Fixture::new("auto", "pilot");
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    let original = "original";
+    let key = pending::digest(&["session", original]);
+    let epoch = read_mode_epoch_after_stage(&f, original);
+    assert_eq!(
+        f.pending()
+            .claim(&key, &scope, "session", original, &epoch, false)
+            .unwrap(),
+        Some(pending::Stop::Claimed)
+    );
+    let committed = f
+        .store
+        .save(
+            &f.binding,
+            &candidate("Repeat heliotrope"),
+            true,
+            Some("session"),
+            Some(original),
+        )
+        .unwrap();
+    let path = store::record(&f.root(), id(&committed));
+    let bytes = fs::read(&path).unwrap();
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["pending"], 1);
+
+    std::thread::scope(|threads| {
+        let a = threads.spawn(|| f.hook("Stop", original, json!({})));
+        let b = threads.spawn(|| f.hook("Stop", "different", json!({})));
+        assert_eq!(a.join().unwrap(), json!({}));
+        assert_eq!(b.join().unwrap(), json!({}));
+    });
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["pending"], 0);
+    assert_eq!(fs::read(path).unwrap(), bytes);
+    assert_eq!(
+        f.store.search(&f.binding, "heliotrope", 5).unwrap(),
+        json!([committed])
+    );
+}
+
+fn read_mode_epoch_after_stage(f: &Fixture, turn: &str) -> String {
+    stage_action(
+        f,
+        turn,
+        &json!({"action":"remember","candidate":candidate("Repeat heliotrope")}),
+    );
+    read_mode_epoch(f)
+}
+
+#[test]
+fn a_claim_cannot_cross_revocation_mode_epoch_or_binding_generation() {
+    for revoke in ["steer", "plan", "mode", "binding", "expired"] {
+        let f = Fixture::new("auto", "pilot");
+        let scope = hooks::scope_id(&f.binding, &f.repo);
+        let epoch = read_mode_epoch_after_stage(&f, "original");
+        let key = pending::digest(&["session", "original"]);
+        assert_eq!(
+            f.pending()
+                .claim(&key, &scope, "session", "original", &epoch, false)
+                .unwrap(),
+            Some(pending::Stop::Claimed)
+        );
+        match revoke {
+            "steer" => {
+                f.token("original");
+            }
+            "plan" => {
+                f.hook("Stop", "original", json!({"mode":"plan"}));
+            }
+            "mode" => {
+                f.hook(
+                    "UserPromptSubmit",
+                    "off",
+                    json!({"prompt":"/faust-mode-off"}),
+                );
+            }
+            "binding" => {
+                f.store.disable(&f.repo).unwrap();
+                f.store
+                    .setup(&f.vault, &f.repo, "pilot", Some("auto"))
+                    .unwrap();
+            }
+            "expired" => {
+                let conn =
+                    rusqlite::Connection::open(f.store.state.join("pending.sqlite3")).unwrap();
+                conn.execute("UPDATE claimed SET expires=0", []).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        stage_action(&f, "later", &json!({"action":"skip"}));
+        f.hook("Stop", "later", json!({}));
+        assert_eq!(
+            f.store.search(&f.binding, "heliotrope", 5).unwrap(),
+            json!([]),
+            "{revoke}"
+        );
+    }
+}
+
+#[test]
+fn interrupted_approval_or_write_cannot_restore_forgotten_content() {
+    for action in ["remember", "approve"] {
+        let f = Fixture::new("auto", "pilot");
+        let candidate = candidate("Forget heliotrope");
+        let saved = f
+            .store
+            .save(&f.binding, &candidate, action == "remember", None, None)
+            .unwrap();
+        let operation = if action == "approve" {
+            json!({"action":"approve","id":saved["id"]})
+        } else {
+            json!({"action":"remember","candidate":candidate})
+        };
+        let scope = hooks::scope_id(&f.binding, &f.repo);
+        stage_action(&f, "original", &operation);
+        let epoch = read_mode_epoch(&f);
+        let key = pending::digest(&["session", "original"]);
+        assert_eq!(
+            f.pending()
+                .claim(&key, &scope, "session", "original", &epoch, false)
+                .unwrap(),
+            Some(pending::Stop::Claimed)
+        );
+        if action == "approve" {
+            f.store.approve(&f.binding, id(&saved)).unwrap();
+        }
+        f.store.forget(&f.binding, id(&saved)).unwrap();
+        f.hook("Stop", "original", json!({}));
+        assert_eq!(
+            f.store.search(&f.binding, "heliotrope", 5).unwrap(),
+            json!([])
+        );
+        assert!(f.store.history(&f.binding, id(&saved), 5).is_err());
+        assert!(!store::record(&f.root(), id(&saved)).exists());
+    }
+}
+
+#[test]
+fn history_links_scoped_approved_versions_and_diffs_without_forgotten_content() {
+    let f = Fixture::new("auto", "pilot");
+    let a = f
+        .store
+        .save(
+            &f.binding,
+            &json!({
+                "kind":"decision","title":"Heliotrope convention","body":"Default\nUbuntu\nRelease",
+                "source":"workflow.yml @ v1",
+            }),
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+    let b = f.store.save(&f.binding, &json!({
+        "kind":"correction","title":"Heliotrope convention","body":"Default\nWindows\nRelease",
+        "source":"workflow.yml @ v2","supersedes":id(&a),
+    }), true, Some("session"), Some("update")).unwrap();
+    let draft = f.store.save(&f.binding, &json!({
+        "kind":"correction","title":"Heliotrope convention","body":"A proposal","supersedes":id(&b),
+    }), false, None, None).unwrap();
+    assert_eq!(
+        f.store.search(&f.binding, "Heliotrope", 5).unwrap(),
+        json!([b])
+    );
+    assert!(f.store.get(&f.binding, id(&a)).is_err());
+    assert!(f.store.history(&f.binding, id(&draft), 5).is_err());
+    assert!(f.store.history(&f.binding, id(&b), 11).is_err());
+    let from_new = f.store.history(&f.binding, id(&b), 5).unwrap();
+    let from_old = f.store.history(&f.binding, id(&a), 5).unwrap();
+    assert_eq!(from_new["entries"], json!([b, a]));
+    assert_eq!(from_old["entries"], json!([a, b]));
+    assert_eq!(from_new["changes"], from_old["changes"]);
+    assert_eq!(
+        from_new["changes"][0],
+        json!({
+            "from":id(&a),"to":id(&b),"fields":{
+                "kind":{"from":"decision","to":"correction"},
+                "source":{"from":"workflow.yml @ v1","to":"workflow.yml @ v2"},
+                "body":{"start_line":2,"removed":["Ubuntu"],"added":["Windows"]},
+            }
+        })
+    );
+    assert_eq!(
+        f.store.history(&f.binding, id(&b), 1).unwrap(),
+        json!({"entries":[b],"changes":[],"truncated":true})
+    );
+    let foreign = f
+        .store
+        .setup(&f.vault, &f.repo, "other", Some("auto"))
+        .unwrap();
+    assert!(f.store.history(&foreign, id(&a), 5).is_err());
+
+    let stale = fs::read(store::record(&f.root(), id(&a))).unwrap();
+    f.store.forget(&f.binding, id(&a)).unwrap();
+    fs::write(store::record(&f.root(), id(&a)), stale).unwrap();
+    assert!(f.store.history(&f.binding, id(&a), 5).is_err());
+    let after_forget = f.store.history(&f.binding, id(&b), 5).unwrap();
+    assert_eq!(after_forget["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(after_forget["changes"], json!([]));
+    assert!(!after_forget.to_string().contains("Ubuntu"));
+    assert!(!after_forget.to_string().contains(id(&a)));
+}
+
+#[test]
+fn old_pending_rows_and_empty_mode_markers_survive_upgrade() {
+    let f = Fixture::new("auto", "pilot");
+    let path = scope::binding_path(&f.store.state, &f.repo).unwrap();
+    let legacy_binding =
+        json!({"root":f.binding.root,"project":f.binding.project,"mode":f.binding.mode});
+    fs::write(path, legacy_binding.to_string()).unwrap();
+    f.token("bootstrap");
+    let marker = f
+        .store
+        .state
+        .join("faust-mode-sessions")
+        .join(pending::digest(&["session"]));
+    fs::write(marker, "").unwrap();
+    let request = json!({"action":"remember","candidate":candidate("Legacy heliotrope")});
+    stage_action(&f, "old", &request);
+    let conn = rusqlite::Connection::open(f.store.state.join("pending.sqlite3")).unwrap();
+    conn.execute_batch("DROP TABLE issued_modes; DROP TABLE claimed; DROP TABLE diagnostics")
+        .unwrap();
+    drop(conn);
+
+    assert_eq!(f.hook("Stop", "old", json!({})), json!({}));
+    let records = f.store.search(&f.binding, "heliotrope", 5).unwrap();
+    assert_eq!(records.as_array().unwrap().len(), 1);
+    assert_eq!(records[0]["turn_id"], "old");
 }
