@@ -30,6 +30,7 @@
 | Исправить сбой | `debug-failure` | Исходный сбой устранён; предел воспроизведения назван |
 | Упростить существующий код | `refactor-code`; `simplify-change` только для готового diff | Сохранение поведения подтверждено |
 | Изменить общий контракт | `assess-impact`, затем основной метод; `migrate-contract` при переходе | Учтены потребители, старые данные и отказ перехода |
+| Проверить свойство автомата подсистемы | `model-check-state` | Прогон связан с моделью и кодом, выбранная трасса показана в Mermaid |
 | Проверить результат | `review-change` для diff, `verify-result` для доказательств; `verify-project` для прогона | Независимые выводы относятся к одному снимку |
 | Повторять проверку проекта | `prepare-verification`; позже `maintain-verification` | Инструкция воспроизведена, доказательства доступны после очистки |
 | Продолжить или завершить работу | `resume-task` / `checkpoint-task`; `use-memory` для подключённого проекта | Состояние сверено, устойчивые выводы отделены от журнала задачи |
@@ -63,6 +64,7 @@
 | `assess-impact` | Последствия изменения и затронутые потребители | [Открыть](../skills/assess-impact/SKILL.md) |
 | `simplify-change` | Упрощение готового diff без расширения задачи | [Открыть](../skills/simplify-change/SKILL.md) |
 | `manage-state` | Владение состоянием и конкурентными записями | [Открыть](../skills/manage-state/SKILL.md) |
+| `model-check-state` | Проверка свойства автомата по коду и трасса в Mermaid | [Открыть](../skills/model-check-state/SKILL.md) |
 | `manage-resources` | Жизненный цикл и очистка собственных ресурсов | [Открыть](../skills/manage-resources/SKILL.md) |
 | `migrate-contract` | Миграция контрактов и всех потребителей | [Открыть](../skills/migrate-contract/SKILL.md) |
 | `measure-performance` | Измерение ускорения без потери покрытия | [Открыть](../skills/measure-performance/SKILL.md) |
