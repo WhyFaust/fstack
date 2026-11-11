@@ -325,7 +325,15 @@ impl Release<'_> {
                 }
             }
         }
-        if !candidates.contains(&current) {
+        if !candidates.contains(&current)
+            && (level < 2
+                || !self.prepared_at_lower_level(
+                    &current,
+                    &candidates[1..usize::from(level)],
+                    &head,
+                    &records,
+                )?)
+        {
             return Err(format!(
                 "Версия {current} не соответствует опубликованной или ожидающей версии"
             ));
@@ -333,6 +341,39 @@ impl Release<'_> {
         Ok(
             json!({"version":proposed,"level":level,"base":base,"skills":self.changed(&base)?,"records":records}),
         )
+    }
+    fn prepared_at_lower_level(
+        &self,
+        current: &str,
+        lower_versions: &[String],
+        head: &str,
+        records: &[Value],
+    ) -> Result<bool> {
+        let [major, minor, patch] = version(current)?;
+        for start in lower_versions {
+            let [start_major, start_minor, start_patch] = version(start)?;
+            if [major, minor] != [start_major, start_minor] || patch <= start_patch {
+                continue;
+            }
+            for reserved_patch in start_patch..patch {
+                let tag = format!("v{major}.{minor}.{reserved_patch}");
+                let Some(record) = records.iter().find(|r| r["tag_name"] == tag) else {
+                    return Ok(false);
+                };
+                if self
+                    .draft_source(record)?
+                    .is_none_or(|source| source == head)
+                {
+                    return Ok(false);
+                }
+            }
+            let tag = format!("v{current}");
+            return match records.iter().find(|r| r["tag_name"] == tag) {
+                Some(record) => Ok(self.draft_source(record)?.is_some()),
+                None => Ok(true),
+            };
+        }
+        Ok(false)
     }
     fn draft_source(&self, record: &Value) -> Result<Option<String>> {
         if record["draft"] != true || record["author"]["login"] != "github-actions[bot]" {
@@ -1654,5 +1695,43 @@ mod tests {
                 .join("dist/fstack-0.2.1-x86_64-unknown-linux-gnu.zip")
                 .exists());
         }
+    }
+
+    #[test]
+    fn higher_bump_accepts_manifest_prepared_after_stale_reservation() {
+        let (_temp, root) = fixture();
+        let stub = stub();
+        let release = Release {
+            root: &root,
+            runner: &stub,
+            artifacts: None,
+        };
+        let prepare = |number: &str| {
+            save(
+                &root,
+                MANIFEST,
+                release.version_contents(number).unwrap().unwrap(),
+            );
+            commit(&root, &format!("chore(release): v{number}"));
+            let sha = git(&root, &["rev-parse", "HEAD"]);
+            json!({"tag_name":format!("v{number}"),"draft":true,"prerelease":false,"author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{sha} -->")})
+        };
+        git(&root, &["commit", "--allow-empty", "-m", "fix: first"]);
+        let mut records = stub.records.borrow().clone();
+        records.push(prepare("0.2.1"));
+        git(&root, &["commit", "--allow-empty", "-m", "fix: second"]);
+        assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.2.2");
+        let prepared = prepare("0.2.2");
+        git(&root, &["commit", "--allow-empty", "-m", "feat: later"]);
+
+        assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.3.0");
+        assert!(release.plan(records[..1].to_vec()).is_err());
+        records.push(prepared);
+        assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.3.0");
+        let mut foreign_reservation = records.clone();
+        foreign_reservation[1]["author"]["login"] = json!("human");
+        assert!(release.plan(foreign_reservation).is_err());
+        records[2]["author"]["login"] = json!("human");
+        assert!(release.plan(records).is_err());
     }
 }

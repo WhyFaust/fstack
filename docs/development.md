@@ -212,6 +212,11 @@ Workflow публикует полные ZIP с `bin/fstack` (Windows: `bin/fsta
 
 Если main содержит другие изменения, нужен workflow их ревизии либо новый
 workflow_dispatch на main через Actions → «Пакет и релиз» → Run workflow.
+Если новые коммиты повышают уровень SemVer, план принимает версию манифеста,
+достигнутую на прежнем уровне после пропуска последовательных версий,
+зарезервированных собственными устаревшими черновиками. Для этой версии
+запись релиза может отсутствовать или быть подтверждённым собственным
+черновиком. Версия нового выпуска вычисляется по новому уровню SemVer.
 Служебный push с GITHUB_TOKEN сам по себе не запускает новый push-workflow
 по [правилам GitHub](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
 
