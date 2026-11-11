@@ -30,6 +30,7 @@ fstack добавляет в Codex небольшие методы для раб
 | Спроектировать изменение или интерфейс | `design-change`, `design-ui` |
 | Проверить diff, доказательства или пользовательский сценарий | `review-change`, `verify-result`, `verify-project` |
 | Написать, отредактировать текст или проверить факты | `write-text`, `edit-text`, `research-for-text` |
+| Разобрать присланную статью, PDF или книгу и выполнить поручение по материалу | `deepread` |
 | Создать или улучшить навык | `adapt-skill` |
 | Продолжить задачу или разобраться с PR/MR | `checkpoint-task`, `resume-task`, `watch-pr`, `resolve-review` |
 
