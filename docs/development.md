@@ -7,6 +7,9 @@ Python не используется ни в runtime, ни в проверках
 готовый пакет из платформенной Git-ветки или архива без средств разработки.
 Для защиты backup на Windows нужен встроенный Windows PowerShell: helper
 задаёт через системный .NET API полную DACL до сохранения данных.
+Проверка DACL запускает системный PowerShell со своим поиском модулей,
+не наследуя `PSModulePath` PowerShell 7: модули этого хоста несовместимы
+с Windows PowerShell 5.1. Сами проверки владельца и закрытых прав сохраняются.
 
 ```bash
 rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
