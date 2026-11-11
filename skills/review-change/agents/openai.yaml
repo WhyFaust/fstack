@@ -3,3 +3,5 @@ interface:
   short_description: Ревью изменения по контрактам и фактам
   default_prompt: Используй $fstack:review-change из плагина fstack для самостоятельного ревью указанной ревизии
     с доказательствами и ограничениями.
+policy:
+  allow_implicit_invocation: false

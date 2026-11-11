@@ -34,6 +34,15 @@ fn prefix() -> Result<String> {
 fn extra(event: &str, context: String) -> Value {
     json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":context}})
 }
+fn faust_mode(prompt: &str) -> bool {
+    matches!(
+        prompt.split_whitespace().next(),
+        Some("/faust-mode" | "$fstack:faust-mode" | "$faust-mode")
+    )
+}
+fn activation(event: &str, package: &Path) -> Value {
+    extra(event, format!("Для текущего запроса явно включён faust-mode. Загрузи fstack:faust-mode из файла {} и выполняй поручение по нему. Режим не переносится на следующий запрос без команды.", package.join("skills/faust-mode/SKILL.md").display()))
+}
 fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
     if payload["tool_name"] != "Bash"
         || payload.get("agent_id").is_some()
@@ -94,14 +103,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         return Ok(json!({}));
     }
     if event == "SessionStart" {
-        if plan {
-            return Ok(json!({}));
-        }
-        let b = store.resolve(cwd)?;
-        let status = b
-            .map(|b| format!("{} ({})", b.project, b.mode))
-            .unwrap_or("проект не подключён".into());
-        return Ok(extra(event, format!("Память fstack: {status}.")));
+        return Ok(json!({}));
     }
     let Some(session) = payload["session_id"]
         .as_str()
@@ -130,7 +132,19 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     } else {
         None
     };
+    let activated =
+        event == "UserPromptSubmit" && payload["prompt"].as_str().is_some_and(faust_mode);
+    if event == "UserPromptSubmit" && !activated {
+        return Ok(json!({}));
+    }
     if plan {
+        return Ok(if activated {
+            activation(event, &store.package)
+        } else {
+            json!({})
+        });
+    }
+    if event != "UserPromptSubmit" && !pending.active(&key)? {
         return Ok(json!({}));
     }
     let staged = if event == "PostToolUse" {
@@ -142,7 +156,11 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         return Ok(json!({}));
     }
     let Some(b) = store.resolve(cwd)? else {
-        return Ok(json!({}));
+        return Ok(if activated {
+            activation(event, &store.package)
+        } else {
+            json!({})
+        });
     };
     let scope = scope_id(&b, cwd);
     if event == "UserPromptSubmit" {
@@ -171,6 +189,15 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             ids.join(", ")
         };
         let mut output = extra(event,format!("Память fstack, проект {}, режим {}. ID поиска: {found}. Загрузи навык use-memory для правил записи. Перед завершением обычного хода сам оцени, есть ли обоснованное долговечное решение, поправка или устойчивое предпочтение. Опирайся на текущую работу, слова пользователя или проверяемый результат. В режиме auto подготовь такое знание через remember. Разрешение уже даёт режим auto. Сомнительное, но полезное знание можно направить в draft. В режиме inbox подготовленные знания поступают на ручную проверку. Для approve и forget нужно явное поручение пользователя. Если подходящей новой записи нет, подготовь {{\"action\":\"skip\"}} без текста и причин. Не создавай запись ради отчёта. В обычном режиме результат оценки передай структурированный JSON в {prefix} pack через stdin. Затем выполни отдельный точный вызов в оболочке из текущего cwd, подставив ASCII-строку из JSON-ответа pack без кавычек вместо BASE64URL: {prefix} stage --turn {token} --payload BASE64URL. Подготовь одну операцию за ход. Ответ staged подтверждает проверку команды; другую операцию хук отклонит. В режиме Plan пропусти stage. Не включай токен в ответ.",b.project,b.mode));
+        let context = output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        output["hookSpecificOutput"]["additionalContext"] = json!(format!(
+            "{} {context}",
+            activation(event, &store.package)["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+        ));
         if search_failed {
             output["systemMessage"] = json!("Не удалось подобрать контекст памяти fstack. Основная задача может продолжаться; проверь память отдельной командой search.");
         }

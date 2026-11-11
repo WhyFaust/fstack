@@ -236,6 +236,22 @@ impl Pending {
         conn.execute_batch("COMMIT").map_err(io::err)?;
         Ok(format!("{key}.{nonce}"))
     }
+    pub fn active(&self, key: &str) -> Result<bool> {
+        let Some(conn) = self.connection(false, true)? else {
+            return Ok(false);
+        };
+        let nonce: Option<String> = conn
+            .query_row(
+                "SELECT nonce FROM pending WHERE turn=? AND expires>=?",
+                params![key, now()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(io::err)?;
+        nonce
+            .map(|nonce| self.current(key, &nonce))
+            .unwrap_or(Ok(false))
+    }
     pub fn is_current(&self, token: &str, scope: &str) -> Result<bool> {
         let Some((key, nonce)) = token_parts(token) else {
             return Ok(false);

@@ -1,0 +1,6 @@
+interface:
+  display_name: Faust mode
+  short_description: Явное включение полного процесса fstack
+  default_prompt: "$fstack:faust-mode выполни указанную задачу с проверкой результата."
+policy:
+  allow_implicit_invocation: false

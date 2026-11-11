@@ -4,7 +4,7 @@ description: 'Finds sources and timely angles and verifies facts and dates for p
 license: MIT
 metadata:
   short-description: Source research and fact-checking for prose
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

@@ -3,3 +3,5 @@ interface:
   short_description: Причина сбоя и проверка исправления
   default_prompt: Используй $fstack:debug-failure, чтобы найти причину наблюдаемого сбоя и проверить ограниченное
     исправление.
+policy:
+  allow_implicit_invocation: false

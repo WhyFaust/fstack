@@ -737,6 +737,19 @@ pub(crate) fn check(root: &Path) -> Result<String> {
         )?;
         resources(&folder, root)?;
         skill_ui(root, &folder, name)?;
+        for path in entries(&folder.join("agents"))? {
+            if path
+                .file_name()
+                .is_some_and(|s| s.to_string_lossy().starts_with("openai"))
+                && extension_matches(&path, "yaml")
+            {
+                let ui: Value = serde_yaml::from_str(&read(&path)?).map_err(|e| e.to_string())?;
+                require(
+                    ui["policy"]["allow_implicit_invocation"] == false,
+                    format!("{name}: навыки fstack требуют явного включения"),
+                )?;
+            }
+        }
     }
     let interface = &manifest["interface"];
     let mut assets = vec![

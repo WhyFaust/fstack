@@ -2,3 +2,5 @@ interface:
   display_name: Владение состоянием и конкурентными записями
   short_description: Владение состоянием и конкурентными записями
   default_prompt: Используй $fstack:manage-state, чтобы определить гарантии записи, повтора и восстановления общего состояния.
+policy:
+  allow_implicit_invocation: false

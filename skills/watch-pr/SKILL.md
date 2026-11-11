@@ -4,7 +4,7 @@ description: 'Читает статус GitHub PR или GitLab MR по теку
 license: MIT
 metadata:
   short-description: Состояние и сопровождение PR или MR
-  version: 1.0.2
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

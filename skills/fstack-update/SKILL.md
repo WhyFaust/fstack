@@ -4,7 +4,7 @@ description: "По запросу обновляет marketplace и устано
 license: MIT
 metadata:
   short-description: Обновление плагина и согласование профиля
-  version: 2.1.0
+  version: 3.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

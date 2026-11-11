@@ -2,3 +2,5 @@ interface:
   display_name: "Выбор навыков"
   short_description: "Основной метод и применимые предметные навыки"
   default_prompt: "Используй $fstack:select-skills, чтобы выбрать основной метод и только нужные предметные навыки для поручения."
+policy:
+  allow_implicit_invocation: false

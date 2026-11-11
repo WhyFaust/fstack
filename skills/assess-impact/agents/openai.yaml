@@ -2,3 +2,5 @@ interface:
   display_name: Последствия изменения
   short_description: Последствия изменения и затронутые потребители
   default_prompt: Используй $fstack:assess-impact для указанной ревизии; проследи затронутые контракты и подтверди существенные риски.
+policy:
+  allow_implicit_invocation: false

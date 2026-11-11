@@ -4,7 +4,7 @@ description: 'Проверяет замечания ревью и ботов в 
 license: MIT
 metadata:
   short-description: Разбор и исправление замечаний ревью
-  version: 1.0.3
+  version: 2.0.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

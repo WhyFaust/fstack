@@ -85,7 +85,11 @@ impl Fixture {
         hooks::hook(&self.store, event, &v, &self.repo).unwrap()
     }
     fn token(&self, turn: &str) -> String {
-        let v = self.hook("UserPromptSubmit", turn, json!({"prompt":"heliotrope"}));
+        let v = self.hook(
+            "UserPromptSubmit",
+            turn,
+            json!({"prompt":"/faust-mode heliotrope"}),
+        );
         let text = v["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
@@ -98,6 +102,112 @@ impl Fixture {
 }
 fn candidate(body: &str) -> Value {
     json!({"kind":"decision","title":"Heliotrope convention","body":body})
+}
+#[test]
+fn ordinary_prompts_leave_memory_inactive_without_reading_vault() {
+    let f = Fixture::new("auto", "pilot");
+    fs::rename(&f.vault, f.base.join("unavailable-vault")).unwrap();
+    for prompt in [
+        "Исправь ошибку",
+        "Объясни /faust-mode",
+        "`/faust-mode`",
+        "> /faust-mode task",
+        "```\n/faust-mode task\n```",
+        "/faust-mode-off",
+        "$fstack:debug-failure task",
+    ] {
+        assert_eq!(
+            f.hook("UserPromptSubmit", "plain", json!({"prompt":prompt})),
+            json!({})
+        );
+    }
+    for event in ["SessionStart", "Stop", "PostToolUse"] {
+        assert_eq!(f.hook(event, "plain", json!({})), json!({}));
+    }
+    assert!(!f.store.state.join("pending.sqlite3").exists());
+}
+
+#[test]
+fn explicit_mode_is_scoped_to_one_request_and_session() {
+    let f = Fixture::new("auto", "pilot");
+    for prompt in [
+        "/faust-mode task",
+        " $fstack:faust-mode task",
+        "$faust-mode\ntask",
+    ] {
+        let output = f.hook("UserPromptSubmit", "active", json!({"prompt":prompt}));
+        assert!(output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("stage --turn"));
+    }
+    assert_eq!(
+        f.hook("Stop", "active", json!({"session_id":"another"})),
+        json!({})
+    );
+    assert_eq!(
+        f.hook("UserPromptSubmit", "next", json!({"prompt":"Продолжи"})),
+        json!({})
+    );
+    assert_eq!(f.hook("Stop", "next", json!({})), json!({}));
+    let token = f.token("steered");
+    post(
+        &f,
+        "steered",
+        stage_command(
+            &token,
+            &json!({"action":"remember","candidate":candidate("Must not survive opt out")}),
+        ),
+        json!({}),
+    );
+    assert_eq!(
+        f.hook(
+            "UserPromptSubmit",
+            "steered",
+            json!({"prompt":"Без навыков"})
+        ),
+        json!({})
+    );
+    assert_eq!(f.hook("Stop", "steered", json!({})), json!({}));
+    assert!(f
+        .store
+        .search(&f.binding, "survive", 5)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn explicit_mode_activates_without_binding_and_in_plan_without_memory() {
+    let f = Fixture::new("auto", "pilot");
+    let plan = f.hook(
+        "UserPromptSubmit",
+        "plan",
+        json!({"prompt":"/faust-mode plan", "permission_mode":"plan"}),
+    );
+    assert!(plan["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .is_some());
+    assert!(!f.store.state.join("pending.sqlite3").exists());
+    let store = Store::new(Some(f.base.join("unbound-state")), &f.store.package).unwrap();
+    let payload = json!({"hook_event_name":"UserPromptSubmit", "session_id":"new", "turn_id":"new", "cwd":f.repo,"prompt":"/faust-mode task"});
+    let output = hooks::hook(&store, "UserPromptSubmit", &payload, &f.repo).unwrap();
+    assert!(output["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("fstack:faust-mode"));
+    assert!(output["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains(
+            &store
+                .package
+                .join("skills/faust-mode/SKILL.md")
+                .display()
+                .to_string()
+        ));
+    assert!(!store.state.exists());
 }
 fn id(v: &Value) -> &str {
     v["id"].as_str().unwrap()
@@ -886,7 +996,11 @@ fn malformed_single_quote_metadata_fails_closed_without_panicking() {
     fs::write(&p, raw).unwrap();
     assert!(f.store.get(&f.binding, id(&v)).is_err());
     assert!(f.store.search(&f.binding, "heliotrope", 5).is_err());
-    let result = f.hook("UserPromptSubmit", "one", json!({"prompt":"heliotrope"}));
+    let result = f.hook(
+        "UserPromptSubmit",
+        "one",
+        json!({"prompt":"/faust-mode heliotrope"}),
+    );
     assert!(result["hookSpecificOutput"]["additionalContext"].is_string());
 }
 #[cfg(windows)]
@@ -931,7 +1045,11 @@ fn windows_path_prefix_case_and_separators_preserve_scope() {
 fn prompt_only_exposes_ids_and_disabled_project_never_issues_token() {
     let f = Fixture::new("auto", "pilot");
     let v = f.save("Private sentinel heliotrope body", true);
-    let result = f.hook("UserPromptSubmit", "one", json!({"prompt":"heliotrope"}));
+    let result = f.hook(
+        "UserPromptSubmit",
+        "one",
+        json!({"prompt":"/faust-mode heliotrope"}),
+    );
     let text = result["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
@@ -959,7 +1077,7 @@ fn prompt_search_failure_warns_without_exposing_notes_or_blocking_the_turn() {
     let result = f.hook(
         "UserPromptSubmit",
         "damaged",
-        json!({"prompt":"heliotrope"}),
+        json!({"prompt":"/faust-mode heliotrope"}),
     );
     assert!(result["systemMessage"]
         .as_str()

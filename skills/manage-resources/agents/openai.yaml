@@ -2,3 +2,5 @@ interface:
   display_name: Жизненный цикл и очистка собственных ресурсов
   short_description: Жизненный цикл и очистка собственных ресурсов
   default_prompt: Используй $fstack:manage-resources, чтобы установить владельцев ресурсов и проверить их очистку при частичной подготовке или сбое.
+policy:
+  allow_implicit_invocation: false

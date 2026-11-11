@@ -2,3 +2,5 @@ interface:
   display_name: Миграция контрактов и всех потребителей
   short_description: Миграция контрактов и всех потребителей
   default_prompt: Используй $fstack:migrate-contract, чтобы определить порядок перехода потребителей, проверить совместимость и условия удаления старого пути.
+policy:
+  allow_implicit_invocation: false

@@ -2,3 +2,5 @@ interface:
   display_name: Проверка проекта через реальный сценарий
   short_description: Проверка проекта через реальный сценарий
   default_prompt: "Используй $fstack:verify-project, чтобы проверить указанную версию через затронутый пользовательский сценарий и вернуть первичные доказательства."
+policy:
+  allow_implicit_invocation: false
