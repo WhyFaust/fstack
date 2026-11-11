@@ -4,7 +4,7 @@ description: "Настраивает профиль установленного
 license: MIT
 compatibility: Codex с поддержкой плагинов и подагентов; нативный бинарник fstack для платформы.
 metadata:
-  version: 2.0.0
+  version: 2.0.1
   short-description: Установка профиля и выбор настроек в беседе
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
@@ -44,8 +44,9 @@ coder и allure_analyst `medium`, reviewer `high`. Пример настройк
 ### Выполнить dry-run, apply, dry-run
 
 Убедись, что полный релиз содержит `bin/fstack` или `bin/fstack.exe`.
-Если бинарника нет, объясни, что установлен исходный Git-пакет: для обычной
-работы нужен проверенный платформенный архив по [установке](../../docs/installation.md).
+Если бинарника нет, проверь источник. Для пакета из ветки исходников предложи
+[переход на платформенную Git-ветку](../../docs/installation.md#переход-с-ветки-исходников).
+Для другого источника проверь поставку бинарника по [установке](../../docs/installation.md).
 Не скачивай и не собирай исполняемый код скрыто, не используй SessionStart
 для настройки. В Windows замени `bin/fstack` ниже на `bin/fstack.exe`.
 

@@ -5,8 +5,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs,
+    io::{Seek, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 type Result<T> = std::result::Result<T, String>;
 const MANIFEST: &str = ".codex-plugin/plugin.json";
@@ -122,19 +123,23 @@ fn check_versions(root: &Path) -> Result<String> {
     Ok(current.into())
 }
 trait Runner {
-    fn run(&self, root: &Path, args: &[&str]) -> Result<Vec<u8>>;
+    fn run(&self, root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>>;
     fn check(&self, root: &Path) -> Result<()> {
         crate::check(root).map(|_| ())
     }
 }
 struct System;
 impl Runner for System {
-    fn run(&self, root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-        let output = Command::new(args[0])
-            .args(&args[1..])
-            .current_dir(root)
-            .output()
-            .map_err(|e| e.to_string())?;
+    fn run(&self, root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
+        let mut command = Command::new(args[0]);
+        command.args(&args[1..]).current_dir(root);
+        if let Some(input) = input {
+            let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
+            file.write_all(input).map_err(|e| e.to_string())?;
+            file.rewind().map_err(|e| e.to_string())?;
+            command.stdin(Stdio::from(file));
+        }
+        let output = command.output().map_err(|e| e.to_string())?;
         if !output.status.success() {
             return Err(format!(
                 "{}: {}",
@@ -150,14 +155,40 @@ struct Release<'a> {
     runner: &'a dyn Runner,
     artifacts: Option<&'a Path>,
 }
+struct Marketplace {
+    source: String,
+    tips: BTreeMap<&'static str, String>,
+}
 impl Release<'_> {
     fn bytes(&self, args: &[&str]) -> Result<Vec<u8>> {
-        self.runner.run(self.root, args)
+        self.runner.run(self.root, args, None)
     }
     fn cmd(&self, args: &[&str]) -> Result<String> {
-        String::from_utf8(self.bytes(args)?)
+        self.command(args, None)
+    }
+    fn command(&self, args: &[&str], input: Option<&[u8]>) -> Result<String> {
+        String::from_utf8(self.runner.run(self.root, args, input)?)
             .map(|v| v.trim().to_owned())
             .map_err(|e| e.to_string())
+    }
+    fn live_main(&self) -> Result<String> {
+        self.cmd(&[
+            "git",
+            "ls-remote",
+            "--exit-code",
+            "origin",
+            "refs/heads/main",
+        ])?
+        .split_whitespace()
+        .next()
+        .map(str::to_owned)
+        .ok_or_else(|| "Не найдена удалённая main".into())
+    }
+    fn check_live_main(&self, sha: &str) -> Result<()> {
+        if self.live_main()? != sha {
+            return Err("main изменился перед публикацией marketplace".into());
+        }
+        Ok(())
     }
     fn records(&self, repo: &str) -> Result<Vec<Value>> {
         let pages: Vec<Vec<Value>> = serde_json::from_str(&self.cmd(&[
@@ -412,11 +443,7 @@ impl Release<'_> {
                     return Err("Коммит релиза изменяет не только версию манифеста".into());
                 }
             }
-            let binary = if target.contains("windows") {
-                "fstack.exe"
-            } else {
-                "fstack"
-            };
+            let binary = binary_name(target);
             if data["binary"] != binary {
                 return Err("Некорректное имя бинарного артефакта".into());
             }
@@ -441,9 +468,12 @@ impl Release<'_> {
         }
         Ok(found.into_iter().collect())
     }
-    fn archive(&self, number: &str, sha: &str) -> Result<Vec<PathBuf>> {
-        use std::io::Write;
-        let artifacts = self.artifacts(sha)?;
+    fn archive(
+        &self,
+        number: &str,
+        sha: &str,
+        artifacts: &[(String, Vec<u8>)],
+    ) -> Result<Vec<PathBuf>> {
         let data = manifest(self.root)?;
         let name = data["name"].as_str().ok_or("Нет имени пакета")?;
         if !rx(r"\A[a-zA-Z0-9_-]+\z").is_match(name) {
@@ -472,20 +502,15 @@ impl Release<'_> {
                 .open(&output)
                 .map_err(|e| e.to_string())?;
             let mut archive = zip::ZipWriter::new_append(file).map_err(|e| e.to_string())?;
-            let binary = if target.contains("windows") {
-                "fstack.exe"
-            } else {
-                "fstack"
-            };
             archive
                 .start_file(
-                    format!("{name}/bin/{binary}"),
+                    format!("{name}/bin/{}", binary_name(target)),
                     zip::write::SimpleFileOptions::default()
                         .compression_method(zip::CompressionMethod::Deflated)
                         .unix_permissions(0o755),
                 )
                 .map_err(|e| e.to_string())?;
-            archive.write_all(&bytes).map_err(|e| e.to_string())?;
+            archive.write_all(bytes).map_err(|e| e.to_string())?;
             archive.finish().map_err(|e| e.to_string())?;
             let checksum = output.with_extension("zip.sha256");
             let hash = format!(
@@ -503,6 +528,157 @@ impl Release<'_> {
             outputs.extend([output, checksum]);
         }
         Ok(outputs)
+    }
+    fn marketplace_tree(&self, source_tree: &[u8], target: &str, binary: &[u8]) -> Result<String> {
+        let blob = self.command(&["git", "hash-object", "-w", "--stdin"], Some(binary))?;
+        let entry = format!("100755 blob {blob}\t{}\0", binary_name(target));
+        let bin = self.command(&["git", "mktree", "-z"], Some(entry.as_bytes()))?;
+        let mut root = source_tree.to_vec();
+        root.extend(format!("040000 tree {bin}\tbin\0").as_bytes());
+        self.command(&["git", "mktree", "-z"], Some(&root))
+    }
+    fn marketplace_heads(&self, sha: &str) -> Result<Option<Marketplace>> {
+        let main = "refs/heads/main";
+        let mut query = vec!["git", "ls-remote", "--refs", "origin", main];
+        let branches = TARGETS.map(marketplace_branch);
+        query.extend(branches.iter().map(String::as_str));
+        let remote = self.cmd(&query)?;
+        let mut refs: BTreeMap<_, _> = remote
+            .lines()
+            .map(|line| {
+                let (oid, name) = line.split_once('\t').ok_or("Некорректный ref Git")?;
+                Ok((name, oid))
+            })
+            .collect::<Result<_>>()?;
+        if refs.remove(main) != Some(sha) {
+            return Err("main изменился перед публикацией marketplace".into());
+        }
+        if refs.is_empty() {
+            return Ok(None);
+        }
+        if branches
+            .iter()
+            .any(|branch| !refs.contains_key(branch.as_str()))
+        {
+            return Err("Неполный набор веток marketplace".into());
+        }
+        let mut fetch = vec!["git", "fetch", "--no-tags", "origin"];
+        fetch.extend(refs.values().copied());
+        self.cmd(&fetch)?;
+        let marker = rx(r"\Arelease-source: ([a-f0-9]{40})\z");
+        let mut source = None;
+        let mut tips = BTreeMap::new();
+        for (target, branch) in TARGETS.into_iter().zip(branches) {
+            let tip = refs[branch.as_str()];
+            let body = self.cmd(&["git", "log", "-1", "--format=%b", tip])?;
+            let captured = marker
+                .captures(&body)
+                .ok_or_else(|| format!("Ветка {branch} не содержит ревизию выпуска"))?;
+            if source
+                .as_deref()
+                .is_some_and(|previous| previous != &captured[1])
+            {
+                return Err("Ветки marketplace относятся к разным релизам".into());
+            }
+            source = Some(captured[1].to_owned());
+            tips.insert(target, tip.to_owned());
+        }
+        Ok(Some(Marketplace {
+            source: source.ok_or("Нет ревизии marketplace")?,
+            tips,
+        }))
+    }
+    fn marketplace_source_tree(&self, sha: &str) -> Result<Vec<u8>> {
+        let source_tree = self.bytes(&["git", "ls-tree", "-z", sha])?;
+        if source_tree
+            .split(|byte| *byte == 0)
+            .any(|entry| entry.ends_with(b"\tbin"))
+        {
+            return Err("Дерево релиза уже содержит bin".into());
+        }
+        Ok(source_tree)
+    }
+    fn marketplace_artifacts(&self, heads: &Marketplace) -> Result<Vec<(String, Vec<u8>)>> {
+        let source_tree = self.marketplace_source_tree(&heads.source)?;
+        heads
+            .tips
+            .iter()
+            .map(|(&target, tip)| {
+                let path = format!("{tip}:bin/{}", binary_name(target));
+                let binary = self.bytes(&["git", "cat-file", "blob", &path])?;
+                if binary.is_empty()
+                    || self.cmd(&["git", "rev-parse", &format!("{tip}^{{tree}}")])?
+                        != self.marketplace_tree(&source_tree, target, &binary)?
+                {
+                    return Err(format!(
+                        "Снимок {} не совпадает с исходным деревом релиза",
+                        marketplace_branch(target)
+                    ));
+                }
+                Ok((target.to_owned(), binary))
+            })
+            .collect()
+    }
+    fn publish_marketplace(
+        &self,
+        number: &str,
+        sha: &str,
+        artifacts: &[(String, Vec<u8>)],
+        heads: Option<&Marketplace>,
+    ) -> Result<()> {
+        let mut push = vec![
+            "git",
+            "-c",
+            "push.followTags=false",
+            "push",
+            "--atomic",
+            "origin",
+        ];
+        let mut refspecs = Vec::new();
+        if let Some(heads) = heads {
+            self.cmd(&["git", "merge-base", "--is-ancestor", &heads.source, sha])?;
+            let previous: Value = serde_json::from_slice(&self.bytes(&[
+                "git",
+                "show",
+                &format!("{}:{MANIFEST}", heads.source),
+            ])?)
+            .map_err(|e| e.to_string())?;
+            if version(
+                previous["version"]
+                    .as_str()
+                    .ok_or("Нет версии marketplace")?,
+            )? >= version(number)?
+            {
+                return Err("Ветки marketplace уже содержат этот или более новый выпуск".into());
+            }
+        }
+        let source_tree = self.marketplace_source_tree(sha)?;
+        for (target, binary) in artifacts {
+            let tree = self.marketplace_tree(&source_tree, target, binary)?;
+            let message =
+                format!("chore(marketplace): v{number} {target}\n\nrelease-source: {sha}");
+            let mut commit = vec![
+                "git",
+                "-c",
+                "user.name=github-actions[bot]",
+                "-c",
+                "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+                "commit-tree",
+                "--no-gpg-sign",
+                &tree,
+                "-m",
+                &message,
+            ];
+            if let Some(heads) = heads {
+                commit.extend(["-p", &heads.tips[target.as_str()]]);
+            }
+            let snapshot = self.cmd(&commit)?;
+            refspecs.push(format!("{snapshot}:{}", marketplace_branch(target)));
+        }
+        push.extend(refspecs.iter().map(String::as_str));
+        self.check_live_main(sha)?;
+        self.cmd(&push)?;
+        Ok(())
     }
     fn finish(
         &self,
@@ -533,7 +709,14 @@ impl Release<'_> {
                 return Err(format!("Черновик {tag} не принадлежит этому выпуску"));
             }
         }
-        let outputs = self.archive(number, sha)?;
+        let validated = self.artifacts(sha)?;
+        let heads = self.marketplace_heads(sha)?;
+        let published = heads.as_ref().filter(|heads| heads.source == sha);
+        let artifacts = match published {
+            Some(heads) => self.marketplace_artifacts(heads)?,
+            None => validated,
+        };
+        let outputs = self.archive(number, sha, &artifacts)?;
         if existing.is_none() {
             let entries = self.cmd(&[
                 "git",
@@ -568,6 +751,10 @@ impl Release<'_> {
         upload.extend(output_names.iter().map(String::as_str));
         upload.extend(["--repo", repo, "--clobber"]);
         self.cmd(&upload)?;
+        if published.is_none() {
+            self.publish_marketplace(number, sha, &artifacts, heads.as_ref())?;
+        }
+        self.check_live_main(sha)?;
         self.cmd(&[
             "gh",
             "release",
@@ -655,20 +842,10 @@ impl Release<'_> {
         if !self.cmd(&["git", "status", "--porcelain"])?.is_empty() {
             return Err("Рабочее дерево содержит изменения".into());
         }
-        let remote = self.cmd(&[
-            "git",
-            "ls-remote",
-            "--exit-code",
-            "origin",
-            "refs/heads/main",
-        ])?;
-        let live = remote
-            .split_whitespace()
-            .next()
-            .ok_or("Не найдена удалённая main")?;
+        let live = self.live_main()?;
         self.artifacts(expected)?;
         if live != expected {
-            self.recover(repo, expected, live)?;
+            self.recover(repo, expected, &live)?;
         }
         let head = self.cmd(&["git", "rev-parse", "HEAD"])?;
         for record in self.records(repo)? {
@@ -737,6 +914,16 @@ const TARGETS: [&str; 4] = [
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
 ];
+fn marketplace_branch(target: &str) -> String {
+    format!("refs/heads/marketplace/{target}")
+}
+fn binary_name(target: &str) -> &str {
+    if target.contains("windows") {
+        "fstack.exe"
+    } else {
+        "fstack"
+    }
+}
 fn option<'a>(args: &'a [OsString], name: &str) -> Result<&'a std::ffi::OsStr> {
     let index = args
         .iter()
@@ -778,11 +965,7 @@ fn artifact(args: &[OsString], package: &Path) -> Result<()> {
     if bytes.is_empty() {
         return Err("Пустой бинарный артефакт".into());
     }
-    let name = if target.contains("windows") {
-        "fstack.exe"
-    } else {
-        "fstack"
-    };
+    let name = binary_name(target);
     fs::create_dir_all(&output).map_err(|e| e.to_string())?;
     fs::write(output.join(name), &bytes).map_err(|e| e.to_string())?;
     let data = json!({"target":target,"source_sha":sha,"sha256":format!("{:x}",Sha256::digest(bytes)),"binary":name});
@@ -848,19 +1031,20 @@ pub fn run(args: &[OsString], package: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     struct Stub {
         records: RefCell<Vec<Value>>,
         calls: RefCell<Vec<Vec<String>>>,
         publish_tag: bool,
+        fail_release_action: Cell<Option<&'static str>>,
     }
     impl Runner for Stub {
         fn check(&self, root: &Path) -> Result<()> {
             check_versions(root).map(|_| ())
         }
-        fn run(&self, root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+        fn run(&self, root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
             if args[0] != "gh" {
-                return System.run(root, args);
+                return System.run(root, args, input);
             }
             if args[1] == "api" {
                 return serde_json::to_vec(&vec![self.records.borrow().clone()])
@@ -869,9 +1053,12 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push(args.iter().map(|s| s.to_string()).collect());
+            if args[1] == "release" && self.fail_release_action.get() == Some(args[2]) {
+                return Err(format!("Сбой gh release {}", args[2]));
+            }
             if self.publish_tag && args[1..3] == ["release", "edit"] {
-                System.run(root, &["git", "tag", args[3]])?;
-                System.run(root, &["git", "push", "origin", args[3]])?;
+                System.run(root, &["git", "tag", args[3]], None)?;
+                System.run(root, &["git", "push", "origin", args[3]], None)?;
                 for record in self.records.borrow_mut().iter_mut() {
                     if record["tag_name"] == args[3] {
                         record["draft"] = json!(false);
@@ -888,12 +1075,13 @@ mod tests {
             ]),
             calls: RefCell::new(vec![]),
             publish_tag: false,
+            fail_release_action: Cell::new(None),
         }
     }
     fn git(root: &Path, args: &[&str]) -> String {
         let mut command = vec!["git", "-c", "commit.gpgsign=false"];
         command.extend(args);
-        String::from_utf8(System.run(root, &command).unwrap())
+        String::from_utf8(System.run(root, &command, None).unwrap())
             .unwrap()
             .trim()
             .into()
@@ -947,6 +1135,12 @@ mod tests {
             ],
         );
         git(root, &["remote", "add", "origin", &bare.to_string_lossy()]);
+    }
+    fn remote_marketplace(root: &Path) -> String {
+        git(
+            root,
+            &["ls-remote", "--heads", "origin", "refs/heads/marketplace/*"],
+        )
     }
     fn artifacts(root: &Path, sha: &str) -> PathBuf {
         let directory = root.parent().unwrap().join("artifacts");
@@ -1102,6 +1296,7 @@ mod tests {
         );
         commit(&root, "chore(release): v0.2.1");
         let sha = git(&root, &["rev-parse", "HEAD"]);
+        origin(&root);
         let mut record = json!({"tag_name":"v0.2.1","draft":true,"body":format!("<!-- release-source:{sha} -->"),"author":{"login":"human"}});
         assert!(release
             .finish("fixture/fstack", "0.2.1", &[record.clone()], &sha, &sha)
@@ -1185,6 +1380,29 @@ mod tests {
                 assert!(stub.calls.borrow().is_empty());
                 assert!(!root.join("dist").exists());
             } else {
+                stub.fail_release_action.set(Some("edit"));
+                assert!(release.publish("fixture/fstack", &event(&source)).is_err());
+                let published = remote_marketplace(&root);
+                assert_eq!(published.lines().count(), TARGETS.len());
+                let archive = root.join("dist/fstack-0.2.1-x86_64-unknown-linux-gnu.zip");
+                let checksum = fs::read(archive.with_extension("zip.sha256")).unwrap();
+                stub.calls.borrow_mut().clear();
+                stub.fail_release_action.set(None);
+                git(&root, &["checkout", "--detach", &source]);
+                let binary = root.parent().unwrap().join("rebuilt-binary");
+                fs::write(&binary, b"Different rebuild bytes from the same source").unwrap();
+                artifact(
+                    &[
+                        "--target".into(),
+                        TARGETS[0].into(),
+                        "--binary".into(),
+                        binary.into_os_string(),
+                        "--output".into(),
+                        artifacts.as_os_str().to_owned(),
+                    ],
+                    &root,
+                )
+                .unwrap();
                 release.publish("fixture/fstack", &event(&source)).unwrap();
                 assert_eq!(git(&root, &["rev-parse", "HEAD"]), candidate);
                 assert_eq!(
@@ -1195,10 +1413,16 @@ mod tests {
                         .collect::<Vec<_>>(),
                     ["upload", "edit"]
                 );
+                assert_eq!(remote_marketplace(&root), published);
+                assert_eq!(
+                    fs::read(archive.with_extension("zip.sha256")).unwrap(),
+                    checksum
+                );
                 stub.calls.borrow_mut().clear();
                 git(&root, &["checkout", "--detach", &source]);
                 release.publish("fixture/fstack", &event(&source)).unwrap();
                 assert!(stub.calls.borrow().is_empty());
+                assert_eq!(remote_marketplace(&root), published);
             }
         }
     }
@@ -1232,6 +1456,12 @@ mod tests {
         assert_eq!(git(&root, &["rev-parse", "HEAD"]), sha);
         assert!(!root.join("dist").exists());
         fs::write(first, bytes).unwrap();
+        stub.fail_release_action.set(Some("create"));
+        assert!(release.publish("fixture/fstack", &event(&sha)).is_err());
+        assert!(remote_marketplace(&root).is_empty());
+        stub.calls.borrow_mut().clear();
+        stub.fail_release_action.set(None);
+        git(&root, &["checkout", "--detach", &sha]);
         release.publish("fixture/fstack", &event(&sha)).unwrap();
         assert_eq!(
             stub.calls
@@ -1244,6 +1474,15 @@ mod tests {
         assert_eq!(git(&root, &["diff", "--name-only", &sha, "HEAD"]), MANIFEST);
         assert_eq!(check_versions(&root).unwrap(), "0.3.0");
         for target in TARGETS {
+            let branch = format!("refs/heads/marketplace/{target}");
+            git(&root, &["fetch", "--no-tags", "origin", &branch]);
+            let binary = format!("bin/{}", binary_name(target));
+            assert_eq!(
+                git(&root, &["diff", "--name-only", "HEAD", "FETCH_HEAD"]),
+                binary
+            );
+            assert!(git(&root, &["ls-tree", "-r", "FETCH_HEAD", "--", &binary])
+                .starts_with("100755 blob "));
             let path = root.join(format!("dist/fstack-0.3.0-{target}.zip"));
             let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
             let mut bytes = Vec::new();
@@ -1261,6 +1500,18 @@ mod tests {
                 .unwrap();
             let data: Value = serde_json::from_str(&text).unwrap();
             assert_eq!(data["version"], "0.3.0");
+            let mut binary_bytes = Vec::new();
+            archive
+                .by_name(&format!("fstack/{binary}"))
+                .unwrap()
+                .read_to_end(&mut binary_bytes)
+                .unwrap();
+            assert_eq!(
+                release
+                    .bytes(&["git", "show", &format!("FETCH_HEAD:{binary}")])
+                    .unwrap(),
+                binary_bytes
+            );
         }
         let head = git(&root, &["rev-parse", "HEAD"]);
         save(&root, "unrelated.md", "New behavior");
@@ -1280,6 +1531,54 @@ mod tests {
         assert_eq!(stub.calls.borrow().len(), count);
         fs::remove_dir_all(other.join(TARGETS[0])).unwrap();
         assert!(old.artifacts(&later).unwrap_err().contains("полный набор"));
+    }
+    #[test]
+    fn marketplace_rolls_forward_atomically_and_preserves_the_checkout() {
+        let (_temp, root) = fixture();
+        let first = git(&root, &["rev-parse", "HEAD"]);
+        origin(&root);
+        let artifacts: Vec<_> = TARGETS
+            .into_iter()
+            .map(|target| (target.to_owned(), target.as_bytes().to_vec()))
+            .collect();
+        let release = Release {
+            root: &root,
+            runner: &System,
+            artifacts: None,
+        };
+        release
+            .publish_marketplace("0.2.0", &first, &artifacts, None)
+            .unwrap();
+        let before = remote_marketplace(&root);
+        assert_eq!(before.lines().count(), TARGETS.len());
+        let contents = release.version_contents("0.2.1").unwrap().unwrap();
+        save(&root, MANIFEST, contents);
+        commit(&root, "chore(release): v0.2.1");
+        let second = git(&root, &["rev-parse", "HEAD"]);
+        let bare = root.parent().unwrap().join("origin.git");
+        assert!(release.marketplace_heads(&second).is_err());
+        git(&root, &["push", "origin", "HEAD:main"]);
+        let heads = release.marketplace_heads(&second).unwrap().unwrap();
+        git(&bare, &["config", "receive.advertiseAtomic", "false"]);
+        assert!(release
+            .publish_marketplace("0.2.1", &second, &artifacts, Some(&heads))
+            .is_err());
+        assert_eq!(remote_marketplace(&root), before);
+        git(&bare, &["config", "receive.advertiseAtomic", "true"]);
+        release
+            .publish_marketplace("0.2.1", &second, &artifacts, Some(&heads))
+            .unwrap();
+        assert_eq!(git(&bare, &["rev-parse", "main"]), second);
+        assert!(git(&root, &["status", "--porcelain"]).is_empty());
+        for line in before.lines() {
+            let (oid, name) = line.split_once('\t').unwrap();
+            assert_eq!(git(&bare, &["rev-parse", &format!("{name}^")]), oid);
+        }
+        let after = remote_marketplace(&root);
+        let heads = release.marketplace_heads(&second).unwrap().unwrap();
+        assert_eq!(heads.source, second);
+        assert!(release.marketplace_heads(&first).is_err());
+        assert_eq!(remote_marketplace(&root), after);
     }
     #[test]
     fn stale_owned_drafts_reserve_versions_without_blocking_current_release() {
