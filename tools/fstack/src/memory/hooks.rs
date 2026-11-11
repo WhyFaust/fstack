@@ -220,7 +220,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         }
         let token = pending.issue(&key, &scope, generation)?;
         let found = if search_failed {
-            "поиск недоступен; проверь отдельный search, не считай это пустой выдачей".into()
+            "поиск недоступен".into()
         } else if ids.is_empty() {
             "—".into()
         } else {
@@ -237,7 +237,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 .unwrap()
         ));
         if search_failed {
-            output["systemMessage"] = json!("Не удалось подобрать контекст памяти fstack. Основная задача может продолжаться; проверь память отдельной командой search.");
+            output["systemMessage"] = json!("Не удалось подобрать контекст памяти fstack. Продолжай основную задачу. Выполни отдельный search, если для ответа не хватает контекста из памяти.");
         }
         return Ok(output);
     }
