@@ -1,19 +1,21 @@
 use super::{
     action, decode, format, io,
-    pending::{self, Pending},
-    store::{Binding, Store},
+    pending::{self, Delivery, Pending, Stop},
+    scope as project_scope,
+    store::{Binding, Store, WriteOutcome},
     Result,
 };
 use serde_json::{json, Value};
 use std::path::Path;
 
 pub fn scope_id(b: &Binding, cwd: &Path) -> String {
-    pending::digest(&[
-        &io::normalized(cwd),
-        &io::normalized(&b.root),
-        &b.project,
-        &b.mode,
-    ])
+    let cwd = io::normalized(cwd);
+    let root = io::normalized(&b.root);
+    let mut parts = vec![cwd.as_str(), root.as_str(), &b.project, &b.mode];
+    if let Some(generation) = &b.generation {
+        parts.push(generation);
+    }
+    pending::digest(&parts)
 }
 fn prefix() -> Result<String> {
     let p = std::env::current_exe()
@@ -51,20 +53,36 @@ fn mode_command(prompt: &str) -> Option<bool> {
         _ => None,
     }
 }
-fn chat_mode(store: &Store, cwd: &Path, session: &str, command: Option<bool>) -> Result<bool> {
+fn mode_lock(store: &Store, session: &str) -> Result<std::fs::File> {
+    let key = pending::digest(&["memory-mode", &io::normalized(&store.state), session]);
+    io::lock_key(&format!("mode-{}", &key[..2]), None)
+}
+fn chat_mode(
+    store: &Store,
+    cwd: &Path,
+    session: &str,
+    command: Option<bool>,
+) -> Result<Option<String>> {
     let enable = command == Some(true);
     let dir = store.state.join("faust-mode-sessions");
     if !io::state(&store.state, cwd, enable)? || !io::directory(&dir, enable, true)? {
-        return Ok(false);
+        return Ok(None);
     }
     let marker = dir.join(pending::digest(&[session]));
     match command {
         Some(true) => {
-            io::write(&marker, "", false, None)?;
-            Ok(true)
+            if let Some(epoch) = io::read(&marker)? {
+                return Ok(Some(epoch));
+            }
+            let _mode_lock = mode_lock(store, session)?;
+            io::write(&marker, &io::nonce()?, false, None)?;
+            io::read(&marker)
         }
-        Some(false) => io::delete(&marker),
-        None => io::file(&marker),
+        Some(false) => {
+            let _mode_lock = mode_lock(store, session)?;
+            Ok(io::delete(&marker)?.then(String::new))
+        }
+        None => io::read(&marker),
     }
 }
 fn activation(event: &str, package: &Path) -> Value {
@@ -160,7 +178,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         None
     };
     let prompt_submit = event == "UserPromptSubmit";
-    if !prompt_submit && (plan || !pending.active(&key)?) {
+    if !prompt_submit && (plan || (event == "PostToolUse" && !pending.active(&key)?)) {
         return Ok(json!({}));
     }
     let command = if prompt_submit {
@@ -170,7 +188,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     };
     let enabled = chat_mode(store, cwd, session, command)?;
     if command == Some(false) {
-        return Ok(if enabled {
+        return Ok(if enabled.is_some() {
             extra(
                 event,
                 "Faust-mode выключен для этого чата. Выполняй запрос напрямую.".into(),
@@ -179,9 +197,9 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             json!({})
         });
     }
-    if !enabled {
+    let Some(epoch) = enabled else {
         return Ok(json!({}));
-    }
+    };
     if plan {
         return Ok(activation(event, &store.package));
     }
@@ -193,7 +211,12 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     if event == "PostToolUse" && staged.is_none() {
         return Ok(json!({}));
     }
-    let Some(b) = store.resolve(cwd)? else {
+    let binding = if event == "Stop" {
+        store.bound(cwd)?
+    } else {
+        store.resolve(cwd)?
+    };
+    let Some(b) = binding else {
         return Ok(if prompt_submit {
             activation(event, &store.package)
         } else {
@@ -218,7 +241,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 Err(_) => search_failed = true,
             }
         }
-        let token = pending.issue(&key, &scope, generation)?;
+        let token = pending.issue(&key, &scope, generation, &epoch, session, turn)?;
         let found = if search_failed {
             "поиск недоступен".into()
         } else if ids.is_empty() {
@@ -249,51 +272,92 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         }
         return Ok(json!({}));
     }
-    let Some(data) = pending.consume(
+    let outcome = pending.claim(
         &key,
         &scope,
-        !payload["stop_hook_active"].as_bool().unwrap_or(true),
-    )?
-    else {
-        return Ok(json!({}));
-    };
-    if let Some(review) = data["review_required"].as_bool() {
-        if !review || payload["stop_hook_active"] == true {
-            return Ok(
-                json!({"systemMessage":"Оценка памяти fstack не подтверждена; новая запись не создана."}),
-            );
+        session,
+        turn,
+        &epoch,
+        Delivery::Current {
+            review: payload["stop_hook_active"] == false,
+        },
+    )?;
+    let mut failed = false;
+    for (due_key, original_turn) in pending.due(&scope, session, &epoch, &key)? {
+        if due_key != key {
+            pending.claim(
+                &due_key,
+                &scope,
+                session,
+                &original_turn,
+                &epoch,
+                Delivery::Replay,
+            )?;
         }
+        let _turn_lock = pending.lock_turn(&due_key)?;
+        let Some(claim) = pending.operation(&due_key, &scope, session, &epoch)? else {
+            continue;
+        };
+        let result = (|| -> Result<&str> {
+            let _mode_lock = mode_lock(store, session)?;
+            if chat_mode(store, cwd, session, None)?.as_deref() != Some(&epoch) {
+                return Ok("cancelled");
+            }
+            let _binding_lock =
+                store.lock_binding(&project_scope::binding_path(&store.state, cwd)?)?;
+            let Some(binding) = store.bound(cwd)?.filter(|b| scope_id(b, cwd) == scope) else {
+                return Ok("cancelled");
+            };
+            apply(store, &binding, &claim.data, session, &claim.turn)
+        })();
+        if let Ok(phase) = result {
+            pending.finish(&scope, &claim, phase, true)?;
+        } else {
+            failed = true;
+            pending.finish(&scope, &claim, "failure", false)?;
+        }
+    }
+    if outcome == Some(Stop::Review) {
         return Ok(
             json!({"decision":"block","reason":"Перед завершением оцени долговечную память текущего проекта по fstack:use-memory. Без новой просьбы пользователя подготовь обоснованное решение, поправку или предпочтение через pack и stage: remember в auto, draft для кандидата или режима inbox. Если подходящего знания нет, передай {\"action\":\"skip\"} тем же способом. Не выдумывай записи, не читай историю чатов и не сохраняй секреты. Используй последний токен из UserPromptSubmit; в Plan пропусти запись. Если подготовка недоступна, сообщи об этом и заверши основную задачу."}),
         );
     }
-    let result = (|| -> Result<()> {
-        let request = action(&data)?;
-        match request["action"].as_str().unwrap() {
-            "skip" => {}
-            "approve" => {
-                store.approve(&b, request["id"].as_str().unwrap())?;
-            }
-            "forget" => {
-                store.forget(&b, request["id"].as_str().unwrap())?;
-            }
-            a => {
-                store.save(
-                    &b,
-                    &request["candidate"],
-                    a == "remember",
-                    Some(session),
-                    Some(turn),
-                )?;
-            }
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        Ok(
-            json!({"systemMessage":"Не удалось применить операцию памяти fstack. Повтори поручение в новом ходе."}),
-        )
-    } else {
-        Ok(json!({}))
+    if failed {
+        return Ok(
+            json!({"systemMessage":"Операция памяти fstack пока не применена. Очередь проверит следующий обычный Stop в этом чате. Техническое состояние доступно через memory diagnostics."}),
+        );
     }
+    if outcome == Some(Stop::Missing) {
+        return Ok(json!({"systemMessage":"Оценка памяти fstack для этого хода не подтверждена."}));
+    }
+    Ok(json!({}))
+}
+
+fn apply(
+    store: &Store,
+    binding: &Binding,
+    data: &Value,
+    session: &str,
+    turn: &str,
+) -> Result<&'static str> {
+    let request = action(data)?;
+    let outcome = match request["action"].as_str().unwrap() {
+        "skip" => return Ok("skipped"),
+        "approve" => store.approve_outcome(binding, request["id"].as_str().unwrap())?,
+        "forget" => {
+            store.forget(binding, request["id"].as_str().unwrap())?;
+            return Ok("applied");
+        }
+        a => store.save_outcome(
+            binding,
+            &request["candidate"],
+            a == "remember",
+            Some(session),
+            Some(turn),
+        )?,
+    };
+    Ok(match outcome {
+        WriteOutcome::Written(_) => "applied",
+        WriteOutcome::Forgotten => "discarded_forgotten",
+    })
 }

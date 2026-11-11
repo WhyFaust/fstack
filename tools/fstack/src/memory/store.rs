@@ -13,6 +13,19 @@ pub struct Binding {
     pub root: PathBuf,
     pub project: String,
     pub mode: String,
+    pub generation: Option<String>,
+}
+pub enum WriteOutcome {
+    Written(Value),
+    Forgotten,
+}
+impl WriteOutcome {
+    fn into_record(self) -> Result<Value> {
+        match self {
+            Self::Written(record) => Ok(record),
+            Self::Forgotten => Err("Memory entry is unavailable".into()),
+        }
+    }
 }
 pub struct Store {
     pub state: PathBuf,
@@ -156,6 +169,10 @@ fn find_approval(mut known: Option<Fields>, paths: &[PathBuf], id: &str) -> Resu
 fn forgotten(root: &Path, id: &str) -> Result<bool> {
     Ok(io::file(&legacy(root, "Forgotten", id))? || io::file(&tombstone(root, id))?)
 }
+fn verified_forgotten(root: &Path, id: &str) -> Result<bool> {
+    let (_, canonical, legacy) = read_tombstones(root, id)?;
+    Ok(canonical.is_some() || legacy.is_some())
+}
 fn write_tombstone(root: &Path, id: &str, raw: Option<&str>, v: &Value) -> Result<()> {
     if !io::write(&tombstone(root, id), &format!("{v}\n"), raw.is_some(), raw)? {
         return Err("Memory tombstone changed while forgetting an entry".into());
@@ -218,6 +235,50 @@ fn graph(
         ),
     ])
 }
+fn history_diff(previous: &Value, current: &Value) -> Value {
+    let mut changes = serde_json::Map::new();
+    for field in ["kind", "title", "source"] {
+        if previous[field] != current[field] {
+            changes.insert(
+                field.into(),
+                json!({"from":previous[field],"to":current[field]}),
+            );
+        }
+    }
+    if previous["body"] != current["body"] {
+        let before = previous["body"]
+            .as_str()
+            .unwrap_or("")
+            .split('\n')
+            .collect::<Vec<_>>();
+        let after = current["body"]
+            .as_str()
+            .unwrap_or("")
+            .split('\n')
+            .collect::<Vec<_>>();
+        let shared_start = before
+            .iter()
+            .zip(&after)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let shared_end = before[shared_start..]
+            .iter()
+            .rev()
+            .zip(after[shared_start..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        changes.insert(
+            "body".into(),
+            json!({
+                "start_line":shared_start+1,
+                "removed":before[shared_start..before.len()-shared_end],
+                "added":after[shared_start..after.len()-shared_end],
+            }),
+        );
+    }
+    json!({"from":previous["id"],"to":current["id"],"fields":changes})
+}
+
 impl Store {
     pub fn new(state: Option<PathBuf>, package: &Path) -> Result<Self> {
         let dir = match state {
@@ -266,17 +327,36 @@ impl Store {
             root,
             project,
             mode,
+            generation: v
+                .get("generation")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .filter(|s| fmt::matches(r"\A[0-9a-f]{32}\z", s))
+                        .map(str::to_owned)
+                        .ok_or("Invalid memory binding generation")
+                })
+                .transpose()?,
         }))
     }
+    pub fn bound(&self, cwd: &Path) -> Result<Option<Binding>> {
+        self.read_binding(&scope::binding_path(&self.state, cwd)?)
+    }
     pub fn resolve(&self, cwd: &Path) -> Result<Option<Binding>> {
-        let binding = self.read_binding(&scope::binding_path(&self.state, cwd)?)?;
+        let binding = self.bound(cwd)?;
         if let Some(b) = &binding {
             self.check_home(&b.root)?;
         }
         Ok(binding)
     }
+    pub fn lock_binding(&self, path: &Path) -> Result<fs::File> {
+        let key = io::hash(format!("memory-binding:{}", io::normalized(path)));
+        io::lock_key(&key[..2], None)
+    }
     pub fn disable(&self, cwd: &Path) -> Result<bool> {
-        io::delete(&scope::binding_path(&self.state, cwd)?)
+        let path = scope::binding_path(&self.state, cwd)?;
+        let _binding_lock = self.lock_binding(&path)?;
+        io::delete(&path)
     }
     pub fn root(&self, b: &Binding) -> Result<PathBuf> {
         self.check_home(&b.root)?;
@@ -291,6 +371,7 @@ impl Store {
     ) -> Result<Binding> {
         fmt::project(project)?;
         let settings = scope::binding_path(&self.state, repo)?;
+        let _binding_lock = self.lock_binding(&settings)?;
         let prior = self.read_binding(&settings)?;
         let mode = mode
             .or(prior.as_ref().map(|b| b.mode.as_str()))
@@ -321,10 +402,21 @@ impl Store {
             io::write(&path, &text, false, None)?;
             self.check_home(&root)?;
         }
+        let generation = match prior.as_ref() {
+            Some(previous)
+                if io::equal(&previous.root, &root)
+                    && previous.project == project
+                    && previous.mode == mode =>
+            {
+                previous.generation.clone()
+            }
+            _ => Some(io::nonce()?),
+        };
         let b = Binding {
             root,
             project: project.into(),
             mode: mode.into(),
+            generation,
         };
         let p = self.root(&b)?;
         io::directory(&p, true, false)?;
@@ -349,12 +441,11 @@ impl Store {
         }
         io::directory(&p.join("Records"), true, false)?;
         io::directory(settings.parent().unwrap(), true, true)?;
-        io::write(
-            &settings,
-            &json!({"root":b.root,"project":b.project,"mode":b.mode}).to_string(),
-            true,
-            None,
-        )?;
+        let mut settings_json = json!({"root":b.root,"project":b.project,"mode":b.mode});
+        if let Some(generation) = &b.generation {
+            settings_json["generation"] = json!(generation);
+        }
+        io::write(&settings, &settings_json.to_string(), true, None)?;
         Ok(b)
     }
     pub fn statuses(&self, root: &Path) -> Result<(BTreeMap<String, Fields>, BTreeSet<String>)> {
@@ -453,6 +544,77 @@ impl Store {
         }
         Err("Memory entry is unavailable".into())
     }
+    pub fn history(&self, b: &Binding, id: &str, limit: usize) -> Result<Value> {
+        fmt::id(id)?;
+        if !(1..=10).contains(&limit) {
+            return Err("Invalid memory history limit".into());
+        }
+        let root = self.root(b)?;
+        let _lock = io::lock(&root, b.root.parent().unwrap())?;
+        let (approvals, _) = self.statuses(&root)?;
+        let tombstones = tombstone_ids(&root)?;
+        if tombstones.contains(id) || !approvals.contains_key(id) {
+            return Err("Memory entry is unavailable".into());
+        }
+        let mut successors = BTreeMap::<&str, Vec<&str>>::new();
+        for (child, fields) in &approvals {
+            if !tombstones.contains(child) {
+                if let Some(parent) = fields.get("supersedes") {
+                    if !tombstones.contains(parent) {
+                        successors.entry(parent).or_default().push(child);
+                    }
+                }
+            }
+        }
+
+        let mut entries = Vec::new();
+        let mut positions = BTreeMap::new();
+        let mut seen = BTreeSet::from([id]);
+        let mut queue = std::collections::VecDeque::from([id]);
+        let mut truncated = false;
+        while let Some(current) = queue.pop_front() {
+            let Some(approval) = approvals.get(current) else {
+                continue;
+            };
+            let Some(mut value) = self.public_record(&root, current, Some(approval))? else {
+                continue;
+            };
+            if entries.len() == limit {
+                truncated = true;
+                break;
+            }
+            let predecessor = approval
+                .get("supersedes")
+                .map(String::as_str)
+                .filter(|parent| !tombstones.contains(*parent));
+            if predecessor.is_none() {
+                value.as_object_mut().unwrap().remove("supersedes");
+            }
+            positions.insert(current, entries.len());
+            entries.push(value);
+            for next in predecessor
+                .into_iter()
+                .chain(successors.get(current).into_iter().flatten().copied())
+            {
+                if seen.insert(next) {
+                    queue.push_back(next);
+                }
+            }
+        }
+        if entries.is_empty() {
+            return Err("Memory entry is unavailable".into());
+        }
+        let changes = entries
+            .iter()
+            .filter_map(|entry| {
+                let predecessor = entry["supersedes"].as_str()?;
+                let previous = &entries[*positions.get(predecessor)?];
+                Some(history_diff(previous, entry))
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"entries":entries,"changes":changes,"truncated":truncated}))
+    }
+
     pub fn inbox(&self, b: &Binding) -> Result<Value> {
         let root = self.root(b)?;
         let (a, h) = self.statuses(&root)?;
@@ -493,12 +655,26 @@ impl Store {
         session: Option<&str>,
         turn: Option<&str>,
     ) -> Result<Value> {
+        self.save_outcome(b, value, approved, session, turn)?
+            .into_record()
+    }
+    pub fn save_outcome(
+        &self,
+        b: &Binding,
+        value: &Value,
+        approved: bool,
+        session: Option<&str>,
+        turn: Option<&str>,
+    ) -> Result<WriteOutcome> {
         let fields = fmt::candidate(value)?;
         let root = self.root(b)?;
         let _lock = io::lock(&root, b.root.parent().unwrap())?;
+        let id = fmt::stable_id(&fields);
+        if verified_forgotten(&root, &id)? {
+            return Ok(WriteOutcome::Forgotten);
+        }
         let _ = views::ensure_library(&b.root, &self.package);
         let link = views::current_link(&root)?;
-        let id = fmt::stable_id(&fields);
         let mut provenance = Fields::new();
         for (k, v) in [("session_id", session), ("turn_id", turn)] {
             if let Some(v) = v {
@@ -534,13 +710,16 @@ impl Store {
                 false,
                 None,
             )? {
-                if forgotten(&root, &id)? {
+                if verified_forgotten(&root, &id)? {
                     self.forget_locked(&root, &id)?;
-                    return Err("Memory entry is unavailable".into());
+                    return Ok(WriteOutcome::Forgotten);
                 }
                 let approval = fmt::inline(&metadata);
                 metadata.insert("body".into(), fields["body"].clone());
-                return Ok(fmt::public(metadata, approval.as_ref()));
+                return Ok(WriteOutcome::Written(fmt::public(
+                    metadata,
+                    approval.as_ref(),
+                )));
             }
         }
         if approved {
@@ -550,27 +729,39 @@ impl Store {
         if h.contains(&id) {
             return Err("Memory entry is unavailable".into());
         }
-        self.public_record(&root, &id, a.get(&id))?
+        let entry = self.public_record(&root, &id, a.get(&id))?;
+        if verified_forgotten(&root, &id)? {
+            return Ok(WriteOutcome::Forgotten);
+        }
+        entry
+            .map(WriteOutcome::Written)
             .ok_or("Memory entry is unavailable".into())
     }
     pub fn approve(&self, b: &Binding, id: &str) -> Result<Value> {
+        self.approve_outcome(b, id)?.into_record()
+    }
+    pub fn approve_outcome(&self, b: &Binding, id: &str) -> Result<WriteOutcome> {
         fmt::id(id)?;
         let root = self.root(b)?;
         let _lock = io::lock(&root, b.root.parent().unwrap())?;
         let _ = views::ensure_library(&b.root, &self.package);
         self.approve_locked(&root, id)
     }
-    fn approve_locked(&self, root: &Path, id: &str) -> Result<Value> {
+    fn approve_locked(&self, root: &Path, id: &str) -> Result<WriteOutcome> {
+        if verified_forgotten(root, id)? {
+            return Ok(WriteOutcome::Forgotten);
+        }
         let link = views::current_link(root)?;
         let (a, h) = self.statuses(root)?;
         if h.contains(id) {
             return Err("Memory entry is unavailable".into());
         }
         let p = record(root, id);
-        let raw = io::read(&p)?.ok_or("Inbox entry is unavailable")?;
-        if forgotten(root, id)? {
-            return Err("Inbox entry is unavailable".into());
+        let raw = io::read(&p)?;
+        if verified_forgotten(root, id)? {
+            return Ok(WriteOutcome::Forgotten);
         }
+        let raw = raw.ok_or("Inbox entry is unavailable")?;
         let fields = fmt::parse(&raw, id, MEMORY, true)?;
         let approval = match a.get(id) {
             Some(a) => a.clone(),
@@ -583,10 +774,10 @@ impl Store {
         updates.insert("fstack_status".into(), Some("approved".into()));
         updates.insert("supersedes".into(), approval.get("supersedes").cloned());
         update(&p, &raw, &fields, &updates)?;
-        if forgotten(root, id)? {
-            return Err("Memory entry is unavailable".into());
+        if verified_forgotten(root, id)? {
+            return Ok(WriteOutcome::Forgotten);
         }
-        Ok(fmt::public(fields, Some(&approval)))
+        Ok(WriteOutcome::Written(fmt::public(fields, Some(&approval))))
     }
     pub fn forget(&self, b: &Binding, id: &str) -> Result<Value> {
         fmt::id(id)?;
@@ -657,6 +848,7 @@ impl Store {
                 Err(e) => return Err(io::err(e)),
             }
         }
+        io::sync_parent(&record(root, id))?;
         Ok(json!({"id":id,"status":"forgotten"}))
     }
     pub fn search(&self, b: &Binding, query: &str, limit: usize) -> Result<Value> {

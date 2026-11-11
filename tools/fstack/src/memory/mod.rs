@@ -222,6 +222,13 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
     if command == "disable" && rest.is_empty() {
         return Ok(json!({"disabled":store.disable(cwd)?}));
     }
+    if command == "diagnostics" && rest.is_empty() {
+        let binding = store
+            .bound(cwd)?
+            .ok_or("Memory is not enabled for this project")?;
+        return pending::Pending::new(&store.state, cwd)
+            .diagnostics(&hooks::scope_id(&binding, cwd));
+    }
     let b = store.resolve(cwd)?;
     if command == "status" && rest.is_empty() {
         return Ok(status(b.as_ref()));
@@ -233,6 +240,10 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
             store.search(&b, query, n.parse().map_err(io::err)?)
         }
         ("show", [id]) => store.get(&b, id),
+        ("history", [id]) => store.history(&b, id, 5),
+        ("history", [id, flag, n]) if flag == "--limit" => {
+            store.history(&b, id, n.parse().map_err(io::err)?)
+        }
         ("inbox", []) => store.inbox(&b),
         ("approve", [id]) => store.approve(&b, id),
         ("forget", [id]) => store.forget(&b, id),
