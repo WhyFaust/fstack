@@ -3,7 +3,8 @@
 `glab api` добавляет `/api/v4/`: передавай `projects/...`. Внутри clone `:id`,
 `:fullpath`, `:repo`, `:group`, `:namespace`, `:branch` берутся из контекста;
 `:user` и `:username` доступны отдельно. Остальные слова после двоеточия не являются
-placeholder. Для чужого проекта укажи ID или URL-encoded path.
+встроенным placeholder. В версиях с `--placeholder` можно явно задать своё значение.
+Для чужого проекта укажи ID или URL-encoded path.
 
 ```bash
 glab api projects/group%2Fproject/merge_requests --paginate
@@ -22,6 +23,32 @@ glab api projects/:id/merge_requests/123/notes --method POST --input work/body.j
 glab api projects/:id/uploads --method POST --form "file=@work/screenshot.png"
 glab api projects/:fullpath/wikis/attachments --method POST --form "file=@work/screenshot.png" --form "branch=main"
 ```
+
+## Артефакт конкретной попытки
+
+Сверь по записи job её ID, pipeline, SHA и наличие нужного артефакта. Для
+содержимого из этой попытки используй Job Artifacts API. Пример для Bash
+пишет ответ во временный файл внутри собственного каталога. Подставь
+свой ID проекта и job, заранее создай или выбери пустой каталог для вывода.
+
+```bash
+glab api projects/42/jobs/789/artifacts > job-789.zip.part &&
+  unzip -tq job-789.zip.part &&
+  mv job-789.zip.part job-789.zip
+```
+
+Нужны `unzip` и побайтовое перенаправление stdout. В PowerShell оно
+поддерживается для нативных команд начиная с 7.4. В другой оболочке
+пользуйся инструментом с бинарным сохранением ответа того же API.
+При ненулевом коде или повреждённом архиве не публикуй временный файл
+как результат. Для отдельного файла используй путь
+`projects/42/jobs/789/artifacts/путь/в/архиве` и проверь его содержимое.
+`glab job artifact <refName> <jobName>` обращается к последнему успешному
+pipeline для ref; при проверке конкретной попытки нужен её job ID.
+
+Для коллекции, которую нужно обрабатывать построчно, используй
+`glab api projects/42/jobs --paginate --output ndjson`, если установленная
+версия поддерживает этот формат. Проверь код выхода до вывода о полноте.
 
 ## Pipeline и готовность к merge
 

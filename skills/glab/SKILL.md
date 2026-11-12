@@ -5,7 +5,7 @@ license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 2.0.0
+  version: 2.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -31,7 +31,7 @@ fstack:resolve-review, для явно разрешённого слияния �
 ### Чтение и CI
 
 `ci trace` ожидает завершения job, `ci view` интерактивен; для снимка состояния используй `ci get`.
-Аргумент `ci retry` — ID job. Коллекции API читай с пагинацией; первая страница
+Для повтора конкретной попытки в `ci retry` используй ID job. Коллекции API читай с пагинацией; первая страница
 не является полным набором.
 
 ```bash

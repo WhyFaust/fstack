@@ -5,7 +5,7 @@ license: MIT AND Apache-2.0
 compatibility: Установленный Playwright CLI и доступный ему браузер; Node.js нужен при запуске через npx.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
-  version: 2.0.0
+  version: 2.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -27,6 +27,12 @@ metadata:
 
 ## Порядок работы
 
+Проверь доступную точку входа. Если отдельного `playwright-cli` нет,
+проверь `playwright cli --help` у установленного Playwright. При наличии
+этой подкоманды используй `playwright cli` вместо `playwright-cli` во всех
+шагах. Для локального npm-пакета используй runner проекта без установки.
+Если ни один интерфейс недоступен, сообщи, какой шаг удалось проверить.
+
 В PowerShell URL с `&` передавай в кавычках. Версию и неизвестные флаги проверяй
 через `playwright-cli --version` и `playwright-cli --help <command>`.
 
@@ -41,7 +47,7 @@ playwright-cli -s=fstack-task snapshot
 ```bash
 playwright-cli -s=fstack-task click e3
 playwright-cli -s=fstack-task snapshot
-playwright-cli -s=fstack-task screenshot --filename=work/page.png
+playwright-cli -s=fstack-task screenshot --filename=page.png
 playwright-cli -s=fstack-task close
 ```
 
@@ -69,4 +75,7 @@ playwright-cli -s=fstack-task close
 
 ## Проверка и результат
 
-Артефакты сохраняй в рабочую область и просматривай перед выводом об интерфейсе.
+После действия проверь нужное пользователю изменение через свежий snapshot,
+наблюдаемое состояние или сохранённый результат. При ошибке зафиксируй
+незавершённый шаг и освободи свою сессию. Артефакты сохраняй в рабочую
+область и просматривай перед выводом об интерфейсе.
