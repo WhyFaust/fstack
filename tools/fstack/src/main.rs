@@ -812,12 +812,12 @@ pub(crate) fn check(root: &Path) -> Result<String> {
         agents["enabled"].is_boolean(),
         "agents.enabled должен быть boolean",
     )?;
-    require(
-        agents["max_concurrent_threads_per_session"]
-            .as_u64()
-            .is_some_and(|v| v > 0),
-        "Лимит подагентов должен быть положительным целым числом",
-    )?;
+    if let Some(limit) = agents.get("max_concurrent_threads_per_session") {
+        require(
+            limit.as_u64().is_some_and(|v| v > 0),
+            "Лимит подагентов должен быть положительным целым числом",
+        )?;
+    }
     for (settings, model, effort) in [
         (&config, "model", "model_reasoning_effort"),
         (
