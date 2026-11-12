@@ -4,7 +4,7 @@ description: "Выбирает предметный метод, когда ри�
 license: MIT
 metadata:
   short-description: Критерии архитектуры, состояния и проверки
-  version: 2.0.0
+  version: 2.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -26,7 +26,8 @@ metadata:
 | --- | --- |
 | Какие данные, границы и интерфейс нужны? | fstack:design-change |
 | Что изменится у косвенных и внешних потребителей? | fstack:assess-impact |
-| Какой результат увидит читатель при конкуренции, повторе или откате записи? | fstack:manage-state |
+| Как согласовать запись, повтор или восстановление общего состояния? | fstack:manage-state |
+| Выполняется ли инвариант во всех допустимых порядках событий модели? Нужен проверенный поток или контрпример. | [model-check-state](../model-check-state/SKILL.md) |
 | Кто владеет ресурсом и освободит его после частичной подготовки или отказа? | fstack:manage-resources |
 | Как перевести всех потребителей на новый контракт? | fstack:migrate-contract |
 | Есть ли измеримый выигрыш при том же объёме работы? | fstack:measure-performance |
