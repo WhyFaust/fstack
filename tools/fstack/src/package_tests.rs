@@ -449,3 +449,12 @@ fn native_notices_track_locked_dependencies_and_shipped_texts() {
     fs::write(path, inventory.to_string()).unwrap();
     assert!(native_notices(&package).is_err());
 }
+
+#[test]
+fn catalog_links_must_open_the_named_skill() {
+    let skills = BTreeSet::from(["read".to_owned(), "write".to_owned()]);
+    let listing = "| `read` | Чтение | [RU](../skills/read/SKILL.md), [EN](../skills/read/SKILL_en.md) |\n| `write` | Запись | [RU](../skills/write/SKILL.md) |";
+    assert!(check_catalog(listing, &skills).is_ok());
+    assert!(check_catalog(&listing.replace("read/SKILL.md", "write/SKILL.md"), &skills).is_err());
+    assert!(check_catalog(&format!("{listing}\n{listing}"), &skills).is_err());
+}
