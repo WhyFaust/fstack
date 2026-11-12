@@ -165,10 +165,10 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
             "plugin".into(),
             "marketplace".into(),
             "add".into(),
-            root.as_os_str().to_owned(),
+            ".".into(),
         ],
         &home,
-        directory,
+        root,
     )?;
     let installed: Value =
         serde_json::from_str(&execute(&["plugin", "add", "fstack@fstack", "--json"])?)
