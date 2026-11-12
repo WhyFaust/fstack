@@ -5,7 +5,7 @@ use super::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -241,37 +241,95 @@ fn project_prefix(identity: &str) -> String {
         path
     };
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let slug = name
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-        .to_ascii_lowercase();
+    const CYRILLIC: [&str; 32] = [
+        "a", "b", "v", "g", "d", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s",
+        "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya",
+    ];
+    let mut slug = String::new();
+    for ch in name.chars().flat_map(char::to_lowercase) {
+        match ch {
+            'a'..='z' | '0'..='9' => slug.push(ch),
+            'а'..='я' => slug.push_str(CYRILLIC[(ch as usize) - ('а' as usize)]),
+            'ё' => slug.push_str("yo"),
+            _ if !slug.is_empty() && !slug.ends_with('-') => slug.push('-'),
+            _ => {}
+        }
+    }
+    slug.truncate(48);
+    let slug = slug.trim_end_matches('-');
     if slug.is_empty() {
         "project".into()
     } else {
-        slug.chars()
-            .take(26)
-            .collect::<String>()
-            .trim_end_matches('-')
-            .to_owned()
+        slug.into()
     }
 }
 
+fn numbered_name(prefix: &str, number: usize) -> String {
+    if number == 1 {
+        return prefix.into();
+    }
+    let suffix = format!("-{number}");
+    let prefix = &prefix[..prefix.len().min(48 - suffix.len())];
+    format!("{}{suffix}", prefix.trim_end_matches('-'))
+}
+
+fn previous_name(name: &str, prefix: &str, owner: &str) -> bool {
+    if name == prefix {
+        return true;
+    }
+    let Some((_, suffix)) = name.rsplit_once('-') else {
+        return false;
+    };
+    [12, 16, 20].contains(&suffix.len()) && owner.starts_with(suffix)
+        || suffix
+            .parse::<usize>()
+            .is_ok_and(|n| n > 1 && numbered_name(prefix, n) == name)
+}
+
 pub(super) fn claim_project(root: &Path, prefix: &str, owner: &str) -> Result<String> {
-    for length in [12, 16, 20] {
-        let name = format!("{prefix}-{}", &owner[..length]);
-        let dir = root.join("Projects").join(&name);
-        io::directory(&dir, true, false)?;
-        let marker = dir.join(".fstack-scope");
-        if io::read_limit(&marker, 256)?.as_deref() == Some(owner) {
-            return Ok(name);
-        }
-        if fs::read_dir(&dir).map_err(io::err)?.next().is_none()
-            && io::write(&marker, owner, false, None)?
+    let projects = root.join("Projects");
+    io::directory(&projects, true, false)?;
+    let mut occupied = BTreeSet::new();
+    let mut existing = None;
+    for entry in fs::read_dir(&projects).map_err(io::err)? {
+        let entry = entry.map_err(io::err)?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        occupied.insert(name.to_ascii_lowercase());
+        if !previous_name(&name, prefix, owner)
+            || super::format::project(&name).is_err()
+            || !entry.file_type().map_err(io::err)?.is_dir()
         {
+            continue;
+        }
+        let marker = io::prefix(&entry.path().join(".fstack-scope"), owner.len() + 4)?;
+        let stored = marker
+            .as_deref()
+            .map(|bytes| bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes));
+        if stored == Some(owner.as_bytes()) {
+            if existing.is_some() {
+                return Err("Multiple memory projects have the same workspace owner".into());
+            }
+            existing = Some(name);
+        }
+    }
+    if let Some(name) = existing {
+        return Ok(name);
+    }
+    for number in 1..=occupied.len().saturating_add(2) {
+        let name = numbered_name(prefix, number);
+        if occupied.contains(&name) || super::format::project(&name).is_err() {
+            continue;
+        }
+        let dir = projects.join(&name);
+        match fs::create_dir(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(io::err(e)),
+        }
+        if io::write(&dir.join(".fstack-scope"), owner, false, None)? {
             return Ok(name);
         }
+        return Err("Memory project ownership changed during setup".into());
     }
     Err("Automatic memory project names are occupied".into())
 }
@@ -365,12 +423,12 @@ mod tests {
         let legacy = store
             .setup(&vault, &old, "hand-picked", Some("inbox"))
             .unwrap();
-        let accidental = legacy.root.join("Projects").join(format!(
-            "widget-{}",
-            &io::hash(scope::binding_location(&store.state, &first).unwrap().0)[..12]
-        ));
+        let accidental = legacy.root.join("Projects/widget");
         fs::create_dir(&accidental).unwrap();
         fs::write(accidental.join("Keep.md"), "Unmanaged project").unwrap();
+        let foreign_marker = accidental.join(".fstack-scope");
+        let malformed = [0xff; 512];
+        fs::write(&foreign_marker, malformed).unwrap();
         assert_eq!(store.vault_status().unwrap()["source"], "bindings");
         let work = [&first, &first, &second];
         let found = std::thread::scope(|s| {
@@ -379,8 +437,12 @@ mod tests {
         });
         assert_eq!(found[0].project, found[1].project);
         assert_eq!(found[0].generation, found[1].generation);
-        assert_ne!(found[0].project, found[2].project);
+        assert_eq!(
+            BTreeSet::from([found[0].project.as_str(), found[2].project.as_str()]),
+            BTreeSet::from(["widget-2", "widget-3"])
+        );
         assert_ne!(store.root(&found[0]).unwrap(), accidental);
+        assert_eq!(fs::read(foreign_marker).unwrap(), malformed);
         assert_eq!(
             fs::read_to_string(accidental.join("Keep.md")).unwrap(),
             "Unmanaged project"
@@ -398,6 +460,86 @@ mod tests {
         assert!(store.get(&restored, saved["id"].as_str().unwrap()).is_ok());
         fs::rename(&vault, root.join("offline")).unwrap();
         assert_eq!(store.auto_resolve(&old).unwrap().unwrap().mode, "inbox");
+    }
+
+    #[test]
+    fn project_names_use_readable_ascii_and_recover_their_number_after_a_gap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let reports = project_prefix("dir:/work/Отчёты АЯ");
+        assert_eq!(reports, "otchyoty-aya");
+        assert_eq!(project_prefix("dir:/work/漢字"), "project");
+        let owners = [io::hash("one"), io::hash("two"), io::hash("three")];
+        for example in ["client-api", "report-worker", "portal", "fstack"] {
+            let prefix = project_prefix(&format!("dir:/work/{example}"));
+            assert_eq!(
+                claim_project(&root, &prefix, &io::hash(example)).unwrap(),
+                example
+            );
+        }
+        assert_eq!(claim_project(&root, &reports, &owners[0]).unwrap(), reports);
+        let projects = root.join("Projects");
+        fs::create_dir(projects.join("widget")).unwrap();
+        assert_eq!(
+            claim_project(&root, "widget", &owners[1]).unwrap(),
+            "widget-2"
+        );
+        assert_eq!(
+            claim_project(&root, "widget", &owners[2]).unwrap(),
+            "widget-3"
+        );
+        fs::remove_dir(projects.join("widget")).unwrap();
+        assert_eq!(
+            claim_project(&root, "widget", &owners[2]).unwrap(),
+            "widget-3"
+        );
+        assert_eq!(
+            claim_project(&root, "con", &io::hash("reserved")).unwrap(),
+            "con-2"
+        );
+        let long = project_prefix(&format!("dir:/work/{}", "a".repeat(100)));
+        assert_eq!(claim_project(&root, &long, &owners[0]).unwrap().len(), 48);
+        let other = claim_project(&root, &long, &owners[1]).unwrap();
+        assert_eq!(other, format!("{}-2", "a".repeat(46)));
+    }
+
+    #[test]
+    fn missing_local_binding_recovers_legacy_hashed_project_and_its_records() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let store = store(&root);
+        let repo = root.join("Сборка");
+        let vault = root.join("notes");
+        fs::create_dir(&repo).unwrap();
+        fs::create_dir_all(vault.join(".obsidian")).unwrap();
+        store.pin_vault(&vault).unwrap();
+        let (identity, settings) = scope::binding_location(&store.state, &repo).unwrap();
+        let owner = io::hash(&identity);
+        let legacy_name = format!("project-{}", &owner[..16]);
+        let legacy = store
+            .setup(&vault, &repo, &legacy_name, Some("auto"))
+            .unwrap();
+        let project = store.root(&legacy).unwrap();
+        fs::write(project.join(".fstack-scope"), &owner).unwrap();
+        let saved = store
+            .save(
+                &legacy,
+                &json!({"kind":"decision","title":"Build","body":"Use an offline build."}),
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+        fs::remove_file(settings).unwrap();
+        let recovered = store.auto_resolve(&repo).unwrap().unwrap();
+        assert_eq!(recovered.project, legacy_name);
+        assert_eq!(
+            store
+                .get(&recovered, saved["id"].as_str().unwrap())
+                .unwrap(),
+            saved
+        );
+        assert!(!legacy.root.join("Projects/sborka").exists());
     }
 
     #[test]
@@ -424,6 +566,7 @@ mod tests {
         assert_eq!(selected["source"], "pinned");
         let b = store.auto_resolve(&repo).unwrap().unwrap();
         assert_eq!(b.root, vaults[0].join("Codex Memory"));
+        assert_eq!(b.project, "project");
         let elsewhere = store.state.join("vault.json");
         fs::remove_file(elsewhere).unwrap();
         fs::remove_file(scope::binding_path(&store.state, &repo).unwrap()).unwrap();
