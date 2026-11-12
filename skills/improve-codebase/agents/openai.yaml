@@ -1,6 +1,6 @@
 interface:
   display_name: Улучшения кодовой базы
-  short_description: Аудит кодовой базы и планы улучшений
-  default_prompt: Используй $fstack:improve-codebase, чтобы найти обоснованные улучшения проекта и подготовить приоритетный backlog с исполнимыми планами.
+  short_description: Аудит кодовой базы и приоритеты улучшений
+  default_prompt: Используй $fstack:improve-codebase, чтобы найти обоснованные улучшения проекта и подготовить приоритетный backlog.
 policy:
   allow_implicit_invocation: false
