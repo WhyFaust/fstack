@@ -1,8 +1,10 @@
+mod auto;
 mod format;
 mod hooks;
 mod io;
 mod pending;
 mod scope;
+mod shared;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -95,16 +97,30 @@ fn read_json(reader: impl Read, limit: usize) -> Result<Value> {
 }
 fn action(v: &Value) -> Result<Value> {
     let m = v.as_object().ok_or("Invalid staged memory action")?;
-    match v["action"].as_str() {
-        Some("skip") if m.len() == 1 => Ok(json!({"action":"skip"})),
-        Some(a @ ("remember" | "draft")) if m.len() == 2 && m.contains_key("candidate") => {
-            Ok(json!({"action":a,"candidate":format::candidate(&v["candidate"])?}))
+    let shared = match m.get("scope") {
+        None => false,
+        Some(scope) if scope == "shared" => true,
+        _ => return Err("Invalid staged memory scope".into()),
+    };
+    let arity = 2 + usize::from(shared);
+    let mut request = match v["action"].as_str() {
+        Some("skip") if m.len() == 1 => return Ok(json!({"action":"skip"})),
+        Some(a @ ("remember" | "draft")) if m.len() == arity && m.contains_key("candidate") => {
+            let fields = format::candidate(&v["candidate"])?;
+            if shared {
+                shared::check_kind(&fields)?;
+            }
+            json!({"action":a,"candidate":fields})
         }
-        Some(a @ ("approve" | "forget")) if m.len() == 2 && m.contains_key("id") => Ok(
-            json!({"action":a,"id":format::id(v["id"].as_str().ok_or("Invalid staged memory action")?)?}),
-        ),
-        _ => Err("Invalid staged memory action".into()),
+        Some(a @ ("approve" | "forget")) if m.len() == arity && m.contains_key("id") => {
+            json!({"action":a,"id":format::id(v["id"].as_str().ok_or("Invalid staged memory action")?)?})
+        }
+        _ => return Err("Invalid staged memory action".into()),
+    };
+    if shared {
+        request["scope"] = json!("shared");
     }
+    Ok(request)
 }
 fn encode(v: &Value) -> Result<String> {
     let text = v.to_string();
@@ -124,6 +140,23 @@ fn decode(payload: &str) -> Result<Value> {
         return Err("Invalid encoded memory action".into());
     }
     action(&read_json(data.as_slice(), 20000)?)
+}
+fn correction(title: &str, body: &str, predecessor: Option<&str>) -> Result<Value> {
+    for field in [title, body] {
+        if field.contains([
+            '\'', '"', '\n', '\r', '‘', '’', '‚', '‛', '“', '”', '„', '‟',
+        ]) {
+            return Err("Use memory pack for a correction with quotes or line breaks".into());
+        }
+    }
+    let mut candidate = json!({
+        "kind": "correction", "title": title, "body": body,
+        "source": "Поправка пользователя в текущем ходе"
+    });
+    if let Some(id) = predecessor {
+        candidate["supersedes"] = json!(id);
+    }
+    action(&json!({"action": "remember", "candidate": candidate}))
 }
 fn status(b: Option<&store::Binding>) -> Value {
     match b {
@@ -219,6 +252,16 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
             20000
         )?)?)?));
     }
+    if command == "vault" {
+        return match rest {
+            [] => store.vault_status(),
+            [flag, path] if flag == "--set" => store.pin_vault(Path::new(path)),
+            _ => Err("Use memory vault or memory vault --set <absolute path>".into()),
+        };
+    }
+    if command == "ensure" && rest.is_empty() {
+        return Ok(status(store.auto_resolve(cwd)?.as_ref()));
+    }
     if command == "disable" && rest.is_empty() {
         return Ok(json!({"disabled":store.disable(cwd)?}));
     }
@@ -229,11 +272,18 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
         return pending::Pending::new(&store.state, cwd)
             .diagnostics(&hooks::scope_id(&binding, cwd));
     }
-    let b = store.resolve(cwd)?;
+    let b = if command == "stage" {
+        store.bound(cwd)?
+    } else {
+        store.resolve(cwd)?
+    };
     if command == "status" && rest.is_empty() {
         return Ok(status(b.as_ref()));
     }
     let b = b.ok_or("Memory is not enabled for this project")?;
+    if command == "shared" {
+        return shared::execute(store, &b, rest);
+    }
     match (command, rest) {
         ("search", [query]) => store.search(&b, query, 5),
         ("search", [query, flag, n]) if flag == "--limit" => {
@@ -256,10 +306,18 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
             None,
             None,
         ),
-        ("stage", [turn_flag, token, payload_flag, payload])
-            if turn_flag == "--turn" && payload_flag == "--payload" =>
-        {
-            decode(payload)?;
+        ("stage", [turn_flag, token, rest @ ..]) if turn_flag == "--turn" => {
+            match rest {
+                [flag] if flag == "--skip" => json!({"action":"skip"}),
+                [flag, encoded] if flag == "--payload" => decode(encoded)?,
+                [flag, title, body] if flag == "--correction" => correction(title, body, None)?,
+                [flag, title, body, supersedes, id]
+                    if flag == "--correction" && supersedes == "--supersedes" =>
+                {
+                    correction(title, body, Some(id))?
+                }
+                _ => return Err("Invalid memory stage arguments".into()),
+            };
             if !pending::Pending::new(&store.state, cwd)
                 .is_current(token, &hooks::scope_id(&b, cwd))?
             {

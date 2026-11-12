@@ -104,101 +104,85 @@ fn candidate(body: &str) -> Value {
     json!({"kind":"decision","title":"Heliotrope convention","body":body})
 }
 #[test]
-fn ordinary_prompts_leave_memory_inactive_without_reading_vault() {
+fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
     let f = Fixture::new("auto", "pilot");
-    fs::rename(&f.vault, f.base.join("unavailable-vault")).unwrap();
     for prompt in [
         "Исправь ошибку",
         "Объясни /faust-mode",
         "`/faust-mode`",
         "> /faust-mode task",
-        "```\n/faust-mode task\n```",
-        "/faust-mode-off",
         "$fstack:debug-failure task",
     ] {
-        assert_eq!(
-            f.hook("UserPromptSubmit", "plain", json!({"prompt":prompt})),
-            json!({})
-        );
+        let output = f.hook("UserPromptSubmit", "plain", json!({"prompt":prompt}));
+        let context = output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains("stage --turn"));
+        assert!(!context.contains("включён faust-mode"));
     }
-    for event in ["SessionStart", "Stop", "PostToolUse"] {
-        assert_eq!(f.hook(event, "plain", json!({})), json!({}));
-    }
-    assert!(!f.store.state.join("pending.sqlite3").exists());
+    assert_eq!(f.hook("SessionStart", "plain", json!({})), json!({}));
+    assert!(!f.store.state.join("faust-mode-sessions").exists());
 }
 
 #[test]
-fn explicit_mode_persists_in_one_chat_until_disabled() {
+fn explicit_mode_controls_only_the_coordinator_and_keeps_accepted_memory() {
     let f = Fixture::new("auto", "pilot");
     for prompt in [
         "/faust-mode task",
         " $fstack:faust-mode task",
         "$faust-mode\ntask",
         "[$fstack:faust-mode](C:/Codex Home/skills/faust-mode/SKILL.md) task",
+        "Продолжи",
     ] {
         let output = f.hook("UserPromptSubmit", "active", json!({"prompt":prompt}));
-        assert!(output["hookSpecificOutput"]["additionalContext"]
+        let context = output["hookSpecificOutput"]["additionalContext"]
             .as_str()
-            .unwrap()
-            .contains("stage --turn"));
+            .unwrap();
+        assert!(context.contains("включён faust-mode"));
+        assert!(context.contains("stage --turn"));
     }
-    assert_eq!(
-        f.hook("Stop", "active", json!({"session_id":"another"})),
-        json!({})
+    let other = f.hook(
+        "UserPromptSubmit",
+        "next",
+        json!({"prompt":"Продолжи","session_id":"another"}),
     );
-    assert_eq!(
-        f.hook(
-            "UserPromptSubmit",
-            "next",
-            json!({"prompt":"Продолжи","session_id":"another"})
-        ),
-        json!({})
-    );
-    assert_eq!(f.hook("SessionStart", "next", json!({})), json!({}));
-    let followup = f.hook("UserPromptSubmit", "next", json!({"prompt":"Продолжи"}));
-    assert!(followup["hookSpecificOutput"]["additionalContext"]
+    let other = other["hookSpecificOutput"]["additionalContext"]
         .as_str()
-        .unwrap()
-        .contains("stage --turn"));
-    let token = f.token("steered");
-    post(
+        .unwrap();
+    assert!(other.contains("stage --turn"));
+    assert!(!other.contains("включён faust-mode"));
+
+    stage_action(
         &f,
-        "steered",
-        stage_command(
-            &token,
-            &json!({"action":"remember","candidate":candidate("Must not survive opt out")}),
-        ),
-        json!({}),
+        "queued",
+        &json!({"action":"remember","candidate":candidate("Survive coordinator toggle")}),
     );
-    let disabled = f.hook(
+    let off = f.hook(
         "UserPromptSubmit",
-        "steered",
-        json!({"prompt":"/faust-mode-off Без навыков"}),
+        "off",
+        json!({"prompt":"/faust-mode-off"}),
     );
-    assert!(disabled["hookSpecificOutput"]["additionalContext"]
+    let context = off["hookSpecificOutput"]["additionalContext"]
         .as_str()
-        .is_some_and(|context| !context.contains("stage --turn")));
-    assert_eq!(f.hook("Stop", "next", json!({})), json!({}));
-    assert_eq!(f.hook("Stop", "steered", json!({})), json!({}));
+        .unwrap();
+    assert!(context.contains("выключен"));
+    assert!(context.contains("stage --turn"));
+    f.hook("Stop", "queued", json!({}));
     assert_eq!(
-        f.hook("UserPromptSubmit", "direct", json!({"prompt":"Продолжи"})),
-        json!({})
+        f.store
+            .search(&f.binding, "Survive", 5)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
-    let resumed = f.hook(
-        "UserPromptSubmit",
-        "resumed",
-        json!({"prompt":"/faust-mode"}),
-    );
-    assert!(resumed["hookSpecificOutput"]["additionalContext"]
+    let next = f.hook("UserPromptSubmit", "new", json!({"prompt":"Продолжи"}));
+    let context = next["hookSpecificOutput"]["additionalContext"]
         .as_str()
-        .is_some_and(|context| context.contains("stage --turn")));
-    assert!(f
-        .store
-        .search(&f.binding, "survive", 5)
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    assert!(context.contains("stage --turn"));
+    assert!(!context.contains("включён faust-mode"));
 }
 
 #[test]
@@ -331,6 +315,106 @@ fn inbox_manual_edits_dedup_and_scope() {
         1
     );
 }
+#[test]
+fn fresh_session_recalls_approved_correction_across_russian_word_forms() {
+    let f = Fixture::new("auto", "pilot");
+    let save = |kind: &str, title: &str, body: &str, predecessor: Option<&str>, approved| {
+        let mut c = json!({"kind": kind, "title": title, "body": body});
+        if let Some(predecessor) = predecessor {
+            c["supersedes"] = json!(predecessor);
+        }
+        f.store.save(&f.binding, &c, approved, None, None).unwrap()
+    };
+    let old = save(
+        "decision",
+        "Публикация релиза",
+        "Публиковать в рабочее время.",
+        None,
+        true,
+    );
+    let current = save(
+        "correction",
+        "Публикация релиза",
+        "Выпускать после согласования.",
+        Some(id(&old)),
+        true,
+    );
+    let draft = save(
+        "decision",
+        "Публикация релиза",
+        "Выпускать ночью.",
+        None,
+        false,
+    );
+    let other = save(
+        "decision",
+        "Подсчёт запусков",
+        "Проверять счётчик build_id.",
+        None,
+        true,
+    );
+    let search = |query: &str| f.store.search(&f.binding, query, 3).unwrap();
+    let paraphrase = "Как согласовываются публикации релизов?";
+    assert_eq!(search(paraphrase), json!([current]));
+    assert_eq!(search("ПОДСЧЕТЕ"), json!([other]));
+    assert_eq!(search("builder"), json!([]));
+    assert_eq!(search("Настроить конференцию"), json!([]));
+    let hook = f.hook(
+        "UserPromptSubmit",
+        "next",
+        json!({
+            "session_id":"new-session", "prompt": format!("/faust-mode {paraphrase}")
+        }),
+    );
+    let context = hook["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains(id(&current)));
+    for excluded in [&old, &draft, &other] {
+        assert!(!context.contains(id(excluded)));
+    }
+    assert!(!context.contains(current["body"].as_str().unwrap()));
+}
+
+#[test]
+fn exact_terms_rank_above_word_forms_and_newer_records_break_equal_scores() {
+    let f = Fixture::new("auto", "pilot");
+    let save = |title: &str, body| {
+        f.store
+            .save(
+                &f.binding,
+                &json!({"kind":"decision","title":title,"body":body}),
+                true,
+                None,
+                None,
+            )
+            .unwrap()
+    };
+    let mut exact = [
+        save("Публикации", "Первый пункт"),
+        save("Публикации", "Второй пункт"),
+    ];
+    let inflected = save("Публикация", "Третий пункт");
+    exact.sort_by(|a, b| id(a).cmp(id(b)));
+    for (entry, when) in [
+        (&exact[0], "2024-01-01"),
+        (&exact[1], "2025-01-01"),
+        (&inflected, "2026-01-01"),
+    ] {
+        let path = store::record(&f.root(), id(entry));
+        let text = fs::read_to_string(&path).unwrap().replace(
+            entry["created"].as_str().unwrap(),
+            &format!("{when}T00:00:00+00:00"),
+        );
+        fs::write(path, text).unwrap();
+    }
+    let rows = f.store.search(&f.binding, "публикации", 3).unwrap();
+    assert_eq!(
+        rows.as_array().unwrap().iter().map(id).collect::<Vec<_>>(),
+        [id(&exact[1]), id(&exact[0]), id(&inflected)]
+    );
+}
+
 #[test]
 fn superseding_forgetting_sync_and_damaged_records() {
     let f = Fixture::new("auto", "pilot");
@@ -1213,11 +1297,11 @@ fn stage_action(f: &Fixture, turn: &str, request: &Value) {
     );
 }
 
-fn read_mode_epoch(f: &Fixture) -> String {
+fn read_memory_epoch(f: &Fixture) -> String {
     io::read(
         &f.store
             .state
-            .join("faust-mode-sessions")
+            .join("memory-sessions")
             .join(pending::digest(&["session"])),
     )
     .unwrap()
@@ -1282,7 +1366,7 @@ fn uncertain_stop_commit_is_idempotent_across_concurrent_retries() {
     let scope = hooks::scope_id(&f.binding, &f.repo);
     let original = "original";
     let key = pending::digest(&["session", original]);
-    let epoch = read_mode_epoch_after_stage(&f, original);
+    let epoch = read_memory_epoch_after_stage(&f, original);
     assert_eq!(
         f.pending()
             .claim(
@@ -1324,24 +1408,24 @@ fn uncertain_stop_commit_is_idempotent_across_concurrent_retries() {
     );
 }
 
-fn read_mode_epoch_after_stage(f: &Fixture, turn: &str) -> String {
+fn read_memory_epoch_after_stage(f: &Fixture, turn: &str) -> String {
     stage_action(
         f,
         turn,
         &json!({"action":"remember","candidate":candidate("Repeat heliotrope")}),
     );
-    read_mode_epoch(f)
+    read_memory_epoch(f)
 }
 
 #[test]
-fn an_accepted_action_cannot_cross_revocation_mode_epoch_or_binding_generation() {
-    for (revoke, claimed) in ["steer", "plan", "mode", "binding", "expired"]
+fn an_accepted_action_cannot_cross_revocation_or_binding_generation() {
+    for (revoke, claimed) in ["steer", "plan", "binding", "expired"]
         .into_iter()
         .flat_map(|revoke| [(revoke, true), (revoke, false)])
     {
         let f = Fixture::new("auto", "pilot");
         let scope = hooks::scope_id(&f.binding, &f.repo);
-        let epoch = read_mode_epoch_after_stage(&f, "original");
+        let epoch = read_memory_epoch_after_stage(&f, "original");
         let key = pending::digest(&["session", "original"]);
         if claimed {
             assert_eq!(
@@ -1364,13 +1448,6 @@ fn an_accepted_action_cannot_cross_revocation_mode_epoch_or_binding_generation()
             }
             "plan" => {
                 f.hook("Stop", "original", json!({"mode":"plan"}));
-            }
-            "mode" => {
-                f.hook(
-                    "UserPromptSubmit",
-                    "off",
-                    json!({"prompt":"/faust-mode-off"}),
-                );
             }
             "binding" => {
                 f.store.disable(&f.repo).unwrap();
@@ -1413,7 +1490,7 @@ fn interrupted_approval_or_write_cannot_restore_forgotten_content() {
         };
         let scope = hooks::scope_id(&f.binding, &f.repo);
         stage_action(&f, "original", &operation);
-        let epoch = read_mode_epoch(&f);
+        let epoch = read_memory_epoch(&f);
         let key = pending::digest(&["session", "original"]);
         assert_eq!(
             f.pending()
@@ -1520,6 +1597,45 @@ fn history_links_scoped_approved_versions_and_diffs_without_forgotten_content() 
 }
 
 #[test]
+fn active_legacy_queue_keeps_its_epoch_after_the_coordinator_is_turned_off() {
+    let f = Fixture::new("auto", "pilot");
+    stage_action(
+        &f,
+        "old",
+        &json!({"action":"remember","candidate":candidate("Legacy heliotrope")}),
+    );
+    let key = pending::digest(&["session"]);
+    let legacy = io::read(&f.store.state.join("faust-mode-sessions").join(&key))
+        .unwrap()
+        .unwrap();
+    let conn = rusqlite::Connection::open(f.store.state.join("pending.sqlite3")).unwrap();
+    conn.execute(
+        "UPDATE issued_modes SET epoch=? WHERE session='session'",
+        [&legacy],
+    )
+    .unwrap();
+    drop(conn);
+    fs::remove_file(f.store.state.join("memory-sessions").join(&key)).unwrap();
+
+    let off = f.hook(
+        "UserPromptSubmit",
+        "off",
+        json!({"prompt":"/faust-mode-off"}),
+    );
+    let context = off["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("выключен"));
+    assert!(context.contains("stage --turn"));
+    assert_eq!(read_memory_epoch(&f), legacy);
+    f.hook("Stop", "old", json!({}));
+    assert_eq!(
+        f.store.search(&f.binding, "heliotrope", 5).unwrap()[0]["turn_id"],
+        "old"
+    );
+}
+
+#[test]
 fn old_pending_rows_and_empty_mode_markers_survive_upgrade() {
     let f = Fixture::new("auto", "pilot");
     let path = scope::binding_path(&f.store.state, &f.repo).unwrap();
@@ -1539,6 +1655,13 @@ fn old_pending_rows_and_empty_mode_markers_survive_upgrade() {
     conn.execute_batch("DROP TABLE issued_modes; DROP TABLE claimed; DROP TABLE diagnostics")
         .unwrap();
     drop(conn);
+    fs::remove_file(
+        f.store
+            .state
+            .join("memory-sessions")
+            .join(pending::digest(&["session"])),
+    )
+    .unwrap();
 
     assert_eq!(f.hook("Stop", "new", json!({})), json!({}));
     assert_eq!(
@@ -1702,4 +1825,85 @@ fn corrupt_tombstone_retains_accepted_write_until_repaired() {
             })
         );
     }
+}
+
+#[test]
+fn short_skip_requires_a_validated_standalone_command_and_leaves_no_note() {
+    let f = Fixture::new("auto", "pilot");
+    let token = f.token("quiet");
+    let packed = stage_command(&token, &json!({"action":"skip"}));
+    let (prefix, _) = packed.split_once(" --payload ").unwrap();
+    let skip = format!("{prefix} --skip");
+    for invalid in [
+        format!("{skip}; true"),
+        format!("{skip} "),
+        format!("{skip} reason"),
+    ] {
+        post(&f, "quiet", invalid, json!({}));
+    }
+    post(&f, "quiet", skip.clone(), json!({"agent_type":"worker"}));
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["staged"], 0);
+    post(&f, "quiet", skip, json!({}));
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["staged"], 1);
+    assert_eq!(f.hook("Stop", "quiet", json!({})), json!({}));
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["phase"], "skipped");
+    assert_eq!(
+        std::fs::read_dir(f.root().join("Records")).unwrap().count(),
+        0
+    );
+}
+
+#[test]
+fn correction_requires_a_single_literal_command_in_an_authorized_turn() {
+    let f = Fixture::new("inbox", "reviewed");
+    let token = f.token("fix");
+    let packed = stage_command(&token, &json!({"action": "skip"}));
+    let (prefix, _) = packed.split_once(" --payload ").unwrap();
+    let cmd = format!("{prefix} --correction 'Runner' 'Use uv run pytest'");
+    for invalid in [
+        format!("{cmd}; echo done"),
+        format!("{cmd} --supersedes not-an-id"),
+        format!("{prefix} --correction '$(ignored)' 'body' && true"),
+        format!("{prefix} --correction 'Runner' 'Do' 'another thing'"),
+        format!("{prefix} --correction 'Runner' 'Don’t change an argument’ ; echo bad #'"),
+        format!("{prefix} --correction 'Runner' 'api_key=not-for-memory'"),
+        format!("{prefix} --correction 'Runner' 'multiple\nlines'"),
+        format!("echo {cmd}"),
+    ] {
+        post(&f, "fix", invalid, json!({}));
+    }
+    for overrides in [
+        json!({"agent_id":"child"}),
+        json!({"tool_name":"unrelated"}),
+        json!({"tool_response":"not validated"}),
+        json!({"session_id":"unrelated"}),
+    ] {
+        post(&f, "fix", cmd.clone(), overrides);
+    }
+    assert_eq!(f.hook("Stop", "fix", json!({}))["decision"], "block");
+    post(&f, "fix", cmd, json!({}));
+    f.hook("Stop", "fix", json!({"stop_hook_active":true}));
+    assert_eq!(f.store.search(&f.binding, "pytest", 5).unwrap(), json!([]));
+    let inbox = f.store.inbox(&f.binding).unwrap();
+    assert_eq!(inbox.as_array().unwrap().len(), 1);
+    assert_eq!(inbox[0]["title"], "Runner");
+    assert_eq!(inbox[0]["kind"], "correction");
+}
+
+#[test]
+fn a_new_chat_considers_a_project_rule_without_topic_overlap() {
+    let f = Fixture::new("auto", "sample");
+    let rule = json!({"kind":"correction","title":"Язык ответов","body":"В этом проекте всегда отвечай по-русски."});
+    let saved = f.store.save(&f.binding, &rule, true, None, None).unwrap();
+    let query = "Explain binary search";
+    assert_eq!(f.store.search(&f.binding, query, 3).unwrap(), json!([]));
+    assert_eq!(
+        f.store.recall(&f.binding, query, 3).unwrap()[0]["id"],
+        saved["id"]
+    );
+    f.store
+        .forget(&f.binding, saved["id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(f.store.recall(&f.binding, query, 3).unwrap(), json!([]));
 }

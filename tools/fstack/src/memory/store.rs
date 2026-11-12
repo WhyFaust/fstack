@@ -1,19 +1,41 @@
 use super::{
+    auto,
     format::{self as fmt, Fields, APPROVED, FORGOTTEN, MEMORY},
     io, scope, views, Result,
 };
+use rust_stemmers::{Algorithm, Stemmer};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
+// Keep identifiers and other languages on the exact-token path. Snowball's
+// Russian algorithm expects lowercase Cyrillic with ё normalized to е.
+fn russian_stem(stemmer: &Stemmer, word: &str) -> Option<String> {
+    if !word.chars().all(|ch| matches!(ch, 'а'..='я' | 'ё')) {
+        return None;
+    }
+    let normalized = word.replace('ё', "е");
+    let stem = stemmer.stem(&normalized);
+    (stem.chars().count() >= 3).then(|| stem.into_owned())
+}
+
+fn fts_alternatives<'a>(words: impl IntoIterator<Item = &'a str>) -> String {
+    words
+        .into_iter()
+        .map(|word| format!("\"{word}\""))
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
 #[derive(Clone, Debug)]
 pub struct Binding {
     pub root: PathBuf,
     pub project: String,
     pub mode: String,
     pub generation: Option<String>,
+    pub(super) shared: bool,
 }
 pub enum WriteOutcome {
     Written(Value),
@@ -227,6 +249,9 @@ fn graph(
         (
             "supersedes_link".into(),
             predecessor.map(|s| {
+                if super::shared::is_root(root) {
+                    return format!("[[Codex Memory/Shared/Records/{s}]]");
+                }
                 format!(
                     "[[Codex Memory/Projects/{}/Records/{s}]]",
                     root.file_name().unwrap().to_string_lossy()
@@ -294,7 +319,7 @@ impl Store {
             package: package.into(),
         })
     }
-    fn check_home(&self, root: &Path) -> Result<()> {
+    pub(super) fn check_home(&self, root: &Path) -> Result<()> {
         if root.file_name().is_none_or(|s| s != "Codex Memory")
             || !views::marker(
                 io::read(&root.join("Home.md"))?.as_deref(),
@@ -305,11 +330,14 @@ impl Store {
         }
         Ok(())
     }
-    fn read_binding(&self, path: &Path) -> Result<Option<Binding>> {
+    pub(super) fn read_binding(&self, path: &Path) -> Result<Option<Binding>> {
         let Some(raw) = io::read(path)? else {
             return Ok(None);
         };
         let v: Value = serde_json::from_str(&raw).map_err(io::err)?;
+        if v == json!({"disabled":true}) {
+            return Ok(None);
+        }
         let root = PathBuf::from(v["root"].as_str().ok_or("Invalid memory binding")?);
         let project = fmt::project(v["project"].as_str().ok_or("Invalid memory binding")?)?.into();
         let mode = v["mode"]
@@ -324,6 +352,7 @@ impl Store {
             return Err("Invalid memory root path".into());
         }
         Ok(Some(Binding {
+            shared: false,
             root,
             project,
             mode,
@@ -356,10 +385,15 @@ impl Store {
     pub fn disable(&self, cwd: &Path) -> Result<bool> {
         let path = scope::binding_path(&self.state, cwd)?;
         let _binding_lock = self.lock_binding(&path)?;
-        io::delete(&path)
+        io::state(&self.state, cwd, true)?;
+        io::write(&path, r#"{"disabled":true}"#, true, None)?;
+        Ok(true)
     }
     pub fn root(&self, b: &Binding) -> Result<PathBuf> {
         self.check_home(&b.root)?;
+        if b.shared {
+            return Ok(b.root.join("Shared"));
+        }
         Ok(b.root.join("Projects").join(fmt::project(&b.project)?))
     }
     pub fn setup(
@@ -373,6 +407,17 @@ impl Store {
         let settings = scope::binding_path(&self.state, repo)?;
         let _binding_lock = self.lock_binding(&settings)?;
         let prior = self.read_binding(&settings)?;
+        self.setup_locked(vault, project, mode, &settings, prior, None)
+    }
+    pub(super) fn setup_locked(
+        &self,
+        vault: &Path,
+        project: &str,
+        mode: Option<&str>,
+        settings: &Path,
+        prior: Option<Binding>,
+        owner: Option<&str>,
+    ) -> Result<Binding> {
         let mode = mode
             .or(prior.as_ref().map(|b| b.mode.as_str()))
             .unwrap_or("auto");
@@ -383,6 +428,7 @@ impl Store {
         if !io::directory(&vault.join(".obsidian"), false, false)? {
             return Err("Selected directory is not an Obsidian vault".into());
         }
+        let _vault_lock = io::lock(&vault, &vault)?;
         let root = vault.join("Codex Memory");
         io::directory(&root, true, false)?;
         let home = io::read(&root.join("Home.md"))?;
@@ -402,6 +448,10 @@ impl Store {
             io::write(&path, &text, false, None)?;
             self.check_home(&root)?;
         }
+        let project = match owner {
+            Some(hash) => auto::claim_project(&root, project, hash)?,
+            None => project.to_owned(),
+        };
         let generation = match prior.as_ref() {
             Some(previous)
                 if io::equal(&previous.root, &root)
@@ -413,8 +463,9 @@ impl Store {
             _ => Some(io::nonce()?),
         };
         let b = Binding {
+            shared: false,
             root,
-            project: project.into(),
+            project: project.clone(),
             mode: mode.into(),
             generation,
         };
@@ -433,7 +484,7 @@ impl Store {
             }
             io::write(
                 &page,
-                &views::asset(&self.package, "Project.md")?.replace("@PROJECT@", project),
+                &views::asset(&self.package, "Project.md")?.replace("@PROJECT@", &project),
                 false,
                 None,
             )?;
@@ -445,7 +496,7 @@ impl Store {
         if let Some(generation) = &b.generation {
             settings_json["generation"] = json!(generation);
         }
-        io::write(&settings, &settings_json.to_string(), true, None)?;
+        io::write(settings, &settings_json.to_string(), true, None)?;
         Ok(b)
     }
     pub fn statuses(&self, root: &Path) -> Result<(BTreeMap<String, Fields>, BTreeSet<String>)> {
@@ -516,7 +567,7 @@ impl Store {
         hidden.extend(predecessors.into_values());
         Ok((approvals, hidden))
     }
-    fn public_record(
+    pub(super) fn public_record(
         &self,
         root: &Path,
         id: &str,
@@ -852,6 +903,20 @@ impl Store {
         Ok(json!({"id":id,"status":"forgotten"}))
     }
     pub fn search(&self, b: &Binding, query: &str, limit: usize) -> Result<Value> {
+        self.ranked_records(b, query, limit, false)
+    }
+
+    pub(super) fn recall(&self, b: &Binding, query: &str, limit: usize) -> Result<Value> {
+        self.ranked_records(b, query, limit, true)
+    }
+
+    fn ranked_records(
+        &self,
+        b: &Binding,
+        query: &str,
+        limit: usize,
+        fill_with_rules: bool,
+    ) -> Result<Value> {
         use unicode_casefold::UnicodeCaseFold;
         if query.chars().count() > 500 || !(1..=50).contains(&limit) {
             return Err("Invalid memory search query or limit".into());
@@ -868,13 +933,28 @@ impl Store {
                 }
             }
         }
-        if terms.is_empty() {
+        if terms.is_empty() && !fill_with_rules {
             return Ok(json!([]));
+        }
+        let stemmer = Stemmer::create(Algorithm::Russian);
+        let stems: BTreeSet<String> = terms
+            .iter()
+            .filter_map(|word| russian_stem(&stemmer, word))
+            .collect();
+        let mut expression = format!(
+            "{{title body}} : ({})",
+            fts_alternatives(terms.iter().map(String::as_str))
+        );
+        if !stems.is_empty() {
+            expression.push_str(&format!(
+                " OR forms : ({})",
+                fts_alternatives(stems.iter().map(String::as_str))
+            ));
         }
         let root = self.root(b)?;
         let (a, h) = self.statuses(&root)?;
         let conn = rusqlite::Connection::open_in_memory().map_err(io::err)?;
-        conn.execute_batch("CREATE VIRTUAL TABLE entries USING fts5(id UNINDEXED,title,body)")
+        conn.execute_batch("CREATE VIRTUAL TABLE entries USING fts5(id UNINDEXED,title,body,forms,created UNINDEXED)")
             .map_err(io::err)?;
         let mut entries = BTreeMap::new();
         for (id, a) in a {
@@ -882,31 +962,61 @@ impl Store {
                 continue;
             }
             if let Some(v) = self.public_record(&root, &id, Some(&a))? {
+                let title = v["title"].as_str().unwrap().case_fold().collect::<String>();
+                let body = v["body"].as_str().unwrap().case_fold().collect::<String>();
+                let forms = if stems.is_empty() {
+                    String::new()
+                } else {
+                    regex
+                        .find_iter(&title)
+                        .chain(regex.find_iter(&body))
+                        .filter_map(|m| russian_stem(&stemmer, m.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
                 conn.execute(
-                    "INSERT INTO entries VALUES (?,?,?)",
-                    rusqlite::params![
-                        id,
-                        v["title"].as_str().unwrap().case_fold().collect::<String>(),
-                        v["body"].as_str().unwrap().case_fold().collect::<String>()
-                    ],
+                    "INSERT INTO entries VALUES (?,?,?,?,?)",
+                    rusqlite::params![id, title, body, forms, v["created"].as_str()],
                 )
                 .map_err(io::err)?;
                 entries.insert(id, v);
             }
         }
-        let expression = terms
-            .iter()
-            .map(|s| format!("\"{s}\""))
-            .collect::<Vec<_>>()
-            .join(" OR ");
-        let mut stmt=conn.prepare("SELECT id FROM entries WHERE entries MATCH ? ORDER BY bm25(entries,0,2,1),id LIMIT ?").map_err(io::err)?;
-        let ids = stmt
-            .query_map(rusqlite::params![expression, limit as i64], |r| {
-                r.get::<_, String>(0)
-            })
-            .map_err(io::err)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(io::err)?;
+        let mut ids = if terms.is_empty() {
+            Vec::new()
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id FROM entries WHERE entries MATCH ?
+             ORDER BY bm25(entries,0,2,1,0.35,0), julianday(created) DESC, id LIMIT ?",
+                )
+                .map_err(io::err)?;
+            let matched = stmt
+                .query_map(rusqlite::params![expression, limit as i64], |r| {
+                    r.get::<_, String>(0)
+                })
+                .map_err(io::err)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(io::err)?;
+            matched
+        };
+        if fill_with_rules && ids.len() < limit {
+            let mut recent = entries
+                .iter()
+                .filter(|(id, record)| {
+                    !ids.contains(id)
+                        && matches!(record["kind"].as_str(), Some("preference" | "correction"))
+                })
+                .map(|(id, record)| (std::cmp::Reverse(record["created"].as_str()), id))
+                .collect::<Vec<_>>();
+            recent.sort_unstable();
+            ids.extend(
+                recent
+                    .into_iter()
+                    .take(limit - ids.len())
+                    .map(|(_, id)| id.clone()),
+            );
+        }
         Ok(json!(ids
             .iter()
             .map(|id| entries[id].clone())

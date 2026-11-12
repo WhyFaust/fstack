@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-labelledby="title desc">
   <title id="title">Состав fstack и подключение к Codex</title>
-  <desc id="desc">Команда /faust-mode включает процесс в чате до /faust-mode-off. Codex загружает навыки из установленного плагина. Setup переносит управляемые роли из profile в профиль Codex и согласует настройки. После подключения проекта и одобрения хуков нативный бинарник обслуживает память: заметки в Obsidian, привязки и очередь в профиле Codex.</desc>
+  <desc id="desc">Команда /faust-mode включает процесс в чате до /faust-mode-off. Codex загружает навыки из установленного плагина. Setup переносит управляемые роли из profile в профиль Codex и согласует настройки. Одобренные хуки находят рабочий vault и создают область проекта, нативный бинарник обслуживает память: заметки в Obsidian, привязки и очередь в профиле Codex.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#865843" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -9,7 +9,7 @@
   <rect x="1" y="1" width="998" height="638" rx="24" fill="#fffaf3" stroke="#e5d7c9" stroke-width="2"/>
   <g font-family="DejaVu Sans, sans-serif">
     <text x="40" y="42" fill="#9b4d31" font-size="13" font-weight="700" letter-spacing="2">УСТРОЙСТВО ПАКЕТА</text>
-    <text x="40" y="82" fill="#322921" font-size="30" font-weight="700">fstack включается через /faust-mode</text>
+    <text x="40" y="82" fill="#322921" font-size="30" font-weight="700">Координатор включается через /faust-mode</text>
     <text x="40" y="127" fill="#6e6259" font-size="16">В платформенном архиве</text>
     <text x="630" y="127" fill="#6e6259" font-size="16">В рабочем окружении</text>
 
@@ -43,13 +43,13 @@
     <text x="65" y="508" fill="#322921" font-size="23" font-weight="700">Память на Rust</text>
     <text x="65" y="534" fill="#6e6259" font-size="16">Готовый бинарник и хуки Codex</text>
     <path d="M 390 506 H 608" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="500" y="489" fill="#6e6259" font-size="15" text-anchor="middle">После подключения</text>
+    <text x="500" y="489" fill="#6e6259" font-size="15" text-anchor="middle">В обычном чате</text>
     <rect x="630" y="440" width="330" height="112" rx="15" fill="#eaf0e4" stroke="#becdb2"/>
     <text x="655" y="482" fill="#322921" font-size="23" font-weight="700">Память проекта</text>
     <text x="655" y="513" fill="#526547" font-size="16">Markdown в Obsidian</text>
     <text x="655" y="537" fill="#526547" font-size="16">Привязки и очередь в Codex</text>
 
     <path d="M 40 579 H 960" stroke="#e5d7c9"/>
-    <text x="40" y="608" fill="#6e6259" font-size="15">Память требует привязки проекта к vault и одобренных хуков. Setup меняет выбранный профиль.</text>
+    <text x="40" y="608" fill="#6e6259" font-size="15">Одобренные хуки автоматически подключают проект к рабочему vault. Setup меняет выбранный профиль.</text>
   </g>
 </svg>

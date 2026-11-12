@@ -365,6 +365,10 @@ pub fn state(dir: &Path, cwd: &Path, create: bool) -> Result<bool> {
     if within(dir, cwd) {
         return Err("Memory hook state must be outside the workspace".into());
     }
+    profile_state(dir, create)
+}
+
+pub fn profile_state(dir: &Path, create: bool) -> Result<bool> {
     for p in dir.ancestors() {
         if info(&p.join(".git"))?.is_some() {
             return Err("Memory hook state must be outside the workspace".into());

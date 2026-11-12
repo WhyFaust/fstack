@@ -68,6 +68,30 @@ impl Pending {
             cwd: cwd.into(),
         }
     }
+    pub fn session_epoch(
+        &self,
+        session: &str,
+        legacy: Option<String>,
+        create: bool,
+    ) -> Result<Option<String>> {
+        let dir = self.state.join("memory-sessions");
+        if !io::state(&self.state, &self.cwd, create)? || !io::directory(&dir, create, true)? {
+            return Ok(legacy);
+        }
+        let path = dir.join(digest(&[session]));
+        if let Some(epoch) = io::read(&path)? {
+            return Ok(Some(epoch));
+        }
+        if !create {
+            return Ok(legacy);
+        }
+        let epoch = match legacy {
+            Some(epoch) => epoch,
+            None => io::nonce()?,
+        };
+        io::write(&path, &epoch, false, None)?;
+        io::read(&path)
+    }
     fn available(&self, create: bool) -> Result<bool> {
         if !io::state(&self.state, &self.cwd, create)? {
             return Ok(false);
@@ -611,7 +635,7 @@ impl Pending {
                     .state
                     .join("faust-mode-sessions")
                     .join(digest(&[&session]));
-                if io::read(&marker)? != epoch {
+                if self.session_epoch(&session, io::read(&marker)?, false)? != epoch {
                     continue;
                 }
             }

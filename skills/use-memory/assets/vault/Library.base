@@ -1,6 +1,6 @@
 filters:
   and:
-    - 'file.inFolder("Codex Memory/Projects")'
+    - '(file.inFolder("Codex Memory/Projects") || file.folder == "Codex Memory/Shared/Records")'
     - 'file.folder.endsWith("/Records")'
     - 'file.ext == "md"'
     - 'fstack_memory == 1'
@@ -8,7 +8,7 @@ filters:
     - 'this.file.properties.fstack_memory_project == null || file.folder == "Codex Memory/Projects/" + this.file.properties.fstack_memory_project + "/Records"'
 formulas:
   record: 'link(file.path, title)'
-  project: 'file.folder.split("/")[2]'
+  project: 'if(file.folder == "Codex Memory/Shared/Records", "Общие", file.folder.split("/")[2])'
 properties:
   formula.record:
     displayName: Запись
