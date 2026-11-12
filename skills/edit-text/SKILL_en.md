@@ -1,10 +1,10 @@
 ---
 name: edit-text
-description: "Proofreads, simplifies, and shortens existing prose in its current format while preserving meaning, facts, conditions, and voice."
+description: "Proofreads, simplifies, and shortens existing prose for the same audience in its current format while preserving meaning, facts, conditions, and voice."
 license: MIT
 metadata:
   short-description: Prose editing that preserves meaning and voice
-  version: 2.0.0
+  version: 2.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

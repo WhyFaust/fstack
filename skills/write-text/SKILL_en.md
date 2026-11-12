@@ -1,10 +1,10 @@
 ---
 name: write-text
-description: 'Drafts posts, articles, emails, scripts, technical explanations and documentation, descriptions, titles, captions, comments and replies, proposes ideas and outlines, and adapts prose to a new audience, format or platform. Editing in the original format belongs to edit-text.'
+description: 'Drafts posts, articles, emails, scripts, technical explanations and documentation, descriptions, titles, captions, comments and replies, proposes ideas and outlines, and adapts prose to a new audience, format or platform. Use edit-text for edits that keep the audience and format.'
 license: MIT
 metadata:
   short-description: Original prose, replies and format adaptation
-  version: 2.0.0
+  version: 2.0.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -25,7 +25,7 @@ Identify what the reader needs, where the text will appear, and whose voice it u
 - For a technical explanation, documentation or instructions, apply the [clarity guidance](references/adaptation_en.md#technical-explanations-and-instructions), retaining the depth and terminology the intended reader needs.
 - For ideas, titles, outlines or critique, return the requested deliverable. Use the [adaptation reference](references/adaptation_en.md) for structure, format changes, comment threads and field constraints.
 
-For editing within the existing format, use [$fstack:edit-text](../edit-text/SKILL_en.md). For fresh topics or facts that may have changed, use [$fstack:research-for-text](../research-for-text/SKILL_en.md).
+For edits that keep the audience and format, use [$fstack:edit-text](../edit-text/SKILL_en.md). For fresh topics or facts that may have changed, use [$fstack:research-for-text](../research-for-text/SKILL_en.md).
 
 ## Verification and result
 

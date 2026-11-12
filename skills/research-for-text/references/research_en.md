@@ -32,7 +32,7 @@ Other people's posts can illustrate presentation or establish what their authors
 
 Assess what is actually new, why it matters to the chosen audience and whether the evidence is sufficient. Prefer one relevant topic to a random collection of loud announcements. For a digest, choose distinct events and state its period.
 
-If the last 72 hours contain no suitable news, you may widen a slow topic to seven days and disclose it. If that also yields nothing, say no fresh, verified topic was found and offer a longer review period, a stable topic or a different focus. Do not relabel old material as fresh.
+If the default 72-hour window contains no suitable news, you may widen a slow topic to seven days and disclose it. If that also yields nothing, say no fresh, verified topic was found and offer a longer review period, a stable topic or a different focus. Do not relabel old material as fresh.
 
 When sources conflict, look for a clarification or correction from the primary source. If unresolved, preserve the uncertainty in the draft or choose another topic. Do not remove a material qualification to make the copy cleaner.
 
