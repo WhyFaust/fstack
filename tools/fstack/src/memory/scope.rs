@@ -52,7 +52,7 @@ fn git(executable: &Path, cwd: &Path, args: &[&str]) -> Result<Option<Vec<u8>>> 
     }
     Ok(status.success().then_some(out))
 }
-pub fn identity(cwd: &Path) -> Result<String> {
+fn legacy_identity(cwd: &Path) -> Result<String> {
     let cwd = io::absolute(cwd)?;
     if !io::directory(&cwd, false, false)? {
         return Err("Working directory does not exist".into());
@@ -87,7 +87,7 @@ pub fn identity(cwd: &Path) -> Result<String> {
     }
     let root = io::absolute(Path::new(lines[0]))?;
     let common = io::absolute(Path::new(lines[1]))?;
-    if !io::equal(&root, &marker) || !io::directory(&common, false, false)? {
+    if !io::same_directory(&root, &marker) || !io::directory(&common, false, false)? {
         return Err("Invalid Git memory scope".into());
     }
     let worktrees = git(&exe, &cwd, &["worktree", "list", "--porcelain", "-z"])?
@@ -99,15 +99,37 @@ pub fn identity(cwd: &Path) -> Result<String> {
         .any(|p| {
             io::absolute(Path::new(p))
                 .ok()
-                .is_some_and(|p| io::equal(&p, &root))
+                .is_some_and(|p| io::same_directory(&p, &root))
         })
     {
         return Err("Working directory is not a registered Git worktree".into());
     }
     Ok(format!("git:{}", io::normalized(&common)))
 }
+fn canonical_id(legacy: &str) -> String {
+    #[cfg(windows)]
+    if let Some((kind, path)) = legacy.split_once(':') {
+        return format!("{kind}:{}", io::directory_key(Path::new(path)));
+    }
+    legacy.to_owned()
+}
+
+pub(super) fn binding_location(state: &Path, cwd: &Path) -> Result<(String, PathBuf)> {
+    let legacy = legacy_identity(cwd)?;
+    let identity = canonical_id(&legacy);
+    let canonical_path = state.join(format!("{}.json", io::hash(&identity)));
+    #[cfg(windows)]
+    if identity != legacy && !io::file(&canonical_path)? {
+        let legacy_path = state.join(format!("{}.json", io::hash(legacy)));
+        if io::file(&legacy_path)? {
+            return Ok((identity, legacy_path));
+        }
+    }
+    Ok((identity, canonical_path))
+}
+
 pub fn binding_path(state: &Path, cwd: &Path) -> Result<PathBuf> {
-    Ok(state.join(format!("{}.json", io::hash(identity(cwd)?))))
+    Ok(binding_location(state, cwd)?.1)
 }
 
 pub fn executable(marker: &Path, paths: &std::ffi::OsStr) -> Result<PathBuf> {

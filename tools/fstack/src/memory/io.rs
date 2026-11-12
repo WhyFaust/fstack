@@ -60,6 +60,36 @@ pub fn equal(left: &Path, right: &Path) -> bool {
         left == right
     }
 }
+/// Scope keys use the same spelling when PowerShell expands a Windows 8.3 path.
+pub fn directory_key(path: &Path) -> String {
+    #[cfg(windows)]
+    if let Ok(physical) = path.canonicalize() {
+        return normalized(&physical);
+    }
+    normalized(path)
+}
+
+pub fn same_directory(left: &Path, right: &Path) -> bool {
+    if equal(left, right) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        if !left.is_absolute()
+            || !right.is_absolute()
+            || directory(left, false, false) != Ok(true)
+            || directory(right, false, false) != Ok(true)
+        {
+            return false;
+        }
+        if let (Ok((lv, li, _)), Ok((rv, ri, _))) =
+            (windows_info(left, true), windows_info(right, true))
+        {
+            return li != 0 && (lv, li) == (rv, ri);
+        }
+    }
+    false
+}
 pub fn within(path: &Path, root: &Path) -> bool {
     #[cfg(windows)]
     {

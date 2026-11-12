@@ -275,7 +275,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         )
         .unwrap();
         let prefix = &pattern.captures(context).unwrap()[1];
-        let mut command = format!("{prefix} --correction 'Запуск тестов' '{body}'");
+        let mut command = format!(r#"{prefix} --correction "Запуск тестов" "{body}""#);
         if let Some(id) = predecessor {
             command.push_str(&format!(" --supersedes {id}"));
         }
@@ -310,7 +310,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
               "tool_response":receipt}),
         );
     };
-    let rule = "Для проверок проекта используй uv run pytest.";
+    let rule = "В разделе «Проверки» запускай uv run pytest.";
     stage("offline", None, rule);
     assert!(event("Stop", "one", "offline", stop())["systemMessage"].is_string());
     let diagnostics = || runtime.json(&["memory", "diagnostics"], None);

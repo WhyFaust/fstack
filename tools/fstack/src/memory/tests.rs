@@ -912,8 +912,8 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
         .unwrap();
     assert_eq!(f.store.resolve(&f.repo).unwrap().unwrap().project, "pilot");
     assert_eq!(
-        scope::identity(&f.repo).unwrap(),
-        scope::identity(&nested).unwrap()
+        scope::binding_location(&f.store.state, &f.repo).unwrap().0,
+        scope::binding_location(&f.store.state, &nested).unwrap().0
     );
     let forged = f.base.join("forged");
     fs::create_dir(&forged).unwrap();
@@ -1974,6 +1974,48 @@ fn correction_requires_a_single_literal_command_in_an_authorized_turn() {
     assert_eq!(inbox[0]["kind"], "correction");
 }
 
+#[test]
+fn double_quoted_corrections_retry_expansions_without_staging_or_changing_other_turns() {
+    let f = Fixture::new("auto", "pilot");
+    let token = f.token("review");
+    let packed = stage_command(&token, &json!({"action":"skip"}));
+    let (prefix, _) = packed.split_once(" --payload ").unwrap();
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    for body in [
+        "Use $PWD",
+        "Use `pwd`",
+        r"Use C:\Temp",
+        "Use !history",
+        "Use %TEMP%",
+    ] {
+        let cmd = format!(r#"{prefix} --correction "Проверки" "{body}""#);
+        let response = post(&f, "review", cmd.clone(), json!({}));
+        assert!(response["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("stage --payload"));
+        assert_eq!(
+            post(&f, "review", format!("{cmd}; echo done"), json!({})),
+            json!({})
+        );
+        assert_eq!(
+            post(&f, "review", cmd.clone(), json!({"agent_id":"worker"})),
+            json!({})
+        );
+        f.token("other");
+        assert_eq!(post(&f, "other", cmd, json!({})), json!({}));
+    }
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["staged"], 0);
+    let cmd = format!(
+        r#"{prefix} --correction "Заголовок" "В разделе «Проверки» указывай команду и результат.""#
+    );
+    assert_eq!(post(&f, "review", cmd, json!({})), json!({}));
+    assert_eq!(f.hook("Stop", "review", json!({})), json!({}));
+    assert_eq!(
+        f.store.search(&f.binding, "Заголовок", 3).unwrap()[0]["body"],
+        "В разделе «Проверки» указывай команду и результат."
+    );
+}
 #[test]
 fn a_new_chat_considers_a_project_rule_without_topic_overlap() {
     let f = Fixture::new("auto", "sample");

@@ -179,8 +179,8 @@ impl Store {
         Ok(vault.map(|vault| {
             super::pending::digest(&[
                 "memory-ensure",
-                &io::normalized(cwd),
-                &io::normalized(&vault),
+                &io::directory_key(cwd),
+                &io::directory_key(&vault),
             ])
         }))
     }
@@ -191,9 +191,8 @@ impl Store {
             return Ok(None);
         }
         io::state(&self.state, &cwd, false)?;
-        let identity = scope::identity(&cwd)?;
+        let (identity, settings) = scope::binding_location(&self.state, &cwd)?;
         let owner = io::hash(&identity);
-        let settings = self.state.join(format!("{owner}.json"));
         if io::file(&settings)? {
             return self.read_binding(&settings);
         }
@@ -306,7 +305,7 @@ mod tests {
             .unwrap();
         let accidental = legacy.root.join("Projects").join(format!(
             "widget-{}",
-            &io::hash(scope::identity(&first).unwrap())[..12]
+            &io::hash(scope::binding_location(&store.state, &first).unwrap().0)[..12]
         ));
         fs::create_dir(&accidental).unwrap();
         fs::write(accidental.join("Keep.md"), "Unmanaged project").unwrap();

@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 pub fn scope_id(b: &Binding, cwd: &Path) -> String {
-    let cwd = io::normalized(cwd);
+    let cwd = io::directory_key(cwd);
     let root = io::normalized(&b.root);
     let mut parts = vec![cwd.as_str(), root.as_str(), &b.project, &b.mode];
     if let Some(generation) = &b.generation {
@@ -95,6 +95,7 @@ fn activation(package: &Path) -> String {
 }
 enum Posted {
     Ensure(String),
+    RetryCorrection(String),
     Stage(String, Value),
 }
 fn posted(payload: &Value) -> Result<Option<Posted>> {
@@ -147,20 +148,48 @@ fn posted(payload: &Value) -> Result<Option<Posted>> {
     } else if let Some(encoded) = arguments.strip_prefix("--payload ") {
         decode(encoded).ok()
     } else {
-        literal_correction(arguments)
+        return Ok(arguments
+            .strip_prefix("--correction ")
+            .and_then(|fields| literal_correction(token, fields)));
     };
     Ok(value.map(|v| Posted::Stage(token.into(), v)))
 }
-fn literal_correction(arguments: &str) -> Option<Value> {
-    let fields = arguments.strip_prefix("--correction '")?;
-    let (title, fields) = fields.split_once("' '")?;
-    let (body, suffix) = fields.split_once('\'')?;
-    let predecessor = if suffix.is_empty() {
+fn portable_text(c: char) -> bool {
+    c.is_alphanumeric() || " .,:;-_/()[]+=?«»—–…".contains(c)
+}
+fn quoted_field(text: &str) -> Option<(&str, &str, bool)> {
+    let quote = text.chars().next().filter(|c| matches!(c, '\'' | '"'))?;
+    let (field, rest) = text[1..].split_once(quote)?;
+    Some((
+        field,
+        rest,
+        quote == '\'' || field.chars().all(portable_text),
+    ))
+}
+fn literal_correction(token: &str, fields: &str) -> Option<Posted> {
+    let retry = || Posted::RetryCorrection(token.into());
+    let pair = quoted_field(fields).and_then(|(title, rest, safe_title)| {
+        let (body, suffix, safe_body) = quoted_field(rest.strip_prefix(' ')?)?;
+        Some((title, body, suffix, safe_title && safe_body))
+    });
+    let Some((title, body, suffix, safe)) = pair else {
+        return fields
+            .chars()
+            .all(|c| c.is_alphanumeric() || " .,:-_/\'\"".contains(c))
+            .then(retry);
+    };
+    let predecessor = if suffix.trim_matches(' ').is_empty() {
         None
     } else {
-        Some(suffix.strip_prefix(" --supersedes ")?)
+        Some(format::id(suffix.strip_prefix(" --supersedes ")?).ok()?)
     };
-    correction(title, body, predecessor).ok()
+    if !safe {
+        return Some(retry());
+    }
+    Some(match correction(title, body, predecessor) {
+        Ok(value) => Posted::Stage(token.into(), value),
+        Err(_) => retry(),
+    })
 }
 pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<Value> {
     if payload["hook_event_name"] != event
@@ -178,12 +207,15 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     let plan = [&payload["permission_mode"], collab, &payload["mode"]]
         .iter()
         .any(|v| **v == "plan");
-    if payload["cwd"]
+    // Only accept the event's spelling after proving it refers to the process's
+    // directory. This preserves access to legacy short-path bindings.
+    let Some(cwd) = payload["cwd"]
         .as_str()
-        .is_none_or(|s| !io::equal(Path::new(s), cwd))
-    {
+        .map(Path::new)
+        .filter(|path| io::same_directory(path, cwd))
+    else {
         return Ok(json!({}));
-    }
+    };
     if event == "SessionStart" {
         return Ok(json!({}));
     }
@@ -399,6 +431,17 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             output["systemMessage"] = json!("Не удалось подобрать контекст памяти fstack. Продолжай основную задачу. Выполни отдельный search, если для ответа не хватает контекста из памяти.");
         }
         return Ok(output);
+    }
+    if let Some(Posted::RetryCorrection(token)) = &staged {
+        return Ok(
+            if pending::token_parts(token).is_some_and(|(issued, _)| issued == key)
+                && pending.is_current(token, &scope)?
+            {
+                extra(event,"Поправка не попала в очередь. Повтори отдельный stage с двумя однострочными полями в одинарных кавычках. Для кавычек, подстановок и многострочного текста используй pack и отдельный stage --payload с текущим токеном.".into())
+            } else {
+                json!({})
+            },
+        );
     }
     if let Some(Posted::Stage(token, value)) = staged {
         if pending.stage(&key, &token, &scope, &value)? {
