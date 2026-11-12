@@ -258,8 +258,6 @@ fn project_prefix(identity: &str) -> String {
     }
 }
 
-// The vault lock covers both claiming a name and initializing the project. Only
-// the opaque identity digest is recorded in the vault, never workstation paths.
 pub(super) fn claim_project(root: &Path, prefix: &str, owner: &str) -> Result<String> {
     for length in [12, 16, 20] {
         let name = format!("{prefix}-{}", &owner[..length]);

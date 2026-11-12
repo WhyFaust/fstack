@@ -207,8 +207,6 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     let plan = [&payload["permission_mode"], collab, &payload["mode"]]
         .iter()
         .any(|v| **v == "plan");
-    // Only accept the event's spelling after proving it refers to the process's
-    // directory. This preserves access to legacy short-path bindings.
     let Some(cwd) = payload["cwd"]
         .as_str()
         .map(Path::new)

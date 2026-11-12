@@ -10,8 +10,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-// Keep identifiers and other languages on the exact-token path. Snowball's
-// Russian algorithm expects lowercase Cyrillic with ё normalized to е.
 fn russian_stem(stemmer: &Stemmer, word: &str) -> Option<String> {
     if !word.chars().all(|ch| matches!(ch, 'а'..='я' | 'ё')) {
         return None;

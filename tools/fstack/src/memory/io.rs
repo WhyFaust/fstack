@@ -60,7 +60,6 @@ pub fn equal(left: &Path, right: &Path) -> bool {
         left == right
     }
 }
-/// Scope keys use the same spelling when PowerShell expands a Windows 8.3 path.
 pub fn directory_key(path: &Path) -> String {
     #[cfg(windows)]
     if let Ok(physical) = path.canonicalize() {
@@ -124,8 +123,6 @@ pub fn within(path: &Path, root: &Path) -> bool {
         let Ok(physical_root) = root.canonicalize() else {
             return false;
         };
-        // A future state/cache path can already sit under an aliased existing
-        // directory. Stop at its nearest existing ancestor, even before setup.
         for ancestor in path.ancestors() {
             match ancestor.canonicalize() {
                 Ok(physical) => return contains(&physical, &physical_root),

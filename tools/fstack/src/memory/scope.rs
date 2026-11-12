@@ -126,8 +126,6 @@ fn saved_alias(state: &Path, identity: &str, legacy: &str) -> Result<Option<Path
     let long = Path::new(path);
     let mut spellings = BTreeSet::from([identity.to_owned(), legacy.to_owned()]);
     if let Some(short) = io::short_directory(long) {
-        // Windows TEMP and similar environment variables can use a short prefix
-        // while the directory supplied by the client has a long final component.
         for (short_parent, long_parent) in short.ancestors().zip(long.ancestors()) {
             let suffix = long.strip_prefix(long_parent).map_err(io::err)?;
             let candidate = if suffix.as_os_str().is_empty() {

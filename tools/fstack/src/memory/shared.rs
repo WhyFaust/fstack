@@ -1,4 +1,3 @@
-//! Preferences explicitly requested for all connected projects in the same vault.
 use super::{
     format, io, read_json,
     store::{Binding, Store},
@@ -19,8 +18,6 @@ pub(super) fn is_root(root: &Path) -> bool {
             .is_some_and(|s| s == "Codex Memory")
 }
 
-// Never store this scoped binding in the project configuration. Opening
-// another project with the ordinary slug "shared" still resolves under Projects/.
 fn binding(b: &Binding) -> Binding {
     Binding {
         shared: true,
@@ -44,7 +41,6 @@ fn for_recall(store: &Store, project: &Binding) -> Result<Option<Binding>> {
     Ok(Some(shared))
 }
 
-/// Emit only native IDs, never arbitrary vault text, into the hook context.
 pub(super) fn recall_context(
     store: &Store,
     project: &Binding,
@@ -129,7 +125,6 @@ pub(super) fn execute(store: &Store, project: &Binding, args: &[String]) -> Resu
     }
     let shared = binding(project);
     let root = store.root(&shared)?;
-    // Open only our namespace. Unrelated files in a user's Shared folder are never scanned.
     let exists = check_page(&root)?;
     let result = match (command.as_str(), rest) {
         ("search", [query]) => search(store, &shared, exists, query, 5),
