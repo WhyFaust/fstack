@@ -130,6 +130,17 @@ fn command(
 }
 
 fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
+    for installed_file in super::descendants(&installed.join("skills"), &[])? {
+        if installed_file.is_file() {
+            let relative = installed_file
+                .strip_prefix(installed)
+                .map_err(|e| e.to_string())?;
+            require(
+                source.join(relative).is_file(),
+                format!("Лишний файл установленного метода: {}", relative.display()),
+            )?;
+        }
+    }
     let mut files = vec![source.join("docs/skills.md")];
     files.extend(super::descendants(&source.join("skills"), &[])?);
     for file in files.into_iter().filter(|path| path.is_file()) {
@@ -373,6 +384,10 @@ mod tests {
             fs::write(root.join(template), "current template").unwrap();
         }
         check_installed_methods(&source, &installed).unwrap();
+        let obsolete = installed.join("skills/example/assets/retired.md");
+        fs::write(&obsolete, "retired template").unwrap();
+        assert!(check_installed_methods(&source, &installed).is_err());
+        fs::remove_file(obsolete).unwrap();
         fs::write(installed.join(template), "previous template").unwrap();
         assert!(check_installed_methods(&source, &installed).is_err());
         fs::remove_file(installed.join(template)).unwrap();
