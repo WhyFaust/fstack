@@ -129,6 +129,32 @@ fn command(
     Ok(text)
 }
 
+fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
+    for installed_file in super::descendants(&installed.join("skills"), &[])? {
+        if installed_file.is_file() {
+            let relative = installed_file
+                .strip_prefix(installed)
+                .map_err(|e| e.to_string())?;
+            require(
+                source.join(relative).is_file(),
+                format!("Лишний файл установленного метода: {}", relative.display()),
+            )?;
+        }
+    }
+    let mut files = vec![source.join("docs/skills.md")];
+    files.extend(super::descendants(&source.join("skills"), &[])?);
+    for file in files.into_iter().filter(|path| path.is_file()) {
+        let relative = file.strip_prefix(source).map_err(|e| e.to_string())?;
+        let target = super::contained(installed, installed, relative, false)?;
+        require(
+            fs::read(&file).map_err(|e| e.to_string())?
+                == fs::read(&target).map_err(|e| e.to_string())?,
+            format!("Установленная копия отличается: {}", relative.display()),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     let executable = match args {
         [] => OsString::from("codex"),
@@ -195,6 +221,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         }),
         "Нет включённого плагина",
     )?;
+    check_installed_methods(root, &installed_path)?;
     for path in super::entries(&installed_path.join("skills"))? {
         if path.is_dir() {
             resources(&path, &installed_path)?;
@@ -335,7 +362,35 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     }
     println!(
         "{}",
-        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"hooks_discovered":events,"profile_roundtrip":"unchanged","roles_installed":ROLES,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
+        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"skill_files_and_catalog":"matched_source","hooks_discovered":events,"profile_roundtrip":"unchanged","roles_installed":ROLES,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_templates_must_match_the_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let installed = temp.path().join("installed");
+        let template = Path::new("skills/example/assets/template.md");
+        for root in [&source, &installed] {
+            fs::create_dir_all(root.join(template).parent().unwrap()).unwrap();
+            fs::create_dir_all(root.join("docs")).unwrap();
+            fs::write(root.join("docs/skills.md"), "catalog").unwrap();
+            fs::write(root.join(template), "current template").unwrap();
+        }
+        check_installed_methods(&source, &installed).unwrap();
+        let obsolete = installed.join("skills/example/assets/retired.md");
+        fs::write(&obsolete, "retired template").unwrap();
+        assert!(check_installed_methods(&source, &installed).is_err());
+        fs::remove_file(obsolete).unwrap();
+        fs::write(installed.join(template), "previous template").unwrap();
+        assert!(check_installed_methods(&source, &installed).is_err());
+        fs::remove_file(installed.join(template)).unwrap();
+        assert!(check_installed_methods(&source, &installed).is_err());
+    }
 }

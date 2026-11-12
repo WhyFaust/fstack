@@ -686,6 +686,33 @@ fn references(
     Ok(())
 }
 
+fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
+    let mut listed = BTreeSet::new();
+    for row in rx!(r"(?m)^\| `([a-z0-9-]+)` \|([^\n]*)").captures_iter(listing) {
+        let name = &row[1];
+        let instructions = row[2]
+            .trim_end()
+            .trim_end_matches('|')
+            .rsplit('|')
+            .next()
+            .unwrap_or("");
+        let targets = markdown_targets(instructions);
+        let entry = format!("../skills/{name}/SKILL.md");
+        require(
+            targets.first() == Some(&entry),
+            format!("Каталог: основная ссылка {name} должна вести на {entry}"),
+        )?;
+        require(
+            listed.insert(name.to_owned()),
+            format!("Каталог: повтор {name}"),
+        )?;
+    }
+    require(
+        !skills.is_empty() && &listed == skills,
+        "Каталог навыков не совпадает с пакетом",
+    )
+}
+
 pub(crate) fn check(root: &Path) -> Result<String> {
     native_notices(root)?;
     let manifest = json_file(&root.join(".codex-plugin/plugin.json"))?;
@@ -713,16 +740,7 @@ pub(crate) fn check(root: &Path) -> Result<String> {
     )?;
     let skills = skill_names(root)?;
     let listing = read(&root.join("docs/skills.md"))?;
-    let listed: Vec<_> = rx!(r"(?m)^\| `([a-z0-9-]+)` \|")
-        .captures_iter(&listing)
-        .map(|c| c[1].to_string())
-        .collect();
-    require(
-        !skills.is_empty()
-            && listed.len() == skills.len()
-            && listed.into_iter().collect::<BTreeSet<_>>() == skills,
-        "Каталог навыков не совпадает с пакетом",
-    )?;
+    check_catalog(&listing, &skills)?;
     for name in &skills {
         let folder = root.join("skills").join(name);
         for path in entries(&folder)? {
