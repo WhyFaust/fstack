@@ -1,12 +1,13 @@
 # Context7 через CLI
 
-Используй CLI, когда доступный MCP не умеет выполнить нужный поиск. Ошибка квоты
-требует официального источника, а не смены транспорта. `npx` может загрузить пакет;
-соблюдай разрешения среды.
+Используй настроенный CLI при прямом выборе или отсутствии подходящего MCP.
+Ниже указан установленный исполняемый файл. Если проект запускает его через
+свой package runner, используй команду проекта. `npx` может загрузить пакет.
+При квоте переходи к официальным документам.
 
 ```bash
-npx ctx7 library react "useEffect cleanup"
-npx ctx7 docs /facebook/react "useEffect cleanup with async operations"
+ctx7 library react "useEffect cleanup"
+ctx7 docs /facebook/react "useEffect cleanup with async operations"
 ```
 
 Получи ID библиотеки перед запросом документации. Исключение — корректный ID уже
@@ -17,6 +18,6 @@ npx ctx7 docs /facebook/react "useEffect cleanup with async operations"
 Конкретный запрос лучше общего: `Prisma relation cascade delete`, а не `database`.
 Не включай секреты, личные сведения и закрытый код. Не запускай `ctx7 setup`,
 `login` или `remove` для чтения документации: они меняют окружение или авторизацию.
-Неизвестные опции сверяй с `npx ctx7 --help`.
+Неизвестные опции сверяй с `ctx7 --help`.
 
 Источник: [Context7 CLI](https://github.com/upstash/context7/tree/master/packages/cli).
