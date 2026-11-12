@@ -259,6 +259,15 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
             _ => Err("Use memory vault or memory vault --set <absolute path>".into()),
         };
     }
+    if command == "ensure" && rest.len() == 2 && rest[0] == "--turn" {
+        let scope = store
+            .setup_scope(cwd)?
+            .ok_or("Memory setup is unavailable")?;
+        if !pending::Pending::new(&store.state, cwd).is_current(&rest[1], &scope)? {
+            return Err("Invalid or expired memory setup token".into());
+        }
+        return Ok(json!({"ready":true}));
+    }
     if command == "ensure" && rest.is_empty() {
         return Ok(status(store.auto_resolve(cwd)?.as_ref()));
     }

@@ -78,7 +78,7 @@ impl Fixture {
         pending::Pending::new(&self.store.state, &self.repo)
     }
     fn hook(&self, event: &str, turn: &str, extra: Value) -> Value {
-        let mut v = json!({"hook_event_name":event,"session_id":"session","turn_id":turn,"cwd":self.repo,"stop_hook_active":false});
+        let mut v = json!({"hook_event_name":event,"session_id":"session","turn_id":turn,"cwd":self.repo,"collaboration_mode":{"mode":"default"},"stop_hook_active":false});
         v.as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
@@ -122,6 +122,7 @@ fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
     }
     assert_eq!(f.hook("SessionStart", "plain", json!({})), json!({}));
     assert!(!f.store.state.join("faust-mode-sessions").exists());
+    assert!(!f.store.state.join("memory-sessions").exists());
 }
 
 #[test]
@@ -1298,14 +1299,10 @@ fn stage_action(f: &Fixture, turn: &str, request: &Value) {
 }
 
 fn read_memory_epoch(f: &Fixture) -> String {
-    io::read(
-        &f.store
-            .state
-            .join("memory-sessions")
-            .join(pending::digest(&["session"])),
-    )
-    .unwrap()
-    .unwrap()
+    f.pending()
+        .session_epoch("session", None, false)
+        .unwrap()
+        .unwrap()
 }
 
 #[test]
@@ -1605,9 +1602,12 @@ fn active_legacy_queue_keeps_its_epoch_after_the_coordinator_is_turned_off() {
         &json!({"action":"remember","candidate":candidate("Legacy heliotrope")}),
     );
     let key = pending::digest(&["session"]);
-    let legacy = io::read(&f.store.state.join("faust-mode-sessions").join(&key))
-        .unwrap()
-        .unwrap();
+    let legacy = io::nonce().unwrap();
+    fs::write(
+        f.store.state.join("faust-mode-sessions").join(&key),
+        &legacy,
+    )
+    .unwrap();
     let conn = rusqlite::Connection::open(f.store.state.join("pending.sqlite3")).unwrap();
     conn.execute(
         "UPDATE issued_modes SET epoch=? WHERE session='session'",
@@ -1615,7 +1615,6 @@ fn active_legacy_queue_keeps_its_epoch_after_the_coordinator_is_turned_off() {
     )
     .unwrap();
     drop(conn);
-    fs::remove_file(f.store.state.join("memory-sessions").join(&key)).unwrap();
 
     let off = f.hook(
         "UserPromptSubmit",
@@ -1824,6 +1823,90 @@ fn corrupt_tombstone_retains_accepted_write_until_repaired() {
                 "phase":"applied","staged":0,"pending":0
             })
         );
+    }
+}
+
+#[test]
+fn unknown_mode_stop_cannot_replay_an_older_action_without_current_turn_confirmation() {
+    let f = Fixture::new("auto", "pilot");
+    stage_action(
+        &f,
+        "previous",
+        &json!({"action":"remember","candidate":candidate("Deferred heliotrope")}),
+    );
+    let unknown = json!({"permission_mode":"default", "collaboration_mode":null});
+    f.hook(
+        "UserPromptSubmit",
+        "plan",
+        json!({"permission_mode":"default","collaboration_mode":null,"prompt":"Предложи план"}),
+    );
+    assert_eq!(f.hook("Stop", "plan", unknown.clone()), json!({}));
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    assert_eq!(
+        f.pending().diagnostics(&scope).unwrap()["phase"],
+        "unconfirmed"
+    );
+    assert_eq!(
+        f.store.search(&f.binding, "heliotrope", 3).unwrap(),
+        json!([])
+    );
+    stage_action(&f, "ordinary", &json!({"action":"skip"}));
+    assert_eq!(f.hook("Stop", "ordinary", unknown), json!({}));
+    assert_eq!(
+        f.store.search(&f.binding, "heliotrope", 3).unwrap()[0]["turn_id"],
+        "previous"
+    );
+}
+
+#[test]
+fn invalid_profile_layout_blocks_only_when_an_existing_generation_must_be_revoked() {
+    let f = Fixture::new("auto", "pilot");
+    let versioned = f.base.join("versioned");
+    fs::create_dir_all(versioned.join(".git")).unwrap();
+    let state = versioned.join("absent-profile/fstack/memory");
+    let store = Store::new(Some(state.clone()), &f.store.package).unwrap();
+    let event = json!({"hook_event_name":"UserPromptSubmit","session_id":"session","turn_id":"test",
+        "cwd":f.repo,"permission_mode":"default","prompt":"Продолжи работу"});
+    let result = hooks::hook(&store, "UserPromptSubmit", &event, &f.repo).unwrap();
+    assert!(result.get("decision").is_none());
+    assert!(!state.exists());
+    let generations = state.join("pending-generations");
+    fs::create_dir_all(&generations).unwrap();
+    fs::write(
+        generations.join(pending::digest(&["session", "test"])),
+        io::nonce().unwrap(),
+    )
+    .unwrap();
+    let result = hooks::hook(&store, "UserPromptSubmit", &event, &f.repo).unwrap();
+    assert_eq!(result["decision"], "block");
+}
+
+#[test]
+fn workspace_containing_the_profile_never_blocks_ordinary_prompts_or_creates_state() {
+    let f = Fixture::new("auto", "pilot");
+    let cwd = f.base.join("home");
+    fs::create_dir(&cwd).unwrap();
+    let state = cwd.join("profile/fstack/memory");
+    let store = Store::new(Some(state.clone()), &f.store.package).unwrap();
+    for path in [cwd.as_path(), cwd.ancestors().last().unwrap()] {
+        for (event, prompt) in [
+            ("UserPromptSubmit", "Исправь тесты"),
+            ("Stop", ""),
+            ("PostToolUse", ""),
+        ] {
+            let payload = json!({"hook_event_name":event,"session_id":"ordinary","turn_id":"test","cwd":path,"permission_mode":"default","prompt":prompt,"stop_hook_active":false});
+            assert_eq!(
+                hooks::hook(&store, event, &payload, path).unwrap(),
+                json!({})
+            );
+        }
+        let activation = json!({"hook_event_name":"UserPromptSubmit","session_id":"s","turn_id":"t","cwd":path,"permission_mode":"default","prompt":"/faust-mode Сделай задачу"});
+        let response = hooks::hook(&store, "UserPromptSubmit", &activation, path).unwrap();
+        assert!(response["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("faust-mode"));
+        assert!(!state.exists());
     }
 }
 

@@ -103,6 +103,96 @@ impl Runtime {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_shells_preserve_hook_directory_and_utf8() {
+    use std::os::windows::process::CommandExt;
+    let mut runtime = Runtime::new();
+    let base = runtime._temporary.path();
+    let package = base.join("Пакет & пример [1]");
+    fs::rename(&runtime.root, &package).unwrap();
+    runtime.binary = package.join("bin/fstack.exe");
+    runtime.root = package;
+    runtime.project = base.join("Проект & пример [2]");
+    fs::create_dir(&runtime.project).unwrap();
+    let vault = base.join("vault");
+    fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    runtime.json(
+        &[
+            "memory",
+            "init",
+            "--repo",
+            runtime.project.to_str().unwrap(),
+            "--vault",
+            vault.to_str().unwrap(),
+            "--project",
+            "test",
+            "--mode",
+            "auto",
+        ],
+        None,
+    );
+    let known=runtime.json(&["memory","remember"],Some(json!({"kind":"preference","title":"Кварцевит","body":"Кварцевит служит контрольным словом."})));
+    let id = known["id"].as_str().unwrap();
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
+    let event = "UserPromptSubmit";
+    let launcher = manifest["hooks"][event][0]["hooks"][0]["commandWindows"]
+        .as_str()
+        .unwrap();
+    let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+    for name in ["cmd", "powershell"] {
+        let mut command = if name == "cmd" {
+            let mut cmd = Command::new(system.join("cmd.exe"));
+            cmd.args(["/D", "/S", "/C"])
+                .raw_arg(format!(r#""{launcher}""#));
+            cmd
+        } else {
+            let mut ps = Command::new(system.join("WindowsPowerShell/v1.0/powershell.exe"));
+            ps.args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                launcher,
+            ]);
+            ps
+        };
+        let mut child = command
+            .current_dir(&runtime.project)
+            .env("CODEX_HOME", &runtime.home)
+            .env("PLUGIN_ROOT", &runtime.root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let payload = json!({"session_id":name,"turn_id":"turn","cwd":runtime.project,"hook_event_name":event,"permission_mode":"default","model":"fixture","transcript_path":null,"prompt":"/faust-mode Кварцевит"});
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let response: Value = serde_json::from_slice(&result.stdout).unwrap_or_else(|err| {
+            panic!("{name}: {err}, {}", String::from_utf8_lossy(&result.stdout))
+        });
+        let context = response["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name}: {response}"));
+        assert!(
+            context.contains(id) && context.contains("Память"),
+            "{name}: {context}"
+        );
+    }
+}
+
 #[test]
 fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
     let runtime = Runtime::new();
@@ -290,6 +380,11 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
 
 #[test]
 fn relocated_runtime_discovers_obsidian_registry_and_creates_the_project_on_demand() {
+    first_ordinary_turn(true);
+    first_ordinary_turn(false);
+}
+
+fn first_ordinary_turn(save_correction: bool) {
     let runtime = Runtime::new();
     let vault = runtime.root.parent().unwrap().join("My Work Vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
@@ -314,22 +409,100 @@ fn relocated_runtime_discovers_obsidian_registry_and_creates_the_project_on_dema
         json!({"enabled":false})
     );
     assert!(!vault.join("Codex Memory").exists());
-    let submit = |turn: &str, mode: &str| {
-        runtime.json(
-        &["memory", "hook", "UserPromptSubmit"],
-        Some(json!({"hook_event_name":"UserPromptSubmit","session_id":"ordinary","turn_id":turn,
-              "cwd":runtime.project,"model":"codex","permission_mode":"default",
-              "collaboration_mode":{"mode": mode},"prompt":"Для проверок этого проекта всегда используй uv run pytest."})),
-    )
+    let event = |name: &str, turn: &str, fields: Value| {
+        let mut payload = json!({"hook_event_name":name,"session_id":"ordinary","turn_id":turn,
+              "cwd":runtime.project,"model":"codex","permission_mode":"default","transcript_path":null});
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        runtime.json(&["memory", "hook", name], Some(payload))
     };
-    assert_eq!(submit("plan", "plan"), json!({}));
+    let prompt = json!({"prompt":"Для проверок этого проекта всегда используй uv run pytest."});
+    assert_eq!(
+        event(
+            "UserPromptSubmit",
+            "explicit-plan",
+            json!({"prompt":"План","collaboration_mode":"plan"})
+        ),
+        json!({})
+    );
     assert!(!vault.join("Codex Memory").exists());
-    let ordinary = submit("first", "default");
-    let instructions = ordinary["hookSpecificOutput"]["additionalContext"]
+    let stop = || json!({"stop_hook_active":false,"last_assistant_message":"Готово."});
+    let steps = event("UserPromptSubmit", "implicit-plan", prompt.clone());
+    assert!(steps["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("ensure --turn"));
+    assert_eq!(event("Stop", "implicit-plan", stop()), json!({}));
+    assert!(!vault.join("Codex Memory").exists());
+
+    let ordinary = event("UserPromptSubmit", "first", prompt);
+    let context = ordinary["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(instructions.contains("stage --turn"));
-    assert!(!instructions.contains("включён faust-mode"));
+    let ensure =
+        regex::Regex::new(r#"((?:& )?"[^"]+" memory ensure --turn ([0-9a-f]{64}\.[0-9a-f]{32}))"#)
+            .unwrap()
+            .captures(context)
+            .unwrap();
+    let command = &ensure[1];
+    let token = &ensure[2];
+    let receipt = runtime.call(&["memory", "ensure", "--turn", token], None);
+    let post = |cmd: &str, reply: &str| json!({"tool_name":"Bash","tool_use_id":"call-test","tool_input":{"command":cmd},"tool_response":reply});
+    assert_eq!(
+        event(
+            "PostToolUse",
+            "first",
+            post(&format!("{command}; true"), &receipt)
+        ),
+        json!({})
+    );
+    assert_eq!(
+        event("PostToolUse", "implicit-plan", post(command, &receipt)),
+        json!({})
+    );
+    assert!(!vault.join("Codex Memory").exists());
+    let issued = event("PostToolUse", "first", post(command, &receipt));
+    assert_eq!(event("Stop", "first", stop())["decision"], "block");
+    let instructions = issued["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    let stage = regex::Regex::new(
+        r#"((?:& )?"[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
+    )
+    .unwrap()
+    .captures(instructions)
+    .unwrap();
+    let rule = "Для проверок этого проекта всегда используй uv run pytest.";
+    let (command, receipt) = if save_correction {
+        let command = format!("{} --correction 'Тесты' '{rule}'", &stage[1]);
+        let receipt = runtime.call(
+            &[
+                "memory",
+                "stage",
+                "--turn",
+                &stage[2],
+                "--correction",
+                "Тесты",
+                rule,
+            ],
+            None,
+        );
+        (command, receipt)
+    } else {
+        let command = format!("{} --skip", &stage[1]);
+        let receipt = runtime.call(&["memory", "stage", "--turn", &stage[2], "--skip"], None);
+        (command, receipt)
+    };
+    event("PostToolUse", "first", post(&command, &receipt));
+    assert_eq!(event("Stop", "first", stop()), json!({}));
+    let records = runtime.json(&["memory", "search", "pytest"], None);
+    if save_correction {
+        assert_eq!(records[0]["body"], rule);
+    } else {
+        assert_eq!(records, json!([]));
+    }
     let connected = runtime.json(&["memory", "status"], None);
     assert_eq!(connected["mode"], "auto");
     assert_eq!(runtime.json(&["memory", "status"], None), connected);

@@ -9,8 +9,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let base = tempfile::tempdir().unwrap();
-        let vault = base.path().canonicalize().unwrap().join("vault");
+        let temp_root = std::env::temp_dir().canonicalize().unwrap();
+        let base = tempfile::tempdir_in(temp_root).unwrap();
+        let vault = base.path().join("vault");
         fs::create_dir_all(vault.join(".obsidian")).unwrap();
         let package = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

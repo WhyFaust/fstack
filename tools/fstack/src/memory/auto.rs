@@ -143,6 +143,48 @@ impl Store {
         Ok(json!({"vault":vault,"source":"pinned"}))
     }
 
+    fn new_target(&self, cwd: &Path) -> Result<Option<Vault>> {
+        if io::home().is_ok_and(|home| io::equal(&home, cwd))
+            || io::equal(&std::env::temp_dir(), cwd)
+            || io::within(cwd, &self.state)
+            || system_directory(cwd)
+        {
+            return Ok(None);
+        }
+        let Some(vault) = self.discover(self.registry().as_deref())? else {
+            return Ok(None);
+        };
+        if io::within(cwd, &vault.path) || io::within(&vault.path, cwd) {
+            return Ok(None);
+        }
+        for parent in cwd.ancestors() {
+            if io::directory(&parent.join(".obsidian"), false, false)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(vault))
+    }
+
+    pub fn setup_scope(&self, cwd: &Path) -> Result<Option<String>> {
+        if cwd.parent().is_none() || io::within(&self.state, cwd) {
+            return Ok(None);
+        }
+        let settings = scope::binding_path(&self.state, cwd)?;
+        let vault = if io::file(&settings)? {
+            self.read_binding(&settings)?
+                .and_then(|b| b.root.parent().map(Path::to_path_buf))
+        } else {
+            self.new_target(cwd)?.map(|v| v.path)
+        };
+        Ok(vault.map(|vault| {
+            super::pending::digest(&[
+                "memory-ensure",
+                &io::normalized(cwd),
+                &io::normalized(&vault),
+            ])
+        }))
+    }
+
     pub fn auto_resolve(&self, cwd: &Path) -> Result<Option<Binding>> {
         let cwd = io::absolute(cwd)?;
         if cwd.parent().is_none() || io::within(&self.state, &cwd) {
@@ -155,24 +197,9 @@ impl Store {
         if io::file(&settings)? {
             return self.read_binding(&settings);
         }
-        if io::home().is_ok_and(|home| io::equal(&home, &cwd))
-            || io::equal(&std::env::temp_dir(), &cwd)
-            || io::within(&cwd, &self.state)
-            || system_directory(&cwd)
-        {
-            return Ok(None);
-        }
-        let Some(vault) = self.discover(self.registry().as_deref())? else {
+        let Some(vault) = self.new_target(&cwd)? else {
             return Ok(None);
         };
-        if io::within(&cwd, &vault.path) || io::within(&vault.path, &cwd) {
-            return Ok(None);
-        }
-        for parent in cwd.ancestors() {
-            if io::directory(&parent.join(".obsidian"), false, false)? {
-                return Ok(None);
-            }
-        }
         let _binding_lock = self.lock_binding(&settings)?;
         if io::file(&settings)? {
             return self.read_binding(&settings);

@@ -75,20 +75,18 @@ impl Pending {
         create: bool,
     ) -> Result<Option<String>> {
         let dir = self.state.join("memory-sessions");
-        if !io::state(&self.state, &self.cwd, create)? || !io::directory(&dir, create, true)? {
-            return Ok(legacy);
-        }
         let path = dir.join(digest(&[session]));
         if let Some(epoch) = io::read(&path)? {
             return Ok(Some(epoch));
         }
-        if !create {
-            return Ok(legacy);
-        }
-        let epoch = match legacy {
-            Some(epoch) => epoch,
-            None => io::nonce()?,
+        let Some(epoch) = legacy.filter(|e| !e.starts_with("coordinator-")) else {
+            return Ok(Some(digest(&["memory-session", session])));
         };
+        if !create {
+            return Ok(Some(epoch));
+        }
+        io::state(&self.state, &self.cwd, true)?;
+        io::directory(&dir, true, true)?;
         io::write(&path, &epoch, false, None)?;
         io::read(&path)
     }
@@ -170,6 +168,9 @@ impl Pending {
                 CREATE TABLE IF NOT EXISTS issued_modes (
                     turn TEXT PRIMARY KEY, nonce TEXT NOT NULL, epoch TEXT NOT NULL, session TEXT NOT NULL, original_turn TEXT
                 );
+                CREATE TABLE IF NOT EXISTS ordinary_turns (
+                    turn TEXT PRIMARY KEY, nonce TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS claimed (
                     turn TEXT PRIMARY KEY, nonce TEXT NOT NULL, scope TEXT NOT NULL,
                     expires INTEGER NOT NULL, action TEXT NOT NULL, session TEXT NOT NULL,
@@ -241,7 +242,7 @@ impl Pending {
         Ok(())
     }
     pub fn invalidate(&self, key: &str) -> Result<Option<String>> {
-        if !io::state(&self.state, &self.cwd, false)? {
+        if io::info(&self.state.join("pending-generations").join(key))?.is_none() {
             return Ok(None);
         }
         let _turn_lock = self.lock_turn(key)?;
@@ -328,6 +329,8 @@ impl Pending {
         if count >= 256 {
             return Err("Pending memory turn limit exceeded".into());
         }
+        conn.execute("DELETE FROM ordinary_turns WHERE NOT EXISTS (SELECT 1 FROM pending p WHERE p.turn=ordinary_turns.turn AND p.nonce=ordinary_turns.nonce)", []).map_err(io::err)?;
+        conn.execute("INSERT OR REPLACE INTO ordinary_turns SELECT turn,nonce FROM issued_modes WHERE turn=? AND nonce=? AND epoch='setup' AND ?<>'setup'",params![key,nonce,epoch]).map_err(io::err)?;
         conn.execute("INSERT INTO pending (turn,nonce,scope,expires) VALUES (?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,scope=excluded.scope,expires=excluded.expires,action=NULL",params![key,nonce,scope,now()+3600]).map_err(io::err)?;
         conn.execute("INSERT INTO issued_modes VALUES (?,?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,epoch=excluded.epoch,session=excluded.session,original_turn=excluded.original_turn", params![key, nonce, epoch, session, turn]).map_err(io::err)?;
         Self::phase(&conn, scope, "capture")?;
@@ -370,6 +373,22 @@ impl Pending {
             .map_err(io::err)?
             .is_some();
         Ok(found && self.current(key, nonce)?)
+    }
+    pub fn confirmed(&self, key: &str, scope: &str, epoch: &str) -> Result<bool> {
+        let Some(nonce) = self.generation(key)? else {
+            return Ok(false);
+        };
+        if !self.current(key, &nonce)? {
+            return Ok(false);
+        }
+        let Some(conn) = self.connection(false, false)? else {
+            return Ok(false);
+        };
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pending WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND ((action IS NOT NULL AND action<>?5) OR EXISTS(SELECT 1 FROM ordinary_turns o WHERE o.turn=pending.turn AND o.nonce=pending.nonce)))
+              OR EXISTS(SELECT 1 FROM claimed WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND epoch=?6)",
+            params![key, nonce, scope, now(), REVIEW, epoch], |row| row.get(0)
+        ).map_err(io::err)
     }
     pub fn stage(&self, key: &str, token: &str, scope: &str, action: &Value) -> Result<bool> {
         let Some((k, nonce)) = token_parts(token) else {
@@ -453,6 +472,8 @@ impl Pending {
             Stop::Missing
         };
         conn.execute("DELETE FROM pending WHERE turn=?", [key])
+            .map_err(io::err)?;
+        conn.execute("DELETE FROM ordinary_turns WHERE turn=?", [key])
             .map_err(io::err)?;
         conn.execute("DELETE FROM issued_modes WHERE turn=?", [key])
             .map_err(io::err)?;

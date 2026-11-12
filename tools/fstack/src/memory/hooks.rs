@@ -75,7 +75,12 @@ fn chat_mode(
                 return Ok(Some(epoch));
             }
             let _mode_lock = mode_lock(store, session)?;
-            io::write(&marker, &io::nonce()?, false, None)?;
+            io::write(
+                &marker,
+                &format!("coordinator-{}", io::nonce()?),
+                false,
+                None,
+            )?;
             io::read(&marker)
         }
         Some(false) => {
@@ -88,7 +93,11 @@ fn chat_mode(
 fn activation(package: &Path) -> String {
     format!("В этом чате включён faust-mode до команды /faust-mode-off. Используй инструкции fstack:faust-mode из файла {}. Если они уже загружены, повторно не читай.", package.join("skills/faust-mode/SKILL.md").display())
 }
-fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
+enum Posted {
+    Ensure(String),
+    Stage(String, Value),
+}
+fn posted(payload: &Value) -> Result<Option<Posted>> {
     if payload["tool_name"] != "Bash"
         || payload.get("agent_id").is_some()
         || payload.get("agent_type").is_some()
@@ -107,13 +116,23 @@ fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
     let Some(command) = input.get("command").and_then(Value::as_str) else {
         return Ok(None);
     };
+    let prefix = prefix()?;
+    if payload["tool_response"]
+        .as_str()
+        .is_some_and(|s| s.trim() == "{\"ready\":true}")
+    {
+        return Ok(command
+            .strip_prefix(&format!("{prefix} ensure --turn "))
+            .filter(|token| pending::token_parts(token).is_some())
+            .map(|token| Posted::Ensure(token.into())));
+    }
     if payload["tool_response"]
         .as_str()
         .is_none_or(|s| s.trim() != "{\"staged\": true}")
     {
         return Ok(None);
     }
-    let start = format!("{} stage --turn ", prefix()?);
+    let start = format!("{prefix} stage --turn ");
     let Some(rest) = command.strip_prefix(&start) else {
         return Ok(None);
     };
@@ -130,7 +149,7 @@ fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
     } else {
         literal_correction(arguments)
     };
-    Ok(value.map(|v| (token.into(), v)))
+    Ok(value.map(|v| Posted::Stage(token.into(), v)))
 }
 fn literal_correction(arguments: &str) -> Option<Value> {
     let fields = arguments.strip_prefix("--correction '")?;
@@ -180,6 +199,20 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     else {
         return Ok(json!({}));
     };
+    if io::within(&store.state, cwd) {
+        return Ok(
+            if event == "UserPromptSubmit"
+                && payload["prompt"].as_str().and_then(mode_command) == Some(true)
+            {
+                extra(event,format!("Для этого запроса используй fstack:faust-mode из {}. Рабочая папка содержит профиль Codex, поэтому состояние режима здесь не сохраняется.", store.package.join("skills/faust-mode/SKILL.md").display()))
+            } else {
+                json!({})
+            },
+        );
+    }
+    let ordinary = [collab, &payload["mode"]]
+        .iter()
+        .any(|v| matches!(v.as_str(), Some("default" | "normal")));
     let key = pending::digest(&[session, turn]);
     let pending = Pending::new(&store.state, cwd);
     let generation = if event == "UserPromptSubmit" || (event == "Stop" && plan) {
@@ -195,6 +228,11 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     } else {
         None
     };
+    if io::state(&store.state, cwd, false).is_err() {
+        return Ok(
+            json!({"systemMessage":"Автоматическая память недоступна. Проверь права и расположение локального профиля памяти вне версионируемых каталогов. Продолжай основной запрос."}),
+        );
+    }
     let prompt_submit = event == "UserPromptSubmit";
     if !prompt_submit && (plan || (event == "PostToolUse" && !pending.active(&key)?)) {
         return Ok(json!({}));
@@ -236,26 +274,61 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     if event == "PostToolUse" && staged.is_none() {
         return Ok(json!({}));
     }
-    let binding = if prompt_submit {
+    let mut generation = generation;
+    let ensure = matches!(staged, Some(Posted::Ensure(_)));
+    let _setup_lock = if let Some(Posted::Ensure(token)) = &staged {
+        let guard = pending.lock_turn(&key)?;
+        let Some((issued_key, nonce)) = pending::token_parts(token) else {
+            return Ok(json!({}));
+        };
+        let Some(target) = store.setup_scope(cwd)? else {
+            return Ok(json!({}));
+        };
+        if issued_key != key || !pending.is_current(token, &target)? {
+            return Ok(json!({}));
+        }
+        generation = Some(nonce.to_owned());
+        Some(guard)
+    } else {
+        None
+    };
+    let failure = || {
+        let mut output = coordinator_only();
+        output["systemMessage"] = json!("Не удалось автоматически подключить память проекта. Команда memory vault показывает рабочий vault; при нескольких vault выбери его через memory vault --set.");
+        output
+    };
+    let binding = if ensure || (prompt_submit && ordinary) {
         match store.auto_resolve(cwd) {
             Ok(binding) => binding,
-            Err(_) => {
-                let mut output = coordinator_only();
-                output["systemMessage"] = json!("Не удалось автоматически подключить память проекта. Команда memory ensure показывает причину; при нескольких vault рабочий можно выбрать через memory vault --set.");
-                return Ok(output);
-            }
+            Err(_) => return Ok(failure()),
         }
     } else {
         store.bound(cwd)?
     };
     let Some(b) = binding else {
+        if prompt_submit && !ordinary {
+            let target = match store.setup_scope(cwd) {
+                Ok(target) => target,
+                Err(_) => return Ok(failure()),
+            };
+            if let Some(target) = target {
+                let token = pending.issue(&key, &target, generation, "setup", session, turn)?;
+                let prefix = prefix()?;
+                let setup = format!("В обычном режиме подключи память проекта отдельной командой из текущего cwd: {prefix} ensure --turn {token}. Хук вернёт инструкции для этого же хода. В Plan пропусти эту команду.");
+                return Ok(extra(
+                    event,
+                    coordinator.map_or_else(|| setup.clone(), |text| format!("{text} {setup}")),
+                ));
+            }
+        }
         return Ok(coordinator_only());
     };
-    let Some(epoch) = pending.session_epoch(session, previous_mode, prompt_submit)? else {
+    let issuing = prompt_submit || ensure;
+    let Some(epoch) = pending.session_epoch(session, previous_mode, issuing)? else {
         return Ok(json!({}));
     };
     let scope = scope_id(&b, cwd);
-    if event == "UserPromptSubmit" {
+    if issuing {
         let prefix = prefix()?;
         let mut ids = Vec::new();
         let mut search_failed = false;
@@ -327,7 +400,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         }
         return Ok(output);
     }
-    if let Some((token, value)) = staged {
+    if let Some(Posted::Stage(token, value)) = staged {
         if pending.stage(&key, &token, &scope, &value)? {
             return Ok(
                 json!({"decision":"block","reason":"На этот ход уже принята другая операция памяти fstack. Она остаётся в очереди. Вторую операцию выполни в новом ходе."}),
@@ -335,6 +408,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         }
         return Ok(json!({}));
     }
+    let confirmed = ordinary || pending.confirmed(&key, &scope, &epoch)?;
     let outcome = pending.claim(
         &key,
         &scope,
@@ -342,9 +416,12 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         turn,
         &epoch,
         Delivery::Current {
-            review: payload["stop_hook_active"] == false,
+            review: confirmed && payload["stop_hook_active"] == false,
         },
     )?;
+    if !confirmed && outcome != Some(Stop::Claimed) {
+        return Ok(json!({}));
+    }
     let mut failed = false;
     for (due_key, original_turn) in pending.due(&scope, session, &epoch, &key)? {
         if due_key != key {
