@@ -144,8 +144,7 @@ impl Store {
     }
 
     fn new_target(&self, cwd: &Path) -> Result<Option<Vault>> {
-        if io::home().is_ok_and(|home| io::equal(&home, cwd))
-            || io::equal(&std::env::temp_dir(), cwd)
+        if reserved_root(cwd, io::home().ok().as_deref(), &std::env::temp_dir())
             || io::within(cwd, &self.state)
             || system_directory(cwd)
         {
@@ -214,6 +213,10 @@ impl Store {
         )
         .map(Some)
     }
+}
+
+fn reserved_root(cwd: &Path, home: Option<&Path>, temp: &Path) -> bool {
+    home.is_some_and(|home| io::same_directory(home, cwd)) || io::same_directory(temp, cwd)
 }
 
 fn system_directory(cwd: &Path) -> bool {
@@ -285,6 +288,67 @@ mod tests {
             .nth(2)
             .unwrap();
         Store::new(Some(root.join("state")), package).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn long_path_reuses_a_legacy_short_binding_and_honors_disablement() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let store = store(&root);
+        let vault = root.join("vault");
+        fs::create_dir_all(vault.join(".obsidian")).unwrap();
+        let project = root.join("Long repository folder");
+        fs::create_dir(&project).unwrap();
+        let short = io::short_directory(&project).unwrap();
+        if io::equal(&project, &short) {
+            return;
+        } // 8.3 aliases are optional on NTFS.
+        store
+            .setup(&vault, &project, "legacy-project", Some("inbox"))
+            .unwrap();
+        let canonical = scope::binding_path(&store.state, &project).unwrap();
+        let legacy = store.state.join(format!(
+            "{}.json",
+            io::hash(format!("dir:{}", io::normalized(&short)))
+        ));
+        assert_ne!(legacy, canonical);
+        fs::rename(&canonical, &legacy).unwrap();
+        let saved = store.auto_resolve(&project).unwrap().unwrap();
+        assert_eq!(
+            (saved.project.as_str(), saved.mode.as_str()),
+            ("legacy-project", "inbox")
+        );
+        assert_eq!(scope::binding_path(&store.state, &project).unwrap(), legacy);
+        store.disable(&project).unwrap();
+        assert!(store.auto_resolve(&project).unwrap().is_none());
+        assert!(store.auto_resolve(&short).unwrap().is_none());
+        assert!(!canonical.exists());
+        fs::write(&canonical, r#"{"disabled":true}"#).unwrap();
+        assert!(scope::binding_path(&store.state, &project).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn short_paths_cannot_enroll_reserved_roots_or_ancestors_of_future_state() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let home = root.join("Long private directory");
+        fs::create_dir(&home).unwrap();
+        let short = io::short_directory(&home).unwrap();
+        if io::equal(&home, &short) {
+            return;
+        }
+        assert!(reserved_root(&short, Some(&home), &root));
+        assert!(reserved_root(&short, None, &home));
+        let state = home.join("not-created/profile/state");
+        assert!(io::within(&state, &short));
+        assert!(io::state(&state, &short, true).is_err());
+        assert!(!state.exists());
+        let nested = home.join("work");
+        fs::create_dir(&nested).unwrap();
+        assert!(io::within(&short.join("work"), &home));
+        assert!(!io::within(&root.join("outside"), &home));
     }
 
     #[test]

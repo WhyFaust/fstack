@@ -90,12 +90,50 @@ pub fn same_directory(left: &Path, right: &Path) -> bool {
     }
     false
 }
+#[cfg(windows)]
+pub fn short_directory(path: &Path) -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+    let physical = path.canonicalize().ok()?;
+    let input: Vec<_> = physical.as_os_str().encode_wide().chain(Some(0)).collect();
+    let needed = unsafe { GetShortPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
+    if needed == 0 {
+        return None;
+    }
+    let mut buffer = vec![0; needed as usize];
+    let written = unsafe { GetShortPathNameW(input.as_ptr(), buffer.as_mut_ptr(), needed) };
+    if written == 0 || written >= needed {
+        return None;
+    }
+    let short = PathBuf::from(OsString::from_wide(&buffer[..written as usize]));
+    same_directory(path, &short).then(|| PathBuf::from(normalized(&short)))
+}
+
 pub fn within(path: &Path, root: &Path) -> bool {
     #[cfg(windows)]
     {
-        let path = path_key(path);
-        let root = path_key(root);
-        path == root || path.starts_with(&(root.trim_end_matches('\\').to_owned() + "\\"))
+        fn contains(path: &Path, root: &Path) -> bool {
+            let path = path_key(path);
+            let root = path_key(root);
+            path == root || path.starts_with(&(root.trim_end_matches('\\').to_owned() + "\\"))
+        }
+        if contains(path, root) {
+            return true;
+        }
+        let Ok(physical_root) = root.canonicalize() else {
+            return false;
+        };
+        // A future state/cache path can already sit under an aliased existing
+        // directory. Stop at its nearest existing ancestor, even before setup.
+        for ancestor in path.ancestors() {
+            match ancestor.canonicalize() {
+                Ok(physical) => return contains(&physical, &physical_root),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => break,
+            }
+        }
+        false
     }
     #[cfg(not(windows))]
     {

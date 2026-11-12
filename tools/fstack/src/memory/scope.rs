@@ -114,16 +114,51 @@ fn canonical_id(legacy: &str) -> String {
     legacy.to_owned()
 }
 
+#[cfg(windows)]
+fn saved_alias(state: &Path, identity: &str, legacy: &str) -> Result<Option<PathBuf>> {
+    use std::collections::BTreeSet;
+    if !io::directory(state, false, false)? {
+        return Ok(None);
+    }
+    let (kind, path) = identity
+        .split_once(':')
+        .ok_or("Invalid Windows memory identity")?;
+    let long = Path::new(path);
+    let mut spellings = BTreeSet::from([identity.to_owned(), legacy.to_owned()]);
+    if let Some(short) = io::short_directory(long) {
+        // Windows TEMP and similar environment variables can use a short prefix
+        // while the directory supplied by the client has a long final component.
+        for (short_parent, long_parent) in short.ancestors().zip(long.ancestors()) {
+            let suffix = long.strip_prefix(long_parent).map_err(io::err)?;
+            let candidate = if suffix.as_os_str().is_empty() {
+                short_parent.to_owned()
+            } else {
+                short_parent.join(suffix)
+            };
+            spellings.insert(format!("{kind}:{}", io::normalized(&candidate)));
+        }
+    }
+    let mut existing = None;
+    for spelling in spellings {
+        let path = state.join(format!("{}.json", io::hash(spelling)));
+        if io::file(&path)? {
+            if existing.is_some() {
+                return Err(
+                    "Multiple existing memory bindings refer to this Windows directory".into(),
+                );
+            }
+            existing = Some(path);
+        }
+    }
+    Ok(existing)
+}
 pub(super) fn binding_location(state: &Path, cwd: &Path) -> Result<(String, PathBuf)> {
     let legacy = legacy_identity(cwd)?;
     let identity = canonical_id(&legacy);
     let canonical_path = state.join(format!("{}.json", io::hash(&identity)));
     #[cfg(windows)]
-    if identity != legacy && !io::file(&canonical_path)? {
-        let legacy_path = state.join(format!("{}.json", io::hash(legacy)));
-        if io::file(&legacy_path)? {
-            return Ok((identity, legacy_path));
-        }
+    if let Some(path) = saved_alias(state, &identity, &legacy)? {
+        return Ok((identity, path));
     }
     Ok((identity, canonical_path))
 }
