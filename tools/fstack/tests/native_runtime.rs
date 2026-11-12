@@ -353,13 +353,22 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         .as_str()
         .unwrap();
     assert!(context.contains(" show ID"));
-    assert!(context.contains(
+    let installed_skill = regex::Regex::new(
+        r#"((?:[A-Za-z]:[\\/]|\\\\|/)[^"\n]*?[\\/]skills[\\/]use-memory[\\/]SKILL\.md)"#,
+    )
+    .unwrap()
+    .captures(context)
+    .and_then(|m| m.get(1))
+    .expect("the hook supplies a path to the installed memory skill")
+    .as_str();
+    assert_eq!(
+        Path::new(installed_skill).canonicalize().unwrap(),
         runtime
             .root
             .join("skills/use-memory/SKILL.md")
-            .to_str()
+            .canonicalize()
             .unwrap()
-    ));
+    );
     let (command, token) = regex::Regex::new(
         r#"((?:& )?"[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
     )
