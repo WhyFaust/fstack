@@ -67,7 +67,64 @@ source и SHA. Branch pipeline или обычный MR pipeline может пр
 проверенный source head в параметре `sha`; это защита от смены source, а не SHA
 временного merge commit. Неизвестный исход записи сначала установи чтением MR.
 
-Контракты: [merged results pipelines](https://docs.gitlab.com/ci/pipelines/merged_results_pipelines/)
+### Проверить, одобрить и слить указанную ревизию
+
+Ниже Bash-пример для MR 123 в проекте 42 на уже проверенном хосте. Подставь
+ID целевого проекта (также для fork MR), IID и полный проверенный source SHA.
+Фактический head pipeline может принадлежать другому проекту: для job и bridge
+используй `project_id` самого pipeline. Пагинируй коллекции.
+
+```bash
+mr=projects/42/merge_requests/123
+glab api "$mr"
+glab api "$mr/pipelines" --paginate
+glab api projects/42/pipelines/456
+glab api projects/42/pipelines/456/jobs --paginate
+glab api projects/42/pipelines/456/bridges --paginate
+glab api "$mr/approvals"
+```
+
+Для разрешённого нового MR pipeline после Ready используй
+`POST /projects/:id/merge_requests/:merge_request_iid/pipelines`, проверив
+актуальные очередь и конфигурацию. За состоянием уже запущенного наблюдай по ID.
+
+В редакциях с правилами одобрения прочитай ещё `GET .../approval_state`.
+Сопоставь одобривших с условиями каждой обязательной группы или Code Owners.
+Возможность аккаунта одобрить MR и выполнение всех правил — разные признаки.
+Проверь действующее лицо, разрешения, настройки self-approval и запрета для
+авторов коммитов, а также обещанное пользователем ревью. Для разрешённых
+записей используй две отдельные операции, между ними прочитай approvals,
+актуальный MR и состояние CI. Перед merge отправь отчёт по ship-pr.
+
+```bash
+glab api "$mr/approve" --method POST -f "sha=$verified_source_sha"
+```
+
+Перед approve после push дождись окончания `checking` и `approvals_syncing`
+и появления `patch_id_sha` у текущей версии diff, когда инстанс предоставляет
+эти признаки. Передавай полный SHA проверенного head. После гонки, запрета или
+неизвестного ответа перечитай состояние. При несовпадении SHA (`409`) оцени новую ревизию.
+Операция merge для уже проверенного head:
+
+```bash
+glab api "$mr/merge" --method PUT -f "sha=$verified_source_sha"
+```
+
+Если проект требует merge train, используй штатную постановку проверенного
+head в очередь. При поддержке инстансом это `POST /projects/:id/merge_trains/merge_requests/:iid`
+с `sha`; дождись нового pipeline поезда и фактического результата. При смене
+состава поезда проверь актуальный pipeline. [API merge trains](https://docs.gitlab.com/api/merge_trains/)
+
+Перечитай `GET .../merge_requests/:iid`. Установи `state`, target,
+`merge_commit_sha` / `squash_commit_sha` или принятый fast-forward SHA;
+при необходимости проверь его достижимость из ветки назначения. Запись merge
+сравнивает только source SHA; защиту совместимости с изменившимся target
+дают проверки проекта и, при соответствующей политике, merge train.
+
+Контракты: [API одобрений](https://docs.gitlab.com/api/merge_request_approvals/),
+[настройки approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/settings/),
+[Jobs API](https://docs.gitlab.com/api/jobs/),
+[merged results pipelines](https://docs.gitlab.com/ci/pipelines/merged_results_pipelines/)
 и [Merge requests API](https://docs.gitlab.com/api/merge_requests/).
 
 ## Обсуждения

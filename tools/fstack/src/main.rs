@@ -16,7 +16,7 @@ macro_rules! rx {
     }};
 }
 
-const ROLES: [&str; 5] = ["auditor", "coder", "reviewer", "verifier", "allure_analyst"];
+const ROLES: [&str; 3] = ["auditor", "coder", "verifier"];
 const EFFORTS: [&str; 6] = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 fn require(ok: bool, message: impl Into<String>) -> Result<()> {

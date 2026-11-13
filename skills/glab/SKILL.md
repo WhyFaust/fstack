@@ -5,7 +5,7 @@ license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 2.0.1
+  version: 2.1.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -43,12 +43,13 @@ glab api projects/:id/jobs/789/trace
 
 ### Изменения
 
-MR, комментарий, retry, merge и изменение данных должны входить в авторизацию
-пользователя. Перед повтором записи с неизвестным исходом прочитай её состояние.
+В полном цикле GitLab используй один MR и его source branch по
+[порядку сопровождения](../watch-pr/references/gitlab-lifecycle.md).
+MR, комментарий, retry, approval и merge должны входить в поручение пользователя. Перед повтором записи с неизвестным исходом прочитай её состояние.
 Шаблон описания бери из репозитория. В текстах используй полные ссылки GitLab.
 
 ```bash
-glab mr create --push --title "fix: исправить обработку ответа" --description "..."
+glab mr create --draft --push --title "fix: исправить обработку ответа" --description "..."
 glab mr note create 123 -m "Результат проверки" --unique
 glab mr note create 123 --reply discussion-id -m "Ответ"
 glab mr note resolve 123 discussion-id
