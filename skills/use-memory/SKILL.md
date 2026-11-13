@@ -5,7 +5,7 @@ license: MIT
 compatibility: Локальный Codex с поддержкой хуков плагинов, готовый пакет fstack и vault Obsidian. На Windows используется PowerShell. Для привязки worktree нужен Git.
 metadata:
   short-description: Долговечная память проектов в Obsidian
-  version: 3.2.3
+  version: 3.2.4
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -44,8 +44,9 @@ metadata:
 - Для ручного подключения выбранного проекта доступен `init --vault PATH --repo PATH --project NAME --mode auto`
   (режим ручной проверки — `inbox`). По поручению отключить память сверь
   привязку через `status` и вызови `disable`. При явно порученной миграции
-  запусти `migrate` с одного устройства, дождись синхронизации обновлённых
-  заметок и JSON-отметок со всеми устройствами, затем `migrate --prune-legacy`.
+  сначала обнови fstack на всех устройствах общего vault и заверши параллельные правки.
+  Выполни `migrate` с одного устройства. Перед `migrate --prune-legacy` подтверди
+  на каждом устройстве получение обновлённых заметок и JSON-отметок.
 
 ### Запись из чата
 

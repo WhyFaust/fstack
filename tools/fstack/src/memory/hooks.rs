@@ -36,13 +36,20 @@ fn prefix(package: &Path) -> Result<String> {
 
 fn shell_path(path: &Path) -> Result<String> {
     let path = path.to_str().ok_or("Invalid memory command path")?;
-    if path
-        .chars()
-        .any(|c| matches!(c, '"' | '`' | '$' | '\r' | '\n') || (!cfg!(windows) && c == '\\'))
-    {
-        return Err("Memory command path cannot be used in a shell command".into());
+    let mut quoted = String::from("\"");
+    for ch in path.chars() {
+        #[cfg(windows)]
+        if matches!(ch, '$' | '`' | '"' | '“' | '”' | '„') {
+            quoted.push('`');
+        }
+        #[cfg(not(windows))]
+        if matches!(ch, '$' | '`' | '"' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(ch);
     }
-    Ok(format!("\"{path}\""))
+    quoted.push('"');
+    Ok(quoted)
 }
 fn extra(event: &str, context: String) -> Value {
     json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":context}})

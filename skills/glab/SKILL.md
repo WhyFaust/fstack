@@ -5,7 +5,7 @@ license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 2.1.2
+  version: 2.1.3
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -49,6 +49,12 @@ glab api "projects/:id/jobs/$job_id/trace"
 [порядку сопровождения](../watch-pr/SKILL.md#полный-цикл-gitlab-mr).
 MR, комментарий, retry, approval и merge должны входить в поручение пользователя. Перед повтором записи с неизвестным исходом прочитай её состояние.
 Шаблон описания бери из репозитория. В текстах используй полные ссылки GitLab.
+Сверь проект выполнения и условия запуска по [протоколу сопровождения](../watch-pr/SKILL.md#полный-цикл-gitlab-mr).
+Для разрешённого запуска отсутствующего MR pipeline отправь `POST` на
+`projects/$target_project_id/merge_requests/$mr_iid/pipelines`. Для обязательной
+ручной job используй `POST projects/$job_project_id/jobs/$job_id/play`.
+Сверь ID из ответа с последующим чтением pipeline или job.
+[API pipelines MR](https://docs.gitlab.com/api/merge_requests/#create-merge-request-pipeline) · [API ручных jobs](https://docs.gitlab.com/api/jobs/#run-a-job)
 
 ```bash
 glab mr create --draft --push --title "$title" --description "$description"

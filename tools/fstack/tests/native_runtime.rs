@@ -305,6 +305,13 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
 #[test]
 fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() {
     let mut runtime = Runtime::new();
+    let package = runtime.root.with_file_name("package $HOME's `docs`");
+    fs::rename(&runtime.root, &package).unwrap();
+    runtime.binary = package
+        .join("bin")
+        .join(runtime.binary.file_name().unwrap());
+    runtime.root = package;
+    runtime.codex_home = runtime.codex_home.with_file_name("profile $value's `data`");
     let cache = runtime.runtime_cache();
     fs::create_dir_all(&cache).unwrap();
     let cached = cache.join(runtime.binary.file_name().unwrap());
@@ -716,10 +723,15 @@ fn launcher_verifies_the_selected_release_asset_before_installing() {
     let version = "9.123.456";
     fs::write(
         runtime.root.join(".codex-plugin/plugin.json"),
-        format!("{{\n  \"version\": \"{version}\"\n}}\n"),
+        json!({"version":version}).to_string(),
     )
     .unwrap();
     fs::remove_file(&runtime.binary).unwrap();
+    fs::write(
+        runtime.root.join("launchers/package-version"),
+        format!("{version}\n"),
+    )
+    .unwrap();
     let fixtures = runtime._temporary.path().join("fixtures");
     fs::create_dir(&fixtures).unwrap();
     let id_file = runtime.root.join("launchers/runtime-id");
@@ -748,11 +760,11 @@ cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
     .unwrap();
     fs::set_permissions(curl, fs::Permissions::from_mode(0o700)).unwrap();
 
-    let install = |asset: &str| {
+    let install = |asset: &str, path: &std::ffi::OsStr| {
         Command::new("/bin/sh")
             .arg(runtime.root.join("launchers/fstack.sh"))
             .arg("--install-runtime")
-            .env("PATH", format!("{}:/usr/bin:/bin", fixtures.display()))
+            .env("PATH", path)
             .env("CODEX_HOME", &runtime.codex_home)
             .env("FSTACK_TEST_FIXTURES", &fixtures)
             .env("FSTACK_TEST_VERSION", version)
@@ -762,17 +774,26 @@ cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
     };
     let checksum = fixtures.join(format!("{asset}.sha256"));
     let cache = runtime.runtime_cache();
+    fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    fs::write(&cache, "occupied").unwrap();
+    let empty_path = install(&asset, std::ffi::OsStr::new(""));
+    assert!(!empty_path.status.success());
+    assert_ne!(empty_path.status.code(), Some(127));
+    assert!(String::from_utf8_lossy(&empty_path.stderr).contains(cache.to_str().unwrap()));
+    fs::remove_file(&cache).unwrap();
     fs::write(&checksum, "bad checksum\n").unwrap();
-    assert!(!install(&asset).status.success());
+    assert!(!install(&asset, fixtures.as_os_str()).status.success());
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
 
     fs::write(&checksum, format!("{:x}  {asset}\n", Sha256::digest(bytes))).unwrap();
-    assert!(install(&asset).status.success());
+    assert!(install(&asset, fixtures.as_os_str()).status.success());
     assert_eq!(fs::read(cache.join("fstack")).unwrap(), bytes);
     fs::write(&id_file, format!("{second_id}\n")).unwrap();
     let second_asset = format!("fstack-{version}-{second_id}-{target}");
     let second_cache = runtime.runtime_cache().join("fstack");
-    assert!(!install(&second_asset).status.success());
+    assert!(!install(&second_asset, fixtures.as_os_str())
+        .status
+        .success());
     assert!(!second_cache.exists());
     let second_bytes = b"updated fixture runtime";
     fs::write(fixtures.join(&second_asset), second_bytes).unwrap();
@@ -781,7 +802,9 @@ cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
         format!("{:x}  {second_asset}\n", Sha256::digest(second_bytes)),
     )
     .unwrap();
-    assert!(install(&second_asset).status.success());
+    assert!(install(&second_asset, fixtures.as_os_str())
+        .status
+        .success());
     assert_eq!(fs::read(&second_cache).unwrap(), second_bytes);
     assert_eq!(fs::read(cache.join("fstack")).unwrap(), bytes);
     for malformed in [
@@ -790,9 +813,9 @@ cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
         format!("{}\n", first_id.to_uppercase()),
     ] {
         fs::write(&id_file, malformed).unwrap();
-        assert!(!install(&asset).status.success());
+        assert!(!install(&asset, fixtures.as_os_str()).status.success());
     }
     fs::write(&id_file, format!("{first_id}\n")).unwrap();
     fs::remove_file(fixtures.join("curl")).unwrap();
-    assert!(install(&asset).status.success());
+    assert!(install(&asset, fixtures.as_os_str()).status.success());
 }

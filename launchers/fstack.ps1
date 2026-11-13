@@ -24,9 +24,10 @@ if (!(Test-RuntimeFile $binary)) {
     if (!$architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE }
     if ($architecture -ne 'AMD64') { throw 'fstack: supported Windows architecture is x64' }
 
-    $manifest = [IO.Path]::Combine($package, '.codex-plugin', 'plugin.json')
-    $version = ([IO.File]::ReadAllText($manifest) | ConvertFrom-Json).version
-    if ($version -cnotmatch '\A[0-9]+\.[0-9]+\.[0-9]+\z') { throw 'fstack: invalid package version' }
+    $versionFile = [IO.Path]::Combine($package, 'launchers', 'package-version')
+    $version = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($versionFile))
+    if ($version -cnotmatch '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\n\z') { throw 'fstack: invalid package version' }
+    $version = $version.TrimEnd([char]10)
     $idFile = [IO.Path]::Combine($package, 'launchers', 'runtime-id')
     $runtimeId = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($idFile))
     if ($runtimeId -cnotmatch '\A[0-9a-f]{64}\n\z') { throw 'fstack: invalid runtime identifier' }

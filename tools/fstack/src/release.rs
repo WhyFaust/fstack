@@ -11,6 +11,7 @@ use std::{
 };
 type Result<T> = std::result::Result<T, String>;
 const MANIFEST: &str = ".codex-plugin/plugin.json";
+const PACKAGE_VERSION: &str = "launchers/package-version";
 const RUNTIME_ID: &str = "launchers/runtime-id";
 const BUILD_INPUTS: &[&str] = &[
     ".cargo",
@@ -101,10 +102,20 @@ fn updated_manifest(mut data: Value, number: &str) -> Result<Option<Vec<u8>>> {
         (serde_json::to_string_pretty(&data).map_err(|e| e.to_string())? + "\n").into_bytes(),
     ))
 }
+pub(super) fn check_package_version(root: &Path, number: &str) -> Result<()> {
+    let path = crate::contained(root, root, PACKAGE_VERSION, false)?;
+    if fs::read(path).map_err(|e| e.to_string())? != format!("{number}\n").as_bytes() {
+        return Err(format!(
+            "Версия запускателя {PACKAGE_VERSION}: ожидается {number}; выполните release prepare"
+        ));
+    }
+    Ok(())
+}
 fn check_versions(root: &Path) -> Result<String> {
     let data = manifest(root)?;
     let current = data["version"].as_str().ok_or("Нет версии")?;
     version(current)?;
+    check_package_version(root, current)?;
     let mut count = 0;
     for folder in fs::read_dir(root.join("skills")).map_err(|e| e.to_string())? {
         let folder = folder.map_err(|e| e.to_string())?.path();
@@ -226,23 +237,40 @@ impl Release<'_> {
             })
             .collect()
     }
-    fn signature(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
+    fn skill_at(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
         let text = String::from_utf8(self.bytes(&["git", "show", &format!("{rev}:{path}")])?)
             .map_err(|e| e.to_string())?;
-        let (mut data, body) = parse_skill(&text)?;
+        parse_skill(&text)
+    }
+    fn skill_version(&self, rev: &str, path: &str) -> Result<[u64; 3]> {
+        let (data, _) = self.skill_at(rev, path)?;
+        version(
+            data["metadata"]["version"]
+                .as_str()
+                .ok_or_else(|| format!("{path}: нет версии навыка"))?,
+        )
+    }
+    fn signature(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
+        let (mut data, body) = self.skill_at(rev, path)?;
         data["metadata"]
             .as_mapping_mut()
             .unwrap()
             .remove(serde_yaml::Value::String("version".into()));
-        Ok((data, body))
+        Ok((data, body.trim_matches('\n').to_owned()))
     }
-    fn changed(&self, base: &str) -> Result<Vec<String>> {
+    fn changed_skills(
+        &self,
+        base: &str,
+        head: &str,
+        release_level: Option<u8>,
+    ) -> Result<Vec<String>> {
         let old = self.tree(base)?;
-        let new = self.tree("HEAD")?;
-        let names: BTreeSet<_> = new
+        let new = self.tree(head)?;
+        let names: BTreeSet<_> = old
             .keys()
-            .filter(|p| rx(r"\Askills/[^/]+/SKILL\.md\z").is_match(p))
-            .map(|p| p.split('/').nth(1).unwrap().to_owned())
+            .chain(new.keys())
+            .filter_map(|p| p.strip_prefix("skills/")?.strip_suffix("/SKILL.md"))
+            .filter(|name| !name.contains('/'))
             .collect();
         let mut changed = Vec::new();
         for name in names {
@@ -251,8 +279,11 @@ impl Release<'_> {
                 old.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
             let after: BTreeMap<_, _> =
                 new.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
-            let mut different =
-                before.keys().collect::<Vec<_>>() != after.keys().collect::<Vec<_>>();
+            if before == after {
+                continue;
+            }
+            let entry = format!("{prefix}SKILL.md");
+            let mut different = before.keys().ne(after.keys());
             if !different {
                 for (path, metadata) in &after {
                     let previous = before[path];
@@ -265,7 +296,7 @@ impl Release<'_> {
                         .take(2)
                         .eq(metadata.split_whitespace().take(2))
                         && versioned
-                        && self.signature(base, path)? == self.signature("HEAD", path)?
+                        && self.signature(base, path)? == self.signature(head, path)?
                     {
                         continue;
                     }
@@ -273,8 +304,34 @@ impl Release<'_> {
                     break;
                 }
             }
+            if let Some(level) = release_level {
+                let before = old
+                    .contains_key(&entry)
+                    .then(|| self.skill_version(base, &entry))
+                    .transpose()?;
+                let after = new
+                    .contains_key(&entry)
+                    .then(|| self.skill_version(head, &entry))
+                    .transpose()?;
+                match (before, after) {
+                    (None, Some(next)) if next != [1, 0, 0] => {
+                        return Err(format!("{name}: начальная версия навыка должна быть 1.0.0"));
+                    }
+                    (Some(previous), Some(next))
+                        if next < previous || (different && next == previous) =>
+                    {
+                        return Err(format!(
+                            "{name}: требуется повышение версии изменённого навыка"
+                        ));
+                    }
+                    _ => {}
+                }
+                if level == 0 && (different || before != after) {
+                    return Err(format!("{name}: изменение навыка требует выпуска пакета"));
+                }
+            }
             if different {
-                changed.push(name);
+                changed.push(name.to_owned());
             }
         }
         Ok(changed)
@@ -321,26 +378,42 @@ impl Release<'_> {
             ));
         }
         self.check_runtime_id("HEAD")?;
-        let commits = self.cmd(&[
+        let history = self.cmd(&[
             "git",
-            "rev-list",
+            "log",
             "--first-parent",
             "--reverse",
+            "--format=%H",
             &format!("{base}..HEAD"),
+            "--",
+            MANIFEST,
         ])?;
-        let mut parent = self.cmd(&["git", "rev-parse", &format!("{base}^{{commit}}")])?;
-        let mut previous_version = number;
-        for commit in commits.lines() {
-            let reserved = self.manifest_at(commit)?;
-            let next = reserved["version"].as_str().ok_or("Нет версии")?;
-            let expected = self.next_version(&parent, commit, &previous_version, "")?;
-            if next != expected {
-                return Err(format!(
-                    "Манифест {commit}: ожидается {expected}, получено {next}"
-                ));
+        let mut reservations = Vec::new();
+        let mut previous = number.clone();
+        for commit in history.lines() {
+            let data = self.manifest_at(commit)?;
+            let next = data["version"].as_str().ok_or("Нет версии")?;
+            if next == previous {
+                continue;
             }
-            previous_version = next.to_owned();
-            parent = commit.to_owned();
+            reservations.push((commit, next.to_owned()));
+            previous = next.to_owned();
+        }
+        let mut parent = base.as_str();
+        let mut previous = number.as_str();
+        for pair in reservations.windows(2) {
+            let (commit, next) = &pair[0];
+            self.check_reservation(parent, commit, previous, next)?;
+            parent = commit;
+            previous = next;
+        }
+        self.check_reservation(parent, "HEAD", previous, &current)?;
+        let tag = format!("v{current}");
+        for record in records
+            .iter()
+            .filter(|record| record["draft"] == true && record["tag_name"] == tag)
+        {
+            self.draft_target(record, "HEAD", &current)?;
         }
         let level = match (published, reserved) {
             ([a, _, _], [b, _, _]) if a != b => 3,
@@ -349,10 +422,26 @@ impl Release<'_> {
             _ => 0,
         };
         Ok(
-            json!({"version":current,"level":level,"base":base,"skills":self.changed(&base)?,"records":records}),
+            json!({"version":current,"level":level,"base":base,"skills":self.changed_skills(&base, "HEAD", None)?,"records":records}),
         )
     }
-    fn next_version(&self, base: &str, head: &str, previous: &str, title: &str) -> Result<String> {
+    fn check_reservation(
+        &self,
+        base: &str,
+        head: &str,
+        previous: &str,
+        reserved: &str,
+    ) -> Result<()> {
+        let level = self.release_level(base, head, "")?;
+        let expected = self.version_for_tree(base, head, previous, level)?;
+        if reserved != expected {
+            return Err(format!(
+                "Манифест {head}: ожидается {expected}, получено {reserved}"
+            ));
+        }
+        Ok(())
+    }
+    fn release_level(&self, base: &str, head: &str, title: &str) -> Result<u8> {
         let commits_level = self.change_level_since(base, head)?;
         let level = if title.is_empty() {
             commits_level
@@ -362,12 +451,22 @@ impl Release<'_> {
         if !title.is_empty() && commits_level != level {
             return Err("Заголовок PR и коммиты ветки должны задавать одинаковый уровень Conventional Commits".into());
         }
+        Ok(level)
+    }
+    fn version_for_tree(
+        &self,
+        base: &str,
+        head: &str,
+        previous: &str,
+        level: u8,
+    ) -> Result<String> {
         if level == 0 && !self.same_build_inputs(base, head)? {
             return Err(
                 "Изменение runtime, хуков или сборки требует fix:, feat: или breaking change"
                     .into(),
             );
         }
+        self.changed_skills(base, head, Some(level))?;
         increment(previous, level)
     }
     fn prepare_manifest(&self, base: &str, title: &str, write: bool) -> Result<String> {
@@ -380,18 +479,27 @@ impl Release<'_> {
         ])?;
         self.cmd(&["git", "merge-base", "--is-ancestor", &base, "HEAD"])?;
         let parent = self.manifest_at(&base)?;
-        let expected = self.next_version(
+        let inputs = if write {
+            self.cmd(&["git", "write-tree"])?
+        } else {
+            "HEAD".into()
+        };
+        let level = self.release_level(&base, "HEAD", title)?;
+        let expected = self.version_for_tree(
             &base,
-            "HEAD",
+            &inputs,
             parent["version"].as_str().ok_or("Нет версии")?,
-            title,
+            level,
         )?;
         if write {
-            let runtime_id = self.runtime_id(&self.cmd(&["git", "write-tree"])?)?;
+            let runtime_id = self.runtime_id(&inputs)?;
+            fs::write(self.root.join(PACKAGE_VERSION), format!("{expected}\n"))
+                .map_err(|e| e.to_string())?;
             fs::write(self.root.join(RUNTIME_ID), format!("{runtime_id}\n"))
                 .map_err(|e| e.to_string())?;
         } else {
             self.check_runtime_id("HEAD")?;
+            check_package_version(self.root, &expected)?;
         }
         if let Some(bytes) = self.version_contents(&expected)? {
             if !write {
@@ -557,6 +665,7 @@ impl Release<'_> {
         self.cmd(&["git", "merge-base", "--is-ancestor", &target, head])?;
         if self.manifest_at(&target)?["version"] != number
             || !self.same_build_inputs(&target, head)?
+            || !self.changed_skills(&target, head, None)?.is_empty()
         {
             return Err("Исходники черновика отличаются от проверенного выпуска".into());
         }
@@ -572,7 +681,7 @@ impl Release<'_> {
                 .splitn(2, |b| *b == b'\t')
                 .nth(1)
                 .ok_or("Некорректная запись git ls-tree")?;
-            if path != RUNTIME_ID.as_bytes() {
+            if path != RUNTIME_ID.as_bytes() && path != PACKAGE_VERSION.as_bytes() {
                 hash.update(entry);
                 hash.update([0]);
             }
@@ -929,6 +1038,7 @@ mod tests {
             MANIFEST,
             b"{\"name\": \"fstack\", \"version\": \"0.2.0\"}",
         );
+        save(&root, PACKAGE_VERSION, "0.2.0\n");
         save(&root, ".gitignore", b"dist/\n");
         for name in ["alpha", "beta"] {
             save(
@@ -1051,7 +1161,10 @@ mod tests {
         let updated = original.replace("version: 0.2.0", "version: \"9.0.0\" # spelling");
         fs::write(&path, &updated).unwrap();
         commit(&root, "chore: version only");
-        assert_eq!(release.changed("v0.2.0").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
+            Vec::<String>::new()
+        );
         save(&root, "skills/alpha/SKILL.en.md", &updated);
         assert_eq!(check_versions(&root).unwrap(), "0.2.0");
         save(&root, "skills/alpha/SKILL.en.md", &original);
@@ -1064,14 +1177,23 @@ mod tests {
             "skills/gamma/SKILL.md",
             b"---\nname: gamma\nmetadata:\n  version: 1.0.0\n---\nNew skill\n",
         );
+        let beta = root.join("skills/beta/SKILL.md");
+        fs::write(
+            &beta,
+            fs::read_to_string(&beta).unwrap().replace("0.2.0", "0.2.1"),
+        )
+        .unwrap();
         commit(&root, "feat: resources");
         assert_eq!(
-            release.changed("v0.2.0").unwrap(),
+            release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
             ["alpha", "beta", "gamma"]
         );
         fs::remove_file(root.join("skills/alpha/references/run.md")).unwrap();
         commit(&root, "refactor: undo resource");
-        assert_eq!(release.changed("v0.2.0").unwrap(), ["beta", "gamma"]);
+        assert_eq!(
+            release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
+            ["beta", "gamma"]
+        );
         let skill_before = fs::read(&path).unwrap();
         assert!(release.prepare_manifest("v0.2.0", "", false).is_err());
         assert_eq!(
@@ -1084,6 +1206,57 @@ mod tests {
             release.prepare_manifest("v0.2.0", "", false).unwrap(),
             "0.3.0"
         );
+    }
+    #[test]
+    fn skill_changes_require_both_a_skill_version_and_a_release() {
+        let (_temp, root) = fixture();
+        let stub = stub();
+        let release = Release {
+            root: &root,
+            runner: &stub,
+            artifacts: None,
+        };
+        let base = git(&root, &["rev-parse", "HEAD"]);
+        let path = root.join("skills/alpha/SKILL.md");
+        let original = fs::read_to_string(&path).unwrap();
+        let formatted = original
+            .replace("version: 0.2.0", "version: '0.2.0' # stable")
+            .replace("---\n# Original", "---\n\n# Original")
+            + "\n";
+        fs::write(&path, formatted).unwrap();
+        commit(&root, "docs: format skill metadata");
+        assert_eq!(release.prepare_manifest(&base, "", false).unwrap(), "0.2.0");
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["level"],
+            0
+        );
+        let changed = original.replace("# Original body alpha", "# Changed procedure");
+        fs::write(&path, &changed).unwrap();
+        commit(&root, "docs: clarify procedure");
+        assert!(release
+            .prepare_manifest(&base, "", false)
+            .unwrap_err()
+            .contains("повышение версии"));
+        assert!(release
+            .plan(stub.records.borrow().clone())
+            .unwrap_err()
+            .contains("повышение версии"));
+        fs::write(&path, changed.replace("0.2.0", "0.2.1")).unwrap();
+        git(&root, &["add", "skills"]);
+        assert!(release
+            .prepare_manifest(&base, "", true)
+            .unwrap_err()
+            .contains("выпуска пакета"));
+        commit(&root, "fix: correct procedure");
+        release.prepare_manifest(&base, "", true).unwrap();
+        commit(&root, "chore: prepare release");
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "0.2.1"
+        );
+        save(&root, PACKAGE_VERSION, "0.2.0\n");
+        assert!(check_versions(&root).is_err());
+        assert!(release.prepare_manifest(&base, "", false).is_err());
     }
     #[test]
     fn event_and_live_main_reject_unvalidated_commits() {
@@ -1194,6 +1367,7 @@ mod tests {
                 .unwrap()
                 .unwrap(),
         );
+        save(&root, PACKAGE_VERSION, "0.2.1\n");
         commit(&root, "fix: revise runtime");
         let pins = Release {
             root: &root,
@@ -1257,6 +1431,15 @@ mod tests {
                 .unwrap()
                 .unwrap(),
         );
+        let alpha = root.join("skills/alpha/SKILL.md");
+        fs::write(
+            &alpha,
+            fs::read_to_string(&alpha)
+                .unwrap()
+                .replace("0.2.0", "0.2.1"),
+        )
+        .unwrap();
+        save(&root, PACKAGE_VERSION, "0.3.0\n");
         commit(&root, "feat: validated behavior");
         let sha = git(&root, &["rev-parse", "HEAD"]);
         origin(&root);
@@ -1409,7 +1592,7 @@ mod tests {
         assert!(release.plan(stub().records.into_inner()).is_err());
     }
     #[test]
-    fn pull_request_merge_and_squash_publish_the_validated_version() {
+    fn preview_merge_squash_and_rebase_accept_the_same_finished_change() {
         let (_temp, root) = fixture();
         let base = git(&root, &["rev-parse", "HEAD"]);
         let stub = stub();
@@ -1431,8 +1614,17 @@ mod tests {
             "1.0.0"
         );
         commit(&root, "chore: reserve package version");
-        save(&root, "guide.md", b"later note");
-        commit(&root, "docs: update usage");
+        save(&root, "tools/fstack/src/main.rs", b"final runtime");
+        git(&root, &["add", "tools/fstack/src/main.rs"]);
+        release
+            .prepare_manifest(&base, "feat!: new runtime protocol", true)
+            .unwrap();
+        commit(&root, "fix: address review");
+        let feature_tree = git(&root, &["rev-parse", "HEAD^{tree}"]);
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "1.0.0"
+        );
         let feature = git(&root, &["rev-parse", "HEAD^"]);
         assert!(release
             .prepare_manifest(&feature, "feat: misleading title", false)
@@ -1459,6 +1651,18 @@ mod tests {
             release.plan(stub.records.borrow().clone()).unwrap()["version"],
             "1.0.0"
         );
+        git(&root, &["reset", "--hard", &base]);
+        git(&root, &["cherry-pick", &format!("{base}..feature")]);
+        assert_eq!(git(&root, &["rev-parse", "HEAD^{tree}"]), feature_tree);
+        origin(&root);
+        let sha = git(&root, &["rev-parse", "HEAD"]);
+        let artifacts = artifacts(&root, &sha);
+        let release = Release {
+            artifacts: Some(&artifacts),
+            ..release
+        };
+        release.publish("fixture/fstack", &event(&sha)).unwrap();
+        assert_eq!(stub.calls.borrow().last().unwrap()[2], "edit");
     }
     #[test]
     fn consecutive_unpublished_changes_require_distinct_runtime_versions() {

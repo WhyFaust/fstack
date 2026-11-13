@@ -57,6 +57,17 @@ fn shared_preferences_are_vault_scoped_and_never_import_project_records() {
     assert!(!ba.root.join("Shared").exists());
     let id = local["id"].as_str().unwrap();
     assert!(f.cmd(&b, &["shared", "show", id]).is_err());
+    assert_eq!(
+        f.cmd(&b, &["shared", "history", id, "--limit", "1"])
+            .unwrap_err(),
+        "Memory entry is unavailable"
+    );
+    assert_eq!(
+        f.cmd(&b, &["shared", "history", id, "--limit", "0"])
+            .unwrap_err(),
+        "Invalid memory history limit"
+    );
+    assert!(!ba.root.join("Shared").exists());
     let shared = remember(&f.store, &ba, &pref).unwrap();
     assert_eq!(shared["scope"], "shared");
     assert_eq!(f.cmd(&b, &["shared", "show", id]).unwrap(), shared);
@@ -114,6 +125,16 @@ fn shared_inbox_supersession_and_forgetting_are_scoped() {
     let history = f.cmd(&a, &["shared", "history", second_id]).unwrap();
     assert_eq!(history["entries"].as_array().unwrap().len(), 2);
     assert_eq!(history["scope"], "shared");
+    let limited = f
+        .cmd(&a, &["shared", "history", second_id, "--limit", "1"])
+        .unwrap();
+    assert_eq!(limited["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(limited["entries"][0]["id"], second_id);
+    assert_eq!(limited["truncated"], true);
+    assert_eq!(limited["scope"], "shared");
+    assert!(f
+        .cmd(&a, &["shared", "history", second_id, "--limit", "11"])
+        .is_err());
     f.cmd(&a, &["shared", "forget", second_id]).unwrap();
     assert_eq!(
         f.cmd(&b, &["shared", "search", "протокол"]).unwrap(),

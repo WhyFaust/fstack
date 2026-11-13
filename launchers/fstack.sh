@@ -22,8 +22,10 @@ runtime_path() {
             ;;
         *) printf '%s\n' 'fstack: неподдерживаемая ОС или архитектура' >&2; return 1 ;;
     esac
-    version=$(command -p sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[,]?[[:space:]]*$/\1/p' "$root/.codex-plugin/plugin.json")
-    if ! printf '%s\n' "$version" | command -p grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || [ "$(printf '%s\n' "$version" | command -p wc -l)" -ne 1 ]; then
+    version_file=$root/launchers/package-version
+    if ! IFS= read -r version < "$version_file" ||
+        [ "$(command -p wc -c < "$version_file")" -ne "$((${#version} + 1))" ] ||
+        ! printf '%s\n' "$version" | LC_ALL=C command -p grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
         printf '%s\n' 'fstack: некорректная версия пакета' >&2
         return 1
     fi
@@ -54,6 +56,8 @@ install_runtime() {
     asset=fstack-$version-$runtime_id-$target
     url=https://github.com/WhyFaust/fstack/releases/download/v$version/$asset
 
+    PATH=${PATH:+"$PATH:"}$(command -p getconf PATH)
+    export PATH
     umask 077
     mkdir -p -- "$target_dir"
     staging=$(mktemp -d "$target_dir/.download.XXXXXXXX")

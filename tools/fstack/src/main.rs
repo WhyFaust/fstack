@@ -560,6 +560,7 @@ fn versions(root: &Path, manifest: &Value) -> Result<()> {
         pattern.is_match(string(manifest, "version")?),
         "Некорректная версия пакета",
     )?;
+    release::check_package_version(root, string(manifest, "version")?)?;
     let mut count = 0;
     for folder in entries(&root.join("skills"))? {
         if !folder.is_dir() {
@@ -802,6 +803,7 @@ fn main_result() -> Result<()> {
     let package = package_root(&mut arguments)?;
     let command = arguments.first().and_then(|s| s.to_str()).unwrap_or("");
     match (command, arguments.len()) {
+        ("gitlab-ci-action", 1) => return gitlab_ci::run(std::io::stdin().lock()),
         ("memory", _) => return memory::run(&arguments[1..], &package),
         ("migrate-profile", _) => return profile_migration::run(&arguments[1..]),
         ("release", _) => return release::run(&arguments[1..], &package),
@@ -810,7 +812,7 @@ fn main_result() -> Result<()> {
         ("resources", 3) => resources(Path::new(&arguments[2]), Path::new(&arguments[1]))?,
         ("metadata", 2) => println!("{}", metadata(Path::new(&arguments[1]))?),
         ("structure", 2) => skill_structure(Path::new(&arguments[1]))?,
-        _ => return Err("Использование: fstack [--package ROOT] memory | migrate-profile | release | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH".into()),
+        _ => return Err("Использование: fstack [--package ROOT] memory | migrate-profile | gitlab-ci-action | release | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH".into()),
     }
     Ok(())
 }
@@ -845,6 +847,7 @@ fn enclosing_package(executable: &Path) -> Option<&Path> {
         .find(|path| path.join(".codex-plugin/plugin.json").is_file())
 }
 
+mod gitlab_ci;
 mod installation;
 mod memory;
 #[cfg(test)]

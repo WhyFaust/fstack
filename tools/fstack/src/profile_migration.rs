@@ -208,13 +208,22 @@ fn plan(home: &Path) -> Result<Plan> {
     Ok(plan)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
+fn atomic_write(
+    path: &Path,
+    bytes: &[u8],
+    replace: bool,
+    permissions: Option<fs::Permissions>,
+) -> Result<()> {
     let parent = path.parent().ok_or("Нет родительского каталога")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    file.write_all(bytes)
-        .and_then(|_| file.as_file().sync_all())
-        .map_err(|e| e.to_string())?;
+    file.write_all(bytes).map_err(|e| e.to_string())?;
+    if let Some(permissions) = permissions {
+        file.as_file()
+            .set_permissions(permissions)
+            .map_err(|e| e.to_string())?;
+    }
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
     if replace {
         file.persist(path)
     } else {
@@ -305,24 +314,49 @@ fn restore_moved(source: &Path, target: &Path) -> Result<()> {
     })
 }
 
-fn move_checked(home: &Path, name: &str, directory: &Path, expected: &[u8]) -> Result<()> {
-    let source = home.join(name);
-    let moved = directory.join(name);
-    fs::create_dir_all(moved.parent().unwrap()).map_err(|error| error.to_string())?;
-    fs::rename(&source, &moved).map_err(|error| format!("{name}: {error}"))?;
-    if let Err(error) = check_snapshot(directory, name, expected) {
-        restore_moved(&moved, &source).map_err(|restore| format!("{error}\n{restore}"))?;
-        return Err(error);
+fn claim_location(backup: &Path, name: &str) -> PathBuf {
+    let file = Path::new(name);
+    let transaction = backup.file_name().unwrap().to_string_lossy();
+    file.parent()
+        .unwrap()
+        .join(format!(".{transaction}"))
+        .join(file.file_name().unwrap())
+}
+
+fn claimed_file(home: &Path, backup: &Path, name: &str) -> Result<(PathBuf, FileState)> {
+    let old = format!("{CLAIMED}/{name}");
+    let previous = snapshot(backup, &old)?;
+    if previous != FileState::Missing {
+        return Ok((backup.join(old), previous));
+    }
+    let relative = claim_location(backup, name);
+    let state = snapshot(home, relative.to_str().unwrap())?;
+    Ok((home.join(relative), state))
+}
+
+fn move_checked(source: &Path, target: &Path, expected: &[u8]) -> Result<()> {
+    fs::rename(source, target).map_err(|error| format!("{}: {error}", source.display()))?;
+    if let Err(error) = check_snapshot(
+        target.parent().unwrap(),
+        target.file_name().unwrap().to_str().unwrap(),
+        expected,
+    ) {
+        restore_moved(target, source).map_err(|restore| format!("{error}\n{restore}"))?;
+        return Err(format!("{}: {error}", source.display()));
     }
     Ok(())
 }
 
 fn report(plan: &Plan, status: &str) -> Value {
+    migration_report(plan, status, &[])
+}
+
+fn migration_report(plan: &Plan, status: &str, keep: &[&str]) -> Value {
     json!({
         "status": status,
-        "changes": plan.changes.keys().collect::<Vec<_>>(),
-        "removed": plan.changes.iter().filter(|(_, change)| change.after.is_none()).map(|(name, _)| name).collect::<Vec<_>>(),
-        "preserved": plan.preserved,
+        "changes": plan.changes.keys().filter(|name| !keep.contains(name)).collect::<Vec<_>>(),
+        "removed": plan.changes.iter().filter(|(name, change)| change.after.is_none() && !keep.contains(name)).map(|(name, _)| name).collect::<Vec<_>>(),
+        "preserved": plan.preserved.iter().chain(keep).collect::<Vec<_>>(),
     })
 }
 
@@ -345,7 +379,7 @@ fn create_backup(home: &Path, plan: &Plan) -> Result<PathBuf> {
     }
     private_backup(&backup)?;
     for (name, change) in &plan.changes {
-        atomic_write(&backup.join(name), &change.before, false)?;
+        atomic_write(&backup.join(name), &change.before, false, None)?;
     }
     let mut receipt = report(plan, "backup");
     receipt["files"] = json!(plan
@@ -354,20 +388,64 @@ fn create_backup(home: &Path, plan: &Plan) -> Result<PathBuf> {
         .map(|(name, change)| (*name, digest(&change.before)))
         .collect::<BTreeMap<_, _>>());
     let manifest = serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?;
-    atomic_write(&backup.join("manifest.json"), &manifest, false)?;
+    atomic_write(&backup.join("manifest.json"), &manifest, false, None)?;
 
-    atomic_write(&home.join(JOURNAL), name.as_bytes(), false)?;
+    atomic_write(&home.join(JOURNAL), name.as_bytes(), false, None)?;
     Ok(backup)
 }
 
-fn pending_backup(home: &Path) -> Result<Option<PathBuf>> {
+fn legacy_owner_running(pid: u32) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        let pid = i32::try_from(pid).map_err(|_| "Некорректный PID прежнего помощника")?;
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return Ok(true);
+        }
+        let error = io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(error.to_string()),
+        }
+    }
+    #[cfg(windows)]
+    {
+        let script = "$ErrorActionPreference='Stop'; try { $p=[Diagnostics.Process]::GetProcessById([int]$env:FSTACK_LEGACY_PID); $p.Dispose() } catch { if ($_.Exception.GetBaseException() -is [ArgumentException]) { exit 3 }; throw }";
+        let status = std::process::Command::new(system_powershell()?)
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("FSTACK_LEGACY_PID", pid.to_string())
+            .status()
+            .map_err(|error| error.to_string())?;
+        match status.code() {
+            Some(0) => Ok(true),
+            Some(3) => Ok(false),
+            _ => Err("Не удалось проверить PID прежнего помощника".into()),
+        }
+    }
+}
+
+fn pending_backup(home: &Path, recover_stale: bool) -> Result<Option<PathBuf>> {
     let bytes = match snapshot(home, JOURNAL)? {
         FileState::Missing => return Ok(None),
         FileState::Content(bytes) => bytes,
         FileState::Unsafe => return Err(format!("Ожидался обычный файл {JOURNAL}")),
     };
     if bytes.iter().all(u8::is_ascii_digit) {
-        return Err(format!("Прежний помощник удерживает {JOURNAL}"));
+        let pid = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .filter(|&id| id > 0);
+        let Some(pid) = pid else {
+            return Err(format!("У {JOURNAL} нет действительного PID. Остановите прежний помощник и переместите файл блокировки для ручного восстановления."));
+        };
+        if legacy_owner_running(pid)? {
+            return Err(format!("Прежний помощник удерживает {JOURNAL} (PID {pid}). Если этот PID уже принадлежит другому процессу, остановите прежний помощник и переместите оставшийся файл блокировки."));
+        }
+        if recover_stale {
+            check_snapshot(home, JOURNAL, &bytes)?;
+            fs::remove_file(home.join(JOURNAL)).map_err(|error| error.to_string())?;
+        }
+        return Ok(None);
     }
     let name = std::str::from_utf8(&bytes)
         .ok()
@@ -419,58 +497,179 @@ fn backed_up_plan(backup: &Path) -> Result<Plan> {
     Ok(original)
 }
 
-fn apply_change(home: &Path, name: &str, backup: &Path, change: &Change) -> Result<bool> {
-    let claimed = backup.join(CLAIMED);
-    let saved = snapshot(backup, &format!("{CLAIMED}/{name}"))?;
-    if saved == FileState::Missing {
-        match snapshot(home, name)? {
-            FileState::Content(bytes) if bytes == change.before => {
-                move_checked(home, name, &claimed, &change.before)?;
-            }
-            FileState::Missing if name != STATE => return Ok(true),
-            _ if name != STATE => return Ok(false),
-            _ => return Err(format!("Файл изменился во время миграции: {name}")),
-        }
-    } else if !matches!(saved, FileState::Content(ref bytes) if bytes == &change.before) {
-        if snapshot(home, name)? == FileState::Missing {
-            restore_moved(&claimed.join(name), &home.join(name))?;
-        }
-        if name == STATE {
-            return Err(format!("Файл изменился во время миграции: {name}"));
-        }
-        return Ok(false);
-    }
+enum NextChange {
+    Capture,
+    Install,
+    Complete,
+    Preserve,
+    RestoreEdit,
+}
 
-    match snapshot(home, name)? {
-        FileState::Missing => {
-            if let Some(bytes) = &change.after {
-                atomic_write(&home.join(name), bytes, false)?;
+fn next_change(
+    name: &str,
+    change: &Change,
+    saved: &FileState,
+    live: &FileState,
+) -> Result<NextChange> {
+    let action = match (saved, live) {
+        (FileState::Missing, FileState::Content(bytes)) if *bytes == change.before => {
+            NextChange::Capture
+        }
+        (FileState::Missing, FileState::Missing) if name != STATE => NextChange::Complete,
+        (FileState::Content(bytes), live) if *bytes == change.before => match live {
+            FileState::Missing if change.after.is_some() => NextChange::Install,
+            FileState::Missing => NextChange::Complete,
+            FileState::Content(bytes) if Some(bytes) == change.after.as_ref() => {
+                NextChange::Complete
             }
+            _ => NextChange::Preserve,
+        },
+        (FileState::Content(_), FileState::Missing) => NextChange::RestoreEdit,
+        _ => NextChange::Preserve,
+    };
+    if name == STATE && matches!(action, NextChange::Preserve | NextChange::RestoreEdit) {
+        return Err(format!("Файл изменился во время миграции: {name}"));
+    }
+    Ok(action)
+}
+
+fn apply_change(home: &Path, name: &str, backup: &Path, change: &Change) -> Result<bool> {
+    let (claimed, mut saved) = claimed_file(home, backup, name)?;
+    let source = home.join(name);
+    let mut action = next_change(name, change, &saved, &snapshot(home, name)?)?;
+    if matches!(action, NextChange::Capture) {
+        private_claim_directory(&source, backup)?;
+        move_checked(&source, &claimed, &change.before)?;
+        saved = snapshot(
+            claimed.parent().unwrap(),
+            claimed.file_name().unwrap().to_str().unwrap(),
+        )?;
+        action = next_change(name, change, &saved, &snapshot(home, name)?)?;
+    }
+    match action {
+        NextChange::Capture => Err(format!("Исходный файл исчез при переносе: {name}")),
+        NextChange::RestoreEdit => {
+            restore_moved(&claimed, &source)?;
+            Ok(false)
+        }
+        NextChange::Preserve => Ok(false),
+        NextChange::Complete => Ok(true),
+        NextChange::Install => {
+            let permissions = fs::metadata(&claimed)
+                .map_err(|e| e.to_string())?
+                .permissions();
+            atomic_write(
+                &source,
+                change.after.as_ref().unwrap(),
+                false,
+                Some(permissions),
+            )?;
             Ok(true)
         }
-        FileState::Content(bytes) if Some(&bytes) == change.after.as_ref() => Ok(true),
-        _ if name != STATE => Ok(false),
-        _ => Err(format!("Файл изменился во время миграции: {name}")),
     }
 }
 
 fn rollback(home: &Path, name: &str, backup: &Path, change: &Change) -> Result<()> {
-    let claimed = backup.join(CLAIMED).join(name);
-    if snapshot(backup, &format!("{CLAIMED}/{name}"))? == FileState::Missing {
+    let (claimed, saved) = claimed_file(home, backup, name)?;
+    if saved == FileState::Missing {
         return Ok(());
     }
+    let source = home.join(name);
     if let Some(after) = &change.after {
         if snapshot(home, name)? != FileState::Missing {
             check_snapshot(home, name, after)?;
             let directory = tempfile::Builder::new()
                 .prefix("rollback-")
-                .tempdir_in(backup)
+                .tempdir_in(private_claim_directory(&source, backup)?)
                 .map_err(|error| error.to_string())?
                 .keep();
-            move_checked(home, name, &directory, after)?;
+            let replacement = directory.join("replacement");
+            move_checked(&source, &replacement, after)?;
+            restore_moved(&claimed, &source)?;
+            fs::remove_file(&replacement)
+                .and_then(|_| fs::remove_dir(&directory))
+                .map_err(|error| error.to_string())?;
+            return Ok(());
         }
     }
-    restore_moved(&claimed, &home.join(name))
+    restore_moved(&claimed, &source)
+}
+
+fn private_claim_directory(source: &Path, backup: &Path) -> Result<PathBuf> {
+    let directory = source.parent().unwrap().join(format!(
+        ".{}",
+        backup.file_name().unwrap().to_string_lossy()
+    ));
+    if !directory.exists() {
+        private_backup(&directory)?;
+    }
+    Ok(directory)
+}
+
+fn preview(home: &Path) -> Result<Value> {
+    let Some(backup) = pending_backup(home, false)? else {
+        let current = plan(home)?;
+        return Ok(report(
+            &current,
+            if current.changes.is_empty() {
+                "unchanged"
+            } else {
+                "planned"
+            },
+        ));
+    };
+    if let Some(mut result) = committed_report(&backup)? {
+        result["completed"] = result["changes"].take();
+        result["changes"] = json!([]);
+        result["removed"] = json!([]);
+        result["status"] = json!("planned");
+        return Ok(result);
+    }
+    let mut original = backed_up_plan(&backup)?;
+    let mut completed = Vec::new();
+    for name in original.changes.keys().copied().collect::<Vec<_>>() {
+        let change = &original.changes[name];
+        let (_, saved) = claimed_file(home, &backup, name)?;
+        let live = snapshot(home, name)?;
+        match next_change(name, change, &saved, &live)? {
+            NextChange::Complete => completed.push(name),
+            NextChange::RestoreEdit | NextChange::Preserve => original.preserved.push(name),
+            NextChange::Capture | NextChange::Install => continue,
+        }
+        original.changes.remove(name);
+    }
+    let mut result = report(&original, "planned");
+    result["completed"] = json!(completed);
+    result["backup"] = json!(backup);
+    Ok(result)
+}
+
+fn finish_claims(home: &Path, backup: &Path, plan: &Plan) -> Result<Vec<PathBuf>> {
+    let mut retained = Vec::new();
+    for (name, change) in &plan.changes {
+        let relative = claim_location(backup, name);
+        let file = home.join(&relative);
+        match snapshot(home, relative.to_str().unwrap())? {
+            FileState::Missing => {}
+            FileState::Content(bytes) if bytes == change.before => {
+                fs::remove_file(&file).map_err(|error| error.to_string())?;
+            }
+            _ => {
+                retained.push(file);
+                continue;
+            }
+        }
+        match fs::remove_dir(file.parent().unwrap()) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(retained)
 }
 
 fn migrate_with(
@@ -483,9 +682,12 @@ fn migrate_with(
         return Ok(report(&Plan::default(), "unchanged"));
     }
     let _lock = lock(home)?;
-    let (backup, mut plan) = match pending_backup(home)? {
+    let (backup, plan) = match pending_backup(home, true)? {
         Some(backup) => {
             let original = backed_up_plan(&backup)?;
+            if let Some(result) = committed_report(&backup)? {
+                return finish_migration(home, &backup, &original, result);
+            }
             (backup, original)
         }
         None => {
@@ -497,6 +699,7 @@ fn migrate_with(
         }
     };
     let mut completed = Vec::new();
+    let mut preserved = Vec::new();
     let ordered: Vec<_> = plan
         .changes
         .keys()
@@ -508,10 +711,7 @@ fn migrate_with(
         let change = &plan.changes[name];
         match apply(home, name, &backup, change) {
             Ok(true) => completed.push(name),
-            Ok(false) => {
-                plan.changes.remove(name);
-                plan.preserved.push(name);
-            }
+            Ok(false) => preserved.push(name),
             Err(error) => {
                 let mut errors = vec![error];
                 for previous in std::iter::once(name).chain(completed.into_iter().rev()) {
@@ -527,8 +727,32 @@ fn migrate_with(
             }
         }
     }
-    let mut result = report(&plan, "applied");
-    result["backup"] = serde_json::to_value(&backup).map_err(|error| error.to_string())?;
+    let mut result = migration_report(&plan, "applied", &preserved);
+    result["backup"] = json!(backup);
+    let bytes = serde_json::to_vec(&result).map_err(|error| error.to_string())?;
+    atomic_write(&backup.join("applied.json"), &bytes, false, None)?;
+    finish_migration(home, &backup, &plan, result)
+}
+
+fn committed_report(backup: &Path) -> Result<Option<Value>> {
+    match snapshot(backup, "applied.json")? {
+        FileState::Missing => Ok(None),
+        FileState::Content(bytes) => {
+            let value: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            if value["status"] != "applied" || value["backup"] != json!(backup) {
+                return Err("Некорректная квитанция миграции".into());
+            }
+            Ok(Some(value))
+        }
+        FileState::Unsafe => Err("Некорректная квитанция миграции".into()),
+    }
+}
+
+fn finish_migration(home: &Path, backup: &Path, plan: &Plan, mut result: Value) -> Result<Value> {
+    let retained = finish_claims(home, backup, plan)?;
+    if !retained.is_empty() {
+        result["retained_originals"] = json!(retained);
+    }
     fs::remove_file(home.join(JOURNAL)).map_err(|error| error.to_string())?;
     Ok(result)
 }
@@ -581,18 +805,7 @@ pub fn run(args: &[OsString]) -> Result<()> {
     let result = if apply || hook {
         migrate_with(&home, &apply_change)?
     } else {
-        let plan = match pending_backup(&home)? {
-            Some(backup) => backed_up_plan(&backup)?,
-            None => plan(&home)?,
-        };
-        report(
-            &plan,
-            if plan.changes.is_empty() {
-                "unchanged"
-            } else {
-                "planned"
-            },
-        )
+        preview(&home)?
     };
     if hook {
         if let Some(backup) = result["backup"].as_str() {
@@ -606,6 +819,16 @@ pub fn run(args: &[OsString]) -> Result<()> {
                 format!("Миграция профиля fstack завершена. Резервная копия: {backup}.");
             if !preserved.is_empty() {
                 message.push_str(&format!(" Сохранены файлы: {}.", preserved.join(", ")));
+            }
+            if let Some(retained) = result["retained_originals"].as_array() {
+                message.push_str(&format!(
+                    " Сохранённые оригиналы: {}.",
+                    retained
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
             println!("{}", json!({"systemMessage": message}));
         } else {
@@ -625,7 +848,7 @@ mod tests {
     use super::*;
 
     fn put(home: &Path, name: &str, bytes: &[u8]) {
-        atomic_write(&home.join(name), bytes, true).unwrap();
+        atomic_write(&home.join(name), bytes, true, None).unwrap();
     }
 
     fn legacy(home: &Path, schema: u64, names: &[&str]) -> Vec<u8> {
@@ -909,7 +1132,7 @@ mod tests {
         let home = temporary.path();
         let role = "agents/coder.toml";
         legacy(home, 2, &[role]);
-        put(home, JOURNAL, b"4101");
+        put(home, JOURNAL, std::process::id().to_string().as_bytes());
         assert!(migrate_with(home, &apply_change)
             .unwrap_err()
             .contains("Прежний помощник"));
@@ -931,6 +1154,90 @@ mod tests {
         assert!(!home.join(JOURNAL).exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn working_copy_keeps_permissions_and_claims_stay_on_the_source_volume() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let detached = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let coder = "agents/coder.toml";
+        legacy(home, 1, &[coder]);
+        fs::set_permissions(home.join(AGENTS), fs::Permissions::from_mode(0o640)).unwrap();
+        let changes = plan(home).unwrap();
+        let original = create_backup(home, &changes).unwrap();
+        let backup = detached.path().join(original.file_name().unwrap());
+        fs::rename(original, &backup).unwrap();
+        for name in [AGENTS, coder] {
+            assert!(apply_change(home, name, &backup, &changes.changes[name]).unwrap());
+            let local = home.join(claim_location(&backup, name));
+            assert_eq!(local.parent().unwrap().parent(), home.join(name).parent());
+            assert!(local.is_file());
+            assert!(!backup.join(CLAIMED).join(name).exists());
+            rollback(home, name, &backup, &changes.changes[name]).unwrap();
+            assert_eq!(
+                fs::read(home.join(name)).unwrap(),
+                changes.changes[name].before
+            );
+        }
+        apply_change(home, AGENTS, &backup, &changes.changes[AGENTS]).unwrap();
+        assert_eq!(
+            home.join(AGENTS).metadata().unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        assert_eq!(
+            backup.join(AGENTS).metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn preview_and_apply_recover_a_departed_legacy_owner() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path();
+        let role = "agents/coder.toml";
+        legacy(home, 2, &[role]);
+        put(home, JOURNAL, b"2147483647");
+        assert_eq!(preview(home).unwrap()["status"], "planned");
+        assert_eq!(fs::read(home.join(JOURNAL)).unwrap(), b"2147483647");
+        let result = migrate_with(home, &apply_change).unwrap();
+        assert_eq!(result["status"], "applied");
+        assert!(!home.join(role).exists());
+        assert!(!home.join(JOURNAL).exists());
+    }
+
+    #[test]
+    fn preview_lists_live_edits_and_keeps_committed_retries_cleanup_only() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path();
+        let role = "agents/coder.toml";
+        legacy(home, 1, &[role]);
+        let original = plan(home).unwrap();
+        let backup = create_backup(home, &original).unwrap();
+        apply_change(home, AGENTS, &backup, &original.changes[AGENTS]).unwrap();
+        apply_change(home, role, &backup, &original.changes[role]).unwrap();
+        put(home, AGENTS, b"latest user edition");
+        let dry_run = preview(home).unwrap();
+        assert_eq!(dry_run["changes"], json!([STATE]));
+        assert_eq!(dry_run["preserved"], json!([AGENTS]));
+        assert_eq!(dry_run["completed"], json!([role]));
+        let result = migrate_with(home, &apply_change).unwrap();
+        assert_eq!(result["preserved"], dry_run["preserved"]);
+        assert_eq!(fs::read(home.join(AGENTS)).unwrap(), b"latest user edition");
+        put(
+            home,
+            JOURNAL,
+            backup.file_name().unwrap().to_str().unwrap().as_bytes(),
+        );
+        put(home, role, b"new role after completion");
+        assert_eq!(preview(home).unwrap()["changes"], json!([]));
+        assert_eq!(migrate_with(home, &apply_change).unwrap(), result);
+        assert_eq!(
+            fs::read(home.join(role)).unwrap(),
+            b"new role after completion"
+        );
+    }
+
     #[test]
     fn moving_the_actual_file_preserves_an_edit_after_the_ownership_check() {
         let temporary = tempfile::tempdir().unwrap();
@@ -942,7 +1249,9 @@ mod tests {
             let expected = fs::read(home.join(name)).unwrap();
             check_snapshot(home, name, &expected).unwrap();
             put(home, name, b"user save after the check");
-            let error = move_checked(home, name, &backup.join(CLAIMED), &expected).unwrap_err();
+            let moved = backup.join(CLAIMED).join(name);
+            fs::create_dir_all(moved.parent().unwrap()).unwrap();
+            let error = move_checked(&home.join(name), &moved, &expected).unwrap_err();
             assert!(error.contains(name));
             assert_eq!(
                 fs::read(home.join(name)).unwrap(),
@@ -999,7 +1308,9 @@ mod tests {
                 );
             }
             let change = &original.changes[name];
-            move_checked(&home, name, &backup.join(CLAIMED), &change.before).unwrap();
+            let moved = backup.join(CLAIMED).join(name);
+            fs::create_dir_all(moved.parent().unwrap()).unwrap();
+            move_checked(&home.join(name), &moved, &change.before).unwrap();
             if name == coder {
                 put(&home, coder, b"new role saved during restart");
             }

@@ -1,6 +1,6 @@
 use super::{
     format, io, read_json,
-    store::{Binding, Store},
+    store::{self, Binding, Store},
     views, Result,
 };
 use serde_json::{json, Value};
@@ -143,6 +143,14 @@ pub(super) fn execute(store: &Store, project: &Binding, args: &[String]) -> Resu
         }
         ("show", [id]) => store.get(&shared, id),
         ("history", [id]) => store.history(&shared, id, 5),
+        ("history", [id, flag, limit]) if flag == "--limit" => {
+            let limit = limit.parse().map_err(io::err)?;
+            if !exists {
+                store::validate_history(id, limit)?;
+                return Err("Memory entry is unavailable".into());
+            }
+            store.history(&shared, id, limit)
+        }
         ("approve", [id]) => store.approve(&shared, id),
         ("forget", [id]) => store.forget(&shared, id),
         _ => Err("Invalid shared memory command arguments".into()),

@@ -358,6 +358,11 @@ fn complete_package_rejects_broken_release_contracts() {
         assert!(check(&package).is_err(), "{relative}:{key}");
         fs::write(&path, original).unwrap();
     }
+    let stamp = package.join("launchers/package-version");
+    let original = fs::read(&stamp).unwrap();
+    fs::write(&stamp, "0.0.0\n").unwrap();
+    assert!(check(&package).unwrap_err().contains("Версия запускателя"));
+    fs::write(stamp, original).unwrap();
     let localized = package.join("skills/adapt-skill/agents/openai_en.yaml");
     fs::write(&localized, "interface:\n  display_name: 123\n").unwrap();
     assert!(check(&package).is_err());
