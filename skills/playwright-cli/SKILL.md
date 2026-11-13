@@ -5,7 +5,7 @@ license: MIT AND Apache-2.0
 compatibility: Установленный Playwright CLI и доступный ему браузер; Node.js нужен при запуске через npx.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
-  version: 2.0.2
+  version: 2.0.3
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -17,10 +17,8 @@ metadata:
 Выбери именованную сессию, если браузером пользуется другая работа. Перед действием
 получи свежий snapshot и используй ссылки на элементы из него. После навигации или
 существенного изменения DOM обнови ссылки. При смене вкладки получи snapshot именно
-её содержимого, прежде чем использовать ссылку на элемент. Если открыта существующая
-пользовательская сессия, проверь нужную вкладку и способ завершения по
-[справке о сессиях](references/session-management.md). Закрывай только
-собственные ресурсы.
+её содержимого. Сессию, подключённую через `attach`, освободи командой
+`detach`. Завершай через `close` только браузер, созданный тобой через `open`.
 
 Разрешение открыть страницу само по себе не разрешает отправку сообщения,
 покупку или изменение данных.
@@ -51,27 +49,20 @@ playwright-cli -s="$session" snapshot
 playwright-cli -s="$session" close
 ```
 
-### Справки по задаче
+При автоматизации теста выбирай устойчивый локатор по роли, подписи или test ID.
+Ожидай наблюдаемое состояние, заданное требованием. Перед запуском проверь
+выборку тестов через `playwright test --list` с тем же фильтром у runner проекта.
+При подмене ответа укажи, какую часть интеграции она исключает.
 
-| Задача | Справка |
-| --- | --- |
-| Команды, вкладки, эмуляция | [commands.md](references/commands.md) |
-| Владение сессией | [session-management.md](references/session-management.md) |
-| Cookies и локальное состояние | [storage-state.md](references/storage-state.md) |
-| Нестандартный Playwright-код | [running-code.md](references/running-code.md) |
-| Атрибуты и локаторы | [element-attributes.md](references/element-attributes.md) |
-| Запуск и диагностика тестов | [playwright-tests.md](references/playwright-tests.md) |
-| Проектирование и исправление тестов | [test-generation.md](references/test-generation.md) |
-| Подмена запросов | [request-mocking.md](references/request-mocking.md) |
-| Трассировка | [tracing.md](references/tracing.md) |
-| Запись видео | [video-recording.md](references/video-recording.md) |
-| Вложения в PR | [pr-attachments.md](references/pr-attachments.md) |
+Разделяй профили и данные стенда между параллельными сессиями. Проверяй origin
+перед выдачей разрешений. Сохранённые cookies и storage state содержат данные
+авторизации. Перед передачей снимков, видео и трасс проверь их содержимое
+и полномочия на публикацию.
 
-Читай только справку нужного режима. Установка CLI и браузера — отдельное изменение
-среды; используй существующий инструмент, если его достаточно.
-Справки переведены и сокращены; Copyright (c) Microsoft Corporation.
-При распространении сохраняй [текст Apache-2.0](../../licenses/Apache-2.0.txt).
-Собственные инструкции fstack распространяются по MIT.
+[Playwright CLI](https://github.com/microsoft/playwright-cli),
+[Playwright Test](https://playwright.dev/docs/test-cli).
+Материалы Playwright CLI адаптированы. Copyright (c) Microsoft Corporation.
+[Apache-2.0](../../licenses/Apache-2.0.txt). Собственные инструкции fstack распространяются по MIT.
 
 ## Проверка и результат
 

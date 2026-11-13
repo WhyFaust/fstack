@@ -16,7 +16,7 @@
     <rect x="40" y="148" width="330" height="112" rx="15" fill="#ffffff" stroke="#d9ccbf"/>
     <rect x="40" y="148" width="6" height="112" rx="3" fill="#cf7048"/>
     <text x="65" y="184" fill="#9b4d31" font-size="15" font-weight="700">skills/</text>
-    <text x="65" y="216" fill="#322921" font-size="23" font-weight="700">Навыки и справки</text>
+    <text x="65" y="216" fill="#322921" font-size="23" font-weight="700">Навыки fstack</text>
     <text x="65" y="242" fill="#6e6259" font-size="16">Код, тексты, проверка результата</text>
     <path d="M 390 214 H 608" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
     <text x="500" y="197" fill="#6e6259" font-size="15" text-anchor="middle">Codex загружает</text>
