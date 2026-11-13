@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" SessionStart",
-            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) SessionStart",
+            "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) SessionStart $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))\"",
             "timeout": 5
           }
         ]
@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" UserPromptSubmit",
-            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) UserPromptSubmit",
+            "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) UserPromptSubmit $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))\"",
             "timeout": 5
           }
         ]
@@ -30,7 +30,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" Stop",
-            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) Stop",
+            "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) Stop $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))\"",
             "timeout": 5
           }
         ]
@@ -43,7 +43,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/memory.sh\" PostToolUse",
-            "commandWindows": "& ([scriptblock]::Create([IO.File]::ReadAllText(\"$env:PLUGIN_ROOT\\hooks\\memory.ps1\"))) PostToolUse",
+            "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) PostToolUse $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))\"",
             "timeout": 5
           }
         ]

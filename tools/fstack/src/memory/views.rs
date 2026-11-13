@@ -87,6 +87,9 @@ pub fn project_link(page: &Path) -> String {
     )
 }
 pub fn current_link(root: &Path) -> Result<String> {
+    if super::shared::is_root(root) {
+        return Ok(super::shared::LINK.into());
+    }
     current_page(root)?
         .map(|p| project_link(&p))
         .ok_or("Memory project page is unavailable".into())
@@ -120,11 +123,11 @@ pub fn ensure_library(root: &Path, package: &Path) -> Result<()> {
     let approval = "file(file.path.replace(\"/Records/\", \"/Approved/\"))";
     let old = "file(file.path.replace(\"/Records/\", \"/Forgotten/\"))";
     let new = "file(file.folder + \"/\" + file.basename + \"-forgotten.json\")";
-    let changes=[(format!("{approval} != null"),format!("(note.fstack_status == \"approved\" || {approval} != null)")),(format!("{approval} == null"),format!("(note.fstack_status != \"approved\" && {approval} == null)")),(format!("{old} == null"),format!("({new} == null && {old} == null)")),("!this.file.path.endsWith(\"/Project.md\") || file.inFolder(this.file.folder)".into(),"this.file.properties.fstack_memory_project == null || file.folder == \"Codex Memory/Projects/\" + this.file.properties.fstack_memory_project + \"/Records\"".into())];
+    let changes=[(r#"file.inFolder("Codex Memory/Projects")"#.into(), r#"(file.inFolder("Codex Memory/Projects") || file.folder == "Codex Memory/Shared/Records")"#.into()),(r#"file.folder.split("/")[2]"#.into(),r#"if(file.folder == "Codex Memory/Shared/Records", "Общие", file.folder.split("/")[2])"#.into()),(format!("{approval} != null"),format!("(note.fstack_status == \"approved\" || {approval} != null)")),(format!("{approval} == null"),format!("(note.fstack_status != \"approved\" && {approval} == null)")),(format!("{old} == null"),format!("({new} == null && {old} == null)")),("!this.file.path.endsWith(\"/Project.md\") || file.inFolder(this.file.folder)".into(),"this.file.properties.fstack_memory_project == null || file.folder == \"Codex Memory/Projects/\" + this.file.properties.fstack_memory_project + \"/Records\"".into())];
     let mut updated = raw.clone();
     for (old, new) in changes {
         let r = regex::Regex::new(&format!(
-            r"(?m)^([ \t]*(?:filters:|-)[ \t]+)('?){}('?)([ \t]*(?:#[^\n]*)?)$",
+            r"(?m)^([ \t]*(?:filters:|project:|-)[ \t]+)('?){}('?)([ \t]*(?:#[^\n]*)?)$",
             regex::escape(&old)
         ))
         .unwrap();

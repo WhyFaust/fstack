@@ -1,5 +1,5 @@
 use super::{
-    action, decode, format, io,
+    action, correction, decode, format, io,
     pending::{self, Delivery, Pending, Stop},
     scope as project_scope,
     store::{Binding, Store, WriteOutcome},
@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 pub fn scope_id(b: &Binding, cwd: &Path) -> String {
-    let cwd = io::normalized(cwd);
+    let cwd = io::directory_key(cwd);
     let root = io::normalized(&b.root);
     let mut parts = vec![cwd.as_str(), root.as_str(), &b.project, &b.mode];
     if let Some(generation) = &b.generation {
@@ -75,7 +75,12 @@ fn chat_mode(
                 return Ok(Some(epoch));
             }
             let _mode_lock = mode_lock(store, session)?;
-            io::write(&marker, &io::nonce()?, false, None)?;
+            io::write(
+                &marker,
+                &format!("coordinator-{}", io::nonce()?),
+                false,
+                None,
+            )?;
             io::read(&marker)
         }
         Some(false) => {
@@ -85,10 +90,15 @@ fn chat_mode(
         None => io::read(&marker),
     }
 }
-fn activation(event: &str, package: &Path) -> Value {
-    extra(event, format!("В этом чате включён faust-mode до команды /faust-mode-off. Используй инструкции fstack:faust-mode из файла {}. Если они уже загружены, повторно не читай.", package.join("skills/faust-mode/SKILL.md").display()))
+fn activation(package: &Path) -> String {
+    format!("В этом чате включён faust-mode до команды /faust-mode-off. Используй инструкции fstack:faust-mode из файла {}. Если они уже загружены, повторно не читай.", package.join("skills/faust-mode/SKILL.md").display())
 }
-fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
+enum Posted {
+    Ensure(String),
+    RetryCorrection(String),
+    Stage(String, Value),
+}
+fn posted(payload: &Value) -> Result<Option<Posted>> {
     if payload["tool_name"] != "Bash"
         || payload.get("agent_id").is_some()
         || payload.get("agent_type").is_some()
@@ -107,23 +117,79 @@ fn posted(payload: &Value) -> Result<Option<(String, Value)>> {
     let Some(command) = input.get("command").and_then(Value::as_str) else {
         return Ok(None);
     };
+    let prefix = prefix()?;
+    if payload["tool_response"]
+        .as_str()
+        .is_some_and(|s| s.trim() == "{\"ready\":true}")
+    {
+        return Ok(command
+            .strip_prefix(&format!("{prefix} ensure --turn "))
+            .filter(|token| pending::token_parts(token).is_some())
+            .map(|token| Posted::Ensure(token.into())));
+    }
     if payload["tool_response"]
         .as_str()
         .is_none_or(|s| s.trim() != "{\"staged\": true}")
     {
         return Ok(None);
     }
-    let start = format!("{} stage --turn ", prefix()?);
+    let start = format!("{prefix} stage --turn ");
     let Some(rest) = command.strip_prefix(&start) else {
         return Ok(None);
     };
-    let Some((token, encoded)) = rest.split_once(" --payload ") else {
+    let Some((token, arguments)) = rest.split_once(' ') else {
         return Ok(None);
     };
     if pending::token_parts(token).is_none() {
         return Ok(None);
     }
-    Ok(decode(encoded).ok().map(|v| (token.into(), v)))
+    let value = if arguments == "--skip" {
+        Some(json!({"action":"skip"}))
+    } else if let Some(encoded) = arguments.strip_prefix("--payload ") {
+        decode(encoded).ok()
+    } else {
+        return Ok(arguments
+            .strip_prefix("--correction ")
+            .and_then(|fields| literal_correction(token, fields)));
+    };
+    Ok(value.map(|v| Posted::Stage(token.into(), v)))
+}
+fn portable_text(c: char) -> bool {
+    c.is_alphanumeric() || " .,:;-_/()[]+=?«»—–…".contains(c)
+}
+fn quoted_field(text: &str) -> Option<(&str, &str, bool)> {
+    let quote = text.chars().next().filter(|c| matches!(c, '\'' | '"'))?;
+    let (field, rest) = text[1..].split_once(quote)?;
+    Some((
+        field,
+        rest,
+        quote == '\'' || field.chars().all(portable_text),
+    ))
+}
+fn literal_correction(token: &str, fields: &str) -> Option<Posted> {
+    let retry = || Posted::RetryCorrection(token.into());
+    let pair = quoted_field(fields).and_then(|(title, rest, safe_title)| {
+        let (body, suffix, safe_body) = quoted_field(rest.strip_prefix(' ')?)?;
+        Some((title, body, suffix, safe_title && safe_body))
+    });
+    let Some((title, body, suffix, safe)) = pair else {
+        return fields
+            .chars()
+            .all(|c| c.is_alphanumeric() || " .,:-_/\'\"".contains(c))
+            .then(retry);
+    };
+    let predecessor = if suffix.trim_matches(' ').is_empty() {
+        None
+    } else {
+        Some(format::id(suffix.strip_prefix(" --supersedes ")?).ok()?)
+    };
+    if !safe {
+        return Some(retry());
+    }
+    Some(match correction(title, body, predecessor) {
+        Ok(value) => Posted::Stage(token.into(), value),
+        Err(_) => retry(),
+    })
 }
 pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<Value> {
     if payload["hook_event_name"] != event
@@ -141,12 +207,13 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     let plan = [&payload["permission_mode"], collab, &payload["mode"]]
         .iter()
         .any(|v| **v == "plan");
-    if payload["cwd"]
+    let Some(cwd) = payload["cwd"]
         .as_str()
-        .is_none_or(|s| !io::equal(Path::new(s), cwd))
-    {
+        .map(Path::new)
+        .filter(|path| io::same_directory(path, cwd))
+    else {
         return Ok(json!({}));
-    }
+    };
     if event == "SessionStart" {
         return Ok(json!({}));
     }
@@ -162,6 +229,20 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     else {
         return Ok(json!({}));
     };
+    if io::within(&store.state, cwd) {
+        return Ok(
+            if event == "UserPromptSubmit"
+                && payload["prompt"].as_str().and_then(mode_command) == Some(true)
+            {
+                extra(event,format!("Для этого запроса используй fstack:faust-mode из {}. Рабочая папка содержит профиль Codex, поэтому состояние режима здесь не сохраняется.", store.package.join("skills/faust-mode/SKILL.md").display()))
+            } else {
+                json!({})
+            },
+        );
+    }
+    let ordinary = [collab, &payload["mode"]]
+        .iter()
+        .any(|v| matches!(v.as_str(), Some("default" | "normal")));
     let key = pending::digest(&[session, turn]);
     let pending = Pending::new(&store.state, cwd);
     let generation = if event == "UserPromptSubmit" || (event == "Stop" && plan) {
@@ -177,6 +258,11 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     } else {
         None
     };
+    if io::state(&store.state, cwd, false).is_err() {
+        return Ok(
+            json!({"systemMessage":"Автоматическая память недоступна. Проверь права и расположение локального профиля памяти вне версионируемых каталогов. Продолжай основной запрос."}),
+        );
+    }
     let prompt_submit = event == "UserPromptSubmit";
     if !prompt_submit && (plan || (event == "PostToolUse" && !pending.active(&key)?)) {
         return Ok(json!({}));
@@ -186,22 +272,29 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     } else {
         None
     };
-    let enabled = chat_mode(store, cwd, session, command)?;
-    if command == Some(false) {
-        return Ok(if enabled.is_some() {
-            extra(
-                event,
-                "Faust-mode выключен для этого чата. Выполняй запрос напрямую.".into(),
-            )
+    let previous_mode = chat_mode(store, cwd, session, None)?;
+    let coordinator = if prompt_submit {
+        if command == Some(false) {
+            chat_mode(store, cwd, session, command)?;
+            Some("Faust-mode выключен для этого чата. Выполняй запрос напрямую.".to_owned())
         } else {
-            json!({})
-        });
-    }
-    let Some(epoch) = enabled else {
-        return Ok(json!({}));
+            let enabled = if command.is_some() {
+                chat_mode(store, cwd, session, command)?.is_some()
+            } else {
+                previous_mode.is_some()
+            };
+            enabled.then(|| activation(&store.package))
+        }
+    } else {
+        None
+    };
+    let coordinator_only = || {
+        coordinator
+            .as_ref()
+            .map_or_else(|| json!({}), |text| extra(event, text.clone()))
     };
     if plan {
-        return Ok(activation(event, &store.package));
+        return Ok(coordinator_only());
     }
     let staged = if event == "PostToolUse" {
         posted(payload)?
@@ -211,26 +304,67 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     if event == "PostToolUse" && staged.is_none() {
         return Ok(json!({}));
     }
-    let binding = if event == "Stop" {
-        store.bound(cwd)?
+    let mut generation = generation;
+    let ensure = matches!(staged, Some(Posted::Ensure(_)));
+    let _setup_lock = if let Some(Posted::Ensure(token)) = &staged {
+        let guard = pending.lock_turn(&key)?;
+        let Some((issued_key, nonce)) = pending::token_parts(token) else {
+            return Ok(json!({}));
+        };
+        let Some(target) = store.setup_scope(cwd)? else {
+            return Ok(json!({}));
+        };
+        if issued_key != key || !pending.is_current(token, &target)? {
+            return Ok(json!({}));
+        }
+        generation = Some(nonce.to_owned());
+        Some(guard)
     } else {
-        store.resolve(cwd)?
+        None
+    };
+    let failure = || {
+        let mut output = coordinator_only();
+        output["systemMessage"] = json!("Не удалось автоматически подключить память проекта. Команда memory vault показывает рабочий vault; при нескольких vault выбери его через memory vault --set.");
+        output
+    };
+    let binding = if ensure || (prompt_submit && ordinary) {
+        match store.auto_resolve(cwd) {
+            Ok(binding) => binding,
+            Err(_) => return Ok(failure()),
+        }
+    } else {
+        store.bound(cwd)?
     };
     let Some(b) = binding else {
-        return Ok(if prompt_submit {
-            activation(event, &store.package)
-        } else {
-            json!({})
-        });
+        if prompt_submit && !ordinary {
+            let target = match store.setup_scope(cwd) {
+                Ok(target) => target,
+                Err(_) => return Ok(failure()),
+            };
+            if let Some(target) = target {
+                let token = pending.issue(&key, &target, generation, "setup", session, turn)?;
+                let prefix = prefix()?;
+                let setup = format!("В обычном режиме подключи память проекта отдельной командой из текущего cwd: {prefix} ensure --turn {token}. Хук вернёт инструкции для этого же хода. В Plan пропусти эту команду.");
+                return Ok(extra(
+                    event,
+                    coordinator.map_or_else(|| setup.clone(), |text| format!("{text} {setup}")),
+                ));
+            }
+        }
+        return Ok(coordinator_only());
+    };
+    let issuing = prompt_submit || ensure;
+    let Some(epoch) = pending.session_epoch(session, previous_mode, issuing)? else {
+        return Ok(json!({}));
     };
     let scope = scope_id(&b, cwd);
-    if event == "UserPromptSubmit" {
+    if issuing {
         let prefix = prefix()?;
         let mut ids = Vec::new();
         let mut search_failed = false;
         if let Some(prompt) = payload["prompt"].as_str().filter(|s| !s.trim().is_empty()) {
             let q = prompt.chars().take(500).collect::<String>();
-            match store.search(&b, &q, 3) {
+            match store.recall(&b, &q, 3) {
                 Ok(v) => {
                     for entry in v.as_array().into_iter().flatten() {
                         if let Some(id) = entry["id"].as_str().filter(|s| format::id(s).is_ok()) {
@@ -242,29 +376,72 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             }
         }
         let token = pending.issue(&key, &scope, generation, &epoch, session, turn)?;
-        let found = if search_failed {
-            "поиск недоступен".into()
-        } else if ids.is_empty() {
-            "—".into()
+        let recall = if ids.is_empty() {
+            String::new()
         } else {
-            ids.join(", ")
+            format!(
+                " Прочитай совпадения через {prefix} show ID и примени подходящие правила. ID: {}.",
+                ids.join(", ")
+            )
         };
-        let mut output = extra(event,format!("Память fstack, проект {}, режим {}. ID поиска: {found}. Загрузи навык use-memory для правил записи. Перед завершением обычного хода сам оцени, есть ли обоснованное долговечное решение, поправка или устойчивое предпочтение. Опирайся на текущую работу, слова пользователя или проверяемый результат. В режиме auto подготовь такое знание через remember. Разрешение уже даёт режим auto. Сомнительное, но полезное знание можно направить в draft. В режиме inbox подготовленные знания поступают на ручную проверку. Для approve и forget нужно явное поручение пользователя. Если подходящей новой записи нет, подготовь {{\"action\":\"skip\"}} без текста и причин. Не создавай запись ради отчёта. В обычном режиме результат оценки передай структурированный JSON в {prefix} pack через stdin. Затем выполни отдельный точный вызов в оболочке из текущего cwd, подставив ASCII-строку из JSON-ответа pack без кавычек вместо BASE64URL: {prefix} stage --turn {token} --payload BASE64URL. Подготовь одну операцию за ход. Ответ staged подтверждает проверку команды; другую операцию хук отклонит. В режиме Plan пропусти stage. Не включай токен в ответ.",b.project,b.mode));
-        let context = output["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap();
-        output["hookSpecificOutput"]["additionalContext"] = json!(format!(
-            "{} {context}",
-            activation(event, &store.package)["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .unwrap()
+        let instructions = format!(
+            concat!(
+                "Память fstack, проект {project}, режим {mode}.{recall} ",
+                "В Plan пропусти запись. Устойчивую поправку пользователя к правилу проекта примени сейчас. ",
+                "Проверь дубликаты и подготовь новую поправку отдельной командой из текущего cwd: ",
+                "{prefix} stage --turn {token} --correction 'Тема' 'Полное правило и область'. ",
+                "При замене добавь --supersedes ID. Если нового знания нет, замени --correction и оба поля на --skip. ",
+                "Для решения, предпочтения, черновика или сложного текста прочитай {skill}. ",
+                "За ход принимается одна операция. Её сохраняет Stop. Не показывай токен."
+            ),
+            project = b.project,
+            mode = b.mode,
+            recall = recall,
+            prefix = prefix,
+            token = token,
+            skill = store.package.join("skills/use-memory/SKILL.md").display(),
+        );
+        let instructions = match coordinator {
+            Some(text) => format!("{text} {instructions}"),
+            None => instructions,
+        };
+        let mut output = extra(event, instructions);
+        let mut shared_instructions = String::from(" Только если пользователь явно просит применять предпочтение во всех проектах, подготовь через pack и stage одну операцию remember с полем scope=shared и kind=preference в candidate. Для изменения общей записи используй тот же scope и supersedes. Остальные знания сохраняй в проекте.");
+        match super::shared::recall_context(
+            store,
+            &b,
+            payload["prompt"].as_str().unwrap_or_default(),
+            &prefix,
+        ) {
+            Ok(Some(shared)) => {
+                shared_instructions.push(' ');
+                shared_instructions.push_str(&shared);
+            }
+            Ok(None) => {}
+            Err(_) => search_failed = true,
+        }
+        let context = &mut output["hookSpecificOutput"]["additionalContext"];
+        *context = json!(format!(
+            "{}{shared_instructions}",
+            context.as_str().unwrap_or_default()
         ));
         if search_failed {
             output["systemMessage"] = json!("Не удалось подобрать контекст памяти fstack. Продолжай основную задачу. Выполни отдельный search, если для ответа не хватает контекста из памяти.");
         }
         return Ok(output);
     }
-    if let Some((token, value)) = staged {
+    if let Some(Posted::RetryCorrection(token)) = &staged {
+        return Ok(
+            if pending::token_parts(token).is_some_and(|(issued, _)| issued == key)
+                && pending.is_current(token, &scope)?
+            {
+                extra(event,"Поправка не попала в очередь. Повтори отдельный stage с двумя однострочными полями в одинарных кавычках. Для кавычек, подстановок и многострочного текста используй pack и отдельный stage --payload с текущим токеном.".into())
+            } else {
+                json!({})
+            },
+        );
+    }
+    if let Some(Posted::Stage(token, value)) = staged {
         if pending.stage(&key, &token, &scope, &value)? {
             return Ok(
                 json!({"decision":"block","reason":"На этот ход уже принята другая операция памяти fstack. Она остаётся в очереди. Вторую операцию выполни в новом ходе."}),
@@ -272,6 +449,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         }
         return Ok(json!({}));
     }
+    let confirmed = ordinary || pending.confirmed(&key, &scope, &epoch)?;
     let outcome = pending.claim(
         &key,
         &scope,
@@ -279,9 +457,12 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         turn,
         &epoch,
         Delivery::Current {
-            review: payload["stop_hook_active"] == false,
+            review: confirmed && payload["stop_hook_active"] == false,
         },
     )?;
+    if !confirmed && outcome != Some(Stop::Claimed) {
+        return Ok(json!({}));
+    }
     let mut failed = false;
     for (due_key, original_turn) in pending.due(&scope, session, &epoch, &key)? {
         if due_key != key {
@@ -299,10 +480,6 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             continue;
         };
         let result = (|| -> Result<&str> {
-            let _mode_lock = mode_lock(store, session)?;
-            if chat_mode(store, cwd, session, None)?.as_deref() != Some(&epoch) {
-                return Ok("cancelled");
-            }
             let _binding_lock =
                 store.lock_binding(&project_scope::binding_path(&store.state, cwd)?)?;
             let Some(binding) = store.bound(cwd)?.filter(|b| scope_id(b, cwd) == scope) else {
@@ -319,7 +496,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     }
     if outcome == Some(Stop::Review) {
         return Ok(
-            json!({"decision":"block","reason":"Перед завершением оцени долговечную память текущего проекта по fstack:use-memory. Без новой просьбы пользователя подготовь обоснованное решение, поправку или предпочтение через pack и stage: remember в auto, draft для кандидата или режима inbox. Если подходящего знания нет, передай {\"action\":\"skip\"} тем же способом. Не выдумывай записи, не читай историю чатов и не сохраняй секреты. Используй последний токен из UserPromptSubmit; в Plan пропусти запись. Если подготовка недоступна, сообщи об этом и заверши основную задачу."}),
+            json!({"decision":"block","reason":"Оценка памяти за ход ещё не принята. Вне Plan используй последнюю команду stage из UserPromptSubmit. Для устойчивой поправки проекта передай --correction, если нового знания нет — --skip. Для остальных операций прочитай fstack:use-memory. Если подготовка недоступна, сообщи об этом и заверши задачу."}),
         );
     }
     if failed {
@@ -341,6 +518,13 @@ fn apply(
     turn: &str,
 ) -> Result<&'static str> {
     let request = action(data)?;
+    let shared;
+    let binding = if request["scope"] == "shared" {
+        shared = super::shared::for_action(store, binding, &request)?;
+        &shared
+    } else {
+        binding
+    };
     let outcome = match request["action"].as_str().unwrap() {
         "skip" => return Ok("skipped"),
         "approve" => store.approve_outcome(binding, request["id"].as_str().unwrap())?,

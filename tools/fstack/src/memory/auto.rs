@@ -1,0 +1,580 @@
+use super::{
+    io, read_json, scope,
+    store::{Binding, Store},
+    Result,
+};
+use serde_json::{json, Value};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
+
+struct Vault {
+    path: PathBuf,
+    source: &'static str,
+}
+
+fn registry_path() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let dir = std::env::var_os("APPDATA").map(PathBuf::from)?;
+    #[cfg(target_os = "macos")]
+    let dir = io::home().ok()?.join("Library/Application Support");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| io::home().ok().map(|home| home.join(".config")))?;
+    dir.is_absolute()
+        .then(|| dir.join("obsidian/obsidian.json"))
+}
+
+fn usable(path: &Path) -> Result<bool> {
+    Ok(path.is_absolute()
+        && io::equal(path, &io::absolute(path)?)
+        && io::directory(&path.join(".obsidian"), false, false)?)
+}
+
+fn select(paths: BTreeMap<String, PathBuf>, source: &'static str) -> Result<Option<Vault>> {
+    if paths.len() > 1 {
+        return Err("Multiple Obsidian vaults available. Select the work vault with memory vault --set <absolute path>".into());
+    }
+    Ok(paths
+        .into_values()
+        .next()
+        .map(|path| Vault { path, source }))
+}
+
+impl Store {
+    fn discover(&self, registry: Option<&Path>) -> Result<Option<Vault>> {
+        if let Some(text) = io::read_limit(&self.state.join("vault.json"), 32768)? {
+            let v = read_json(text.as_bytes(), 32768)?;
+            let path = PathBuf::from(v["vault"].as_str().ok_or("Invalid pinned Obsidian vault")?);
+            if !usable(&path)? {
+                return Err("Pinned Obsidian vault is unavailable".into());
+            }
+            return Ok(Some(Vault {
+                path,
+                source: "pinned",
+            }));
+        }
+
+        let mut paths = BTreeMap::new();
+        if io::directory(&self.state, false, true)? {
+            for entry in fs::read_dir(&self.state).map_err(io::err)? {
+                let path = entry.map_err(io::err)?.path();
+                if !path.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+                    s.strip_suffix(".json")
+                        .is_some_and(|id| super::format::id(id).is_ok())
+                }) {
+                    continue;
+                }
+                if let Some(binding) = self.read_binding(&path)? {
+                    let vault = binding.root.parent().ok_or("Invalid memory root path")?;
+                    paths.insert(io::normalized(vault), vault.to_owned());
+                }
+            }
+        }
+        if !paths.is_empty() {
+            let known = select(paths, "bindings")?.unwrap();
+            if !usable(&known.path)? {
+                return Err("Previously configured Obsidian vault is unavailable".into());
+            }
+            return Ok(Some(known));
+        }
+        let Some(registry) = registry else {
+            return Ok(None);
+        };
+        let Some(text) = io::read_limit(registry, 1_048_576)? else {
+            return Ok(None);
+        };
+        let settings = read_json(text.as_bytes(), 1_048_576)?;
+        let Some(vaults) = settings.get("vaults") else {
+            return Ok(None);
+        };
+        for record in vaults
+            .as_object()
+            .ok_or("Invalid Obsidian vault registry")?
+            .values()
+        {
+            if let Some(path) = record["path"].as_str().map(Path::new) {
+                if usable(path) == Ok(true) {
+                    paths.insert(io::normalized(path), path.to_owned());
+                }
+            }
+        }
+        if paths.len() > 1 {
+            let managed = paths
+                .iter()
+                .filter(|(_, path)| self.check_home(&path.join("Codex Memory")).is_ok())
+                .map(|(key, path)| (key.clone(), path.clone()))
+                .collect::<BTreeMap<_, _>>();
+            if managed.len() == 1 {
+                return select(managed, "obsidian-memory");
+            }
+        }
+        select(paths, "obsidian")
+    }
+
+    pub fn vault_status(&self) -> Result<Value> {
+        io::profile_state(&self.state, false)?;
+        Ok(match self.discover(self.registry().as_deref())? {
+            Some(v) => json!({"vault":v.path,"source":v.source}),
+            None => json!({"vault":null}),
+        })
+    }
+
+    fn registry(&self) -> Option<PathBuf> {
+        if cfg!(test) {
+            Some(self.state.join("test-obsidian.json"))
+        } else {
+            registry_path()
+        }
+    }
+
+    pub fn pin_vault(&self, vault: &Path) -> Result<Value> {
+        if !usable(vault)? {
+            return Err("Select an existing absolute Obsidian vault".into());
+        }
+        io::profile_state(&self.state, true)?;
+        let path = self.state.join("vault.json");
+        let _lock = self.lock_binding(&path)?;
+        io::write(&path, &json!({"vault":vault}).to_string(), true, None)?;
+        Ok(json!({"vault":vault,"source":"pinned"}))
+    }
+
+    fn new_target(&self, cwd: &Path) -> Result<Option<Vault>> {
+        if reserved_root(cwd, io::home().ok().as_deref(), &std::env::temp_dir())
+            || io::within(cwd, &self.state)
+            || system_directory(cwd)
+        {
+            return Ok(None);
+        }
+        let Some(vault) = self.discover(self.registry().as_deref())? else {
+            return Ok(None);
+        };
+        if io::within(cwd, &vault.path) || io::within(&vault.path, cwd) {
+            return Ok(None);
+        }
+        for parent in cwd.ancestors() {
+            if io::directory(&parent.join(".obsidian"), false, false)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(vault))
+    }
+
+    pub fn setup_scope(&self, cwd: &Path) -> Result<Option<String>> {
+        if cwd.parent().is_none() || io::within(&self.state, cwd) {
+            return Ok(None);
+        }
+        let settings = scope::binding_path(&self.state, cwd)?;
+        let vault = if io::file(&settings)? {
+            self.read_binding(&settings)?
+                .and_then(|b| b.root.parent().map(Path::to_path_buf))
+        } else {
+            self.new_target(cwd)?.map(|v| v.path)
+        };
+        Ok(vault.map(|vault| {
+            super::pending::digest(&[
+                "memory-ensure",
+                &io::directory_key(cwd),
+                &io::directory_key(&vault),
+            ])
+        }))
+    }
+
+    pub fn auto_resolve(&self, cwd: &Path) -> Result<Option<Binding>> {
+        let cwd = io::absolute(cwd)?;
+        if cwd.parent().is_none() || io::within(&self.state, &cwd) {
+            return Ok(None);
+        }
+        io::state(&self.state, &cwd, false)?;
+        let (identity, settings) = scope::binding_location(&self.state, &cwd)?;
+        let owner = io::hash(&identity);
+        if io::file(&settings)? {
+            return self.read_binding(&settings);
+        }
+        let Some(vault) = self.new_target(&cwd)? else {
+            return Ok(None);
+        };
+        let _binding_lock = self.lock_binding(&settings)?;
+        if io::file(&settings)? {
+            return self.read_binding(&settings);
+        }
+        let prefix = project_prefix(&identity);
+        self.setup_locked(
+            &vault.path,
+            &prefix,
+            Some("auto"),
+            &settings,
+            None,
+            Some(&owner),
+        )
+        .map(Some)
+    }
+}
+
+fn reserved_root(cwd: &Path, home: Option<&Path>, temp: &Path) -> bool {
+    home.is_some_and(|home| io::same_directory(home, cwd)) || io::same_directory(temp, cwd)
+}
+
+fn system_directory(cwd: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        std::env::var_os("SystemRoot").is_some_and(|root| io::within(cwd, Path::new(&root)))
+    }
+    #[cfg(not(windows))]
+    {
+        ["/dev", "/proc", "/sys", "/etc", "/usr", "/boot", "/System"]
+            .iter()
+            .any(|root| io::within(cwd, Path::new(root)))
+    }
+}
+
+fn project_prefix(identity: &str) -> String {
+    let (_, location) = identity.split_once(':').unwrap();
+    let path = Path::new(location);
+    let path = if identity.starts_with("git:") && path.file_name().is_some_and(|s| s == ".git") {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    const CYRILLIC: [&str; 32] = [
+        "a", "b", "v", "g", "d", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s",
+        "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya",
+    ];
+    let mut slug = String::new();
+    for ch in name.chars().flat_map(char::to_lowercase) {
+        match ch {
+            'a'..='z' | '0'..='9' => slug.push(ch),
+            'а'..='я' => slug.push_str(CYRILLIC[(ch as usize) - ('а' as usize)]),
+            'ё' => slug.push_str("yo"),
+            _ if !slug.is_empty() && !slug.ends_with('-') => slug.push('-'),
+            _ => {}
+        }
+    }
+    slug.truncate(48);
+    let slug = slug.trim_end_matches('-');
+    if slug.is_empty() {
+        "project".into()
+    } else {
+        slug.into()
+    }
+}
+
+fn numbered_name(prefix: &str, number: usize) -> String {
+    if number == 1 {
+        return prefix.into();
+    }
+    let suffix = format!("-{number}");
+    let prefix = &prefix[..prefix.len().min(48 - suffix.len())];
+    format!("{}{suffix}", prefix.trim_end_matches('-'))
+}
+
+fn previous_name(name: &str, prefix: &str, owner: &str) -> bool {
+    if name == prefix {
+        return true;
+    }
+    let Some((_, suffix)) = name.rsplit_once('-') else {
+        return false;
+    };
+    [12, 16, 20].contains(&suffix.len()) && owner.starts_with(suffix)
+        || suffix
+            .parse::<usize>()
+            .is_ok_and(|n| n > 1 && numbered_name(prefix, n) == name)
+}
+
+pub(super) fn claim_project(root: &Path, prefix: &str, owner: &str) -> Result<String> {
+    let projects = root.join("Projects");
+    io::directory(&projects, true, false)?;
+    let mut occupied = BTreeSet::new();
+    let mut existing = None;
+    for entry in fs::read_dir(&projects).map_err(io::err)? {
+        let entry = entry.map_err(io::err)?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        occupied.insert(name.to_ascii_lowercase());
+        if !previous_name(&name, prefix, owner)
+            || super::format::project(&name).is_err()
+            || !entry.file_type().map_err(io::err)?.is_dir()
+        {
+            continue;
+        }
+        let marker = io::prefix(&entry.path().join(".fstack-scope"), owner.len() + 4)?;
+        let stored = marker
+            .as_deref()
+            .map(|bytes| bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes));
+        if stored == Some(owner.as_bytes()) {
+            if existing.is_some() {
+                return Err("Multiple memory projects have the same workspace owner".into());
+            }
+            existing = Some(name);
+        }
+    }
+    if let Some(name) = existing {
+        return Ok(name);
+    }
+    for number in 1..=occupied.len().saturating_add(2) {
+        let name = numbered_name(prefix, number);
+        if occupied.contains(&name) || super::format::project(&name).is_err() {
+            continue;
+        }
+        let dir = projects.join(&name);
+        match fs::create_dir(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(io::err(e)),
+        }
+        if io::write(&dir.join(".fstack-scope"), owner, false, None)? {
+            return Ok(name);
+        }
+        return Err("Memory project ownership changed during setup".into());
+    }
+    Err("Automatic memory project names are occupied".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store(root: &Path) -> Store {
+        let package = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap();
+        Store::new(Some(root.join("state")), package).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn long_path_reuses_a_legacy_short_binding_and_honors_disablement() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let store = store(&root);
+        let vault = root.join("vault");
+        fs::create_dir_all(vault.join(".obsidian")).unwrap();
+        let project = root.join("Long repository folder");
+        fs::create_dir(&project).unwrap();
+        let short = io::short_directory(&project).unwrap();
+        if io::equal(&project, &short) {
+            return;
+        } // 8.3 aliases are optional on NTFS.
+        store
+            .setup(&vault, &project, "legacy-project", Some("inbox"))
+            .unwrap();
+        let canonical = scope::binding_path(&store.state, &project).unwrap();
+        let legacy = store.state.join(format!(
+            "{}.json",
+            io::hash(format!("dir:{}", io::normalized(&short)))
+        ));
+        assert_ne!(legacy, canonical);
+        fs::rename(&canonical, &legacy).unwrap();
+        let saved = store.auto_resolve(&project).unwrap().unwrap();
+        assert_eq!(
+            (saved.project.as_str(), saved.mode.as_str()),
+            ("legacy-project", "inbox")
+        );
+        assert_eq!(scope::binding_path(&store.state, &project).unwrap(), legacy);
+        store.disable(&project).unwrap();
+        assert!(store.auto_resolve(&project).unwrap().is_none());
+        assert!(store.auto_resolve(&short).unwrap().is_none());
+        assert!(!canonical.exists());
+        fs::write(&canonical, r#"{"disabled":true}"#).unwrap();
+        assert!(scope::binding_path(&store.state, &project).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn short_paths_cannot_enroll_reserved_roots_or_ancestors_of_future_state() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let home = root.join("Long private directory");
+        fs::create_dir(&home).unwrap();
+        let short = io::short_directory(&home).unwrap();
+        if io::equal(&home, &short) {
+            return;
+        }
+        assert!(reserved_root(&short, Some(&home), &root));
+        assert!(reserved_root(&short, None, &home));
+        let state = home.join("not-created/profile/state");
+        assert!(io::within(&state, &short));
+        assert!(io::state(&state, &short, true).is_err());
+        assert!(!state.exists());
+        let nested = home.join("work");
+        fs::create_dir(&nested).unwrap();
+        assert!(io::within(&short.join("work"), &home));
+        assert!(!io::within(&root.join("outside"), &home));
+    }
+
+    #[test]
+    fn simultaneous_projects_use_existing_vault_and_keep_independent_records() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let store = store(&root);
+        let vault = root.join("notes");
+        fs::create_dir_all(vault.join(".obsidian")).unwrap();
+        let old = root.join("origin");
+        let first = root.join("a/widget");
+        let second = root.join("b/widget");
+        for path in [&old, &first, &second] {
+            fs::create_dir_all(path).unwrap();
+        }
+        let legacy = store
+            .setup(&vault, &old, "hand-picked", Some("inbox"))
+            .unwrap();
+        let accidental = legacy.root.join("Projects/widget");
+        fs::create_dir(&accidental).unwrap();
+        fs::write(accidental.join("Keep.md"), "Unmanaged project").unwrap();
+        let foreign_marker = accidental.join(".fstack-scope");
+        let malformed = [0xff; 512];
+        fs::write(&foreign_marker, malformed).unwrap();
+        assert_eq!(store.vault_status().unwrap()["source"], "bindings");
+        let work = [&first, &first, &second];
+        let found = std::thread::scope(|s| {
+            let pending = work.map(|cwd| s.spawn(|| store.auto_resolve(cwd).unwrap().unwrap()));
+            pending.map(|worker| worker.join().unwrap())
+        });
+        assert_eq!(found[0].project, found[1].project);
+        assert_eq!(found[0].generation, found[1].generation);
+        assert_eq!(
+            BTreeSet::from([found[0].project.as_str(), found[2].project.as_str()]),
+            BTreeSet::from(["widget-2", "widget-3"])
+        );
+        assert_ne!(store.root(&found[0]).unwrap(), accidental);
+        assert_eq!(fs::read(foreign_marker).unwrap(), malformed);
+        assert_eq!(
+            fs::read_to_string(accidental.join("Keep.md")).unwrap(),
+            "Unmanaged project"
+        );
+        assert_eq!(found[0].mode, "auto");
+        let saved = store.save(&found[0], &json!({"kind":"decision","title":"Coverage","body":"Prefer a single test runner."}), true,None,None).unwrap();
+        assert!(store.get(&found[2], saved["id"].as_str().unwrap()).is_err());
+        assert!(store.auto_resolve(&vault).unwrap().is_none());
+        assert!(store.disable(&first).unwrap());
+        assert!(store.auto_resolve(&first).unwrap().is_none());
+        let restored = store
+            .setup(&vault, &first, &found[0].project, None)
+            .unwrap();
+        assert_ne!(restored.generation, found[0].generation);
+        assert!(store.get(&restored, saved["id"].as_str().unwrap()).is_ok());
+        fs::rename(&vault, root.join("offline")).unwrap();
+        assert_eq!(store.auto_resolve(&old).unwrap().unwrap().mode, "inbox");
+    }
+
+    #[test]
+    fn project_names_use_readable_ascii_and_recover_their_number_after_a_gap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let reports = project_prefix("dir:/work/Отчёты АЯ");
+        assert_eq!(reports, "otchyoty-aya");
+        assert_eq!(project_prefix("dir:/work/漢字"), "project");
+        let owners = [io::hash("one"), io::hash("two"), io::hash("three")];
+        for example in ["client-api", "report-worker", "portal", "fstack"] {
+            let prefix = project_prefix(&format!("dir:/work/{example}"));
+            assert_eq!(
+                claim_project(&root, &prefix, &io::hash(example)).unwrap(),
+                example
+            );
+        }
+        assert_eq!(claim_project(&root, &reports, &owners[0]).unwrap(), reports);
+        let projects = root.join("Projects");
+        fs::create_dir(projects.join("widget")).unwrap();
+        assert_eq!(
+            claim_project(&root, "widget", &owners[1]).unwrap(),
+            "widget-2"
+        );
+        assert_eq!(
+            claim_project(&root, "widget", &owners[2]).unwrap(),
+            "widget-3"
+        );
+        fs::remove_dir(projects.join("widget")).unwrap();
+        assert_eq!(
+            claim_project(&root, "widget", &owners[2]).unwrap(),
+            "widget-3"
+        );
+        assert_eq!(
+            claim_project(&root, "con", &io::hash("reserved")).unwrap(),
+            "con-2"
+        );
+        let long = project_prefix(&format!("dir:/work/{}", "a".repeat(100)));
+        assert_eq!(claim_project(&root, &long, &owners[0]).unwrap().len(), 48);
+        let other = claim_project(&root, &long, &owners[1]).unwrap();
+        assert_eq!(other, format!("{}-2", "a".repeat(46)));
+    }
+
+    #[test]
+    fn missing_local_binding_recovers_legacy_hashed_project_and_its_records() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let store = store(&root);
+        let repo = root.join("Сборка");
+        let vault = root.join("notes");
+        fs::create_dir(&repo).unwrap();
+        fs::create_dir_all(vault.join(".obsidian")).unwrap();
+        store.pin_vault(&vault).unwrap();
+        let (identity, settings) = scope::binding_location(&store.state, &repo).unwrap();
+        let owner = io::hash(&identity);
+        let legacy_name = format!("project-{}", &owner[..16]);
+        let legacy = store
+            .setup(&vault, &repo, &legacy_name, Some("auto"))
+            .unwrap();
+        let project = store.root(&legacy).unwrap();
+        fs::write(project.join(".fstack-scope"), &owner).unwrap();
+        let saved = store
+            .save(
+                &legacy,
+                &json!({"kind":"decision","title":"Build","body":"Use an offline build."}),
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+        fs::remove_file(settings).unwrap();
+        let recovered = store.auto_resolve(&repo).unwrap().unwrap();
+        assert_eq!(recovered.project, legacy_name);
+        assert_eq!(
+            store
+                .get(&recovered, saved["id"].as_str().unwrap())
+                .unwrap(),
+            saved
+        );
+        assert!(!legacy.root.join("Projects/sborka").exists());
+    }
+
+    #[test]
+    fn uncertain_registry_never_picks_an_unrelated_vault_and_status_is_read_only() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let store = store(&root);
+        let repo = root.join("project");
+        fs::create_dir(&repo).unwrap();
+        assert_eq!(store.vault_status().unwrap(), json!({"vault":null}));
+        assert!(store.auto_resolve(&repo).unwrap().is_none());
+        assert!(!store.state.exists());
+        let vaults = [root.join("work"), root.join("personal")];
+        for v in &vaults {
+            fs::create_dir_all(v.join(".obsidian")).unwrap();
+        }
+        fs::create_dir(&store.state).unwrap();
+        fs::write(store.registry().unwrap(), json!({"vaults":{
+            "one":{"path":vaults[0]}, "two":{"path":vaults[1],"open":true}, "removed":{"path":root.join("gone")}
+        }}).to_string()).unwrap();
+        assert!(store.auto_resolve(&repo).is_err());
+        assert!(!vaults.iter().any(|v| v.join("Codex Memory").exists()));
+        let selected = store.pin_vault(&vaults[0]).unwrap();
+        assert_eq!(selected["source"], "pinned");
+        let b = store.auto_resolve(&repo).unwrap().unwrap();
+        assert_eq!(b.root, vaults[0].join("Codex Memory"));
+        assert_eq!(b.project, "project");
+        let elsewhere = store.state.join("vault.json");
+        fs::remove_file(elsewhere).unwrap();
+        fs::remove_file(scope::binding_path(&store.state, &repo).unwrap()).unwrap();
+        assert_eq!(store.vault_status().unwrap()["source"], "obsidian-memory");
+        assert_eq!(
+            store.auto_resolve(&repo).unwrap().unwrap().project,
+            b.project
+        );
+        assert!(!vaults[1].join("Codex Memory").exists());
+    }
+}

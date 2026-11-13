@@ -628,31 +628,20 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
         }
         let handler = &groups[0]["hooks"][0];
         require(handler["type"] == "command", "Ожидался командный хук")?;
-        let launchers = [
-            (
-                "command",
-                rx!(r#"\A/bin/sh "\$PLUGIN_ROOT/([^"]+)" (\w+)\z"#),
-                "hooks/memory.sh",
-            ),
-            (
-                "commandWindows",
-                rx!(
-                    r#"\A& \(\[scriptblock\]::Create\(\[IO\.File\]::ReadAllText\("\$env:PLUGIN_ROOT\\([^"]+)"\)\)\) (\w+)\z"#
-                ),
-                "hooks/memory.ps1",
-            ),
-        ];
-        for (field, pattern, launcher) in launchers {
-            let capture = pattern
-                .captures(string(handler, field)?)
-                .ok_or_else(|| format!("{event}: неверная команда {field}"))?;
-            require(&capture[2] == event, "Неверное событие команды")?;
-            require(
-                contained(root, root, capture[1].replace('\\', "/"), false)?
-                    == contained(root, root, launcher, false)?,
-                "Команда запускает другой ресурс",
-            )?;
-        }
+        let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
+        let windows = format!(
+            r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
+        );
+        require(
+            string(handler, "command")? == posix,
+            format!("{event}: неверная команда command"),
+        )?;
+        require(
+            string(handler, "commandWindows")? == windows,
+            format!("{event}: неверная команда commandWindows"),
+        )?;
+        contained(root, root, "hooks/memory.sh", false)?;
+        contained(root, root, "hooks/memory.ps1", false)?;
     }
     Ok(())
 }

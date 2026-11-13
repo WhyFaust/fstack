@@ -171,7 +171,10 @@ pub fn parse(raw: &str, entry: &str, marker: &str, include_body: bool) -> Result
         if fields.get("fstack_status").is_some_and(|s| s != "approved") {
             return Err("Invalid memory approval status".into());
         }
-        if let Some(link) = fields.get("project_link") {
+        if let Some(link) = fields
+            .get("project_link")
+            .filter(|s| s.as_str() != super::shared::LINK)
+        {
             let r=Regex::new(r"\A\[\[Codex Memory/Projects/([a-z0-9][a-z0-9-]{0,47})/(Project|[a-z0-9][a-z0-9-]{0,47})(?:\|([a-z0-9][a-z0-9-]{0,47}))?\]\]\z").unwrap();
             let c = r.captures(link).ok_or("Invalid memory graph link")?;
             if (&c[2] != "Project" && c[1] != c[2]) || c.get(3).is_some_and(|v| v.as_str() != &c[1])
@@ -181,7 +184,7 @@ pub fn parse(raw: &str, entry: &str, marker: &str, include_body: bool) -> Result
         }
         if fields.get("supersedes_link").is_some_and(|s| {
             !matches(
-                r"\A\[\[Codex Memory/Projects/[a-z0-9][a-z0-9-]{0,47}/Records/[0-9a-f]{64}\]\]\z",
+                r"\A\[\[Codex Memory/(?:Shared|Projects/[a-z0-9][a-z0-9-]{0,47})/Records/[0-9a-f]{64}\]\]\z",
                 s,
             )
         }) {
