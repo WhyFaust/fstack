@@ -11,7 +11,11 @@ use std::{
 const START: &str = "<!-- fstack:profile:start -->";
 const END: &str = "<!-- fstack:profile:end -->";
 const STATE: &str = "fstack/profile.json";
-const RETIRED: &str = "agents/python_coder.toml";
+const RETIRED: [&str; 3] = [
+    "agents/allure_analyst.toml",
+    "agents/python_coder.toml",
+    "agents/reviewer.toml",
+];
 type Files = BTreeMap<String, Option<Vec<u8>>>;
 type Result<T> = std::result::Result<T, String>;
 fn digest(content: &[u8]) -> String {
@@ -141,19 +145,16 @@ fn plan(home: &Path, root: &Path, adopt: bool) -> Result<Plan> {
         let files = state["files"]
             .as_object()
             .ok_or("Некорректное состояние fstack/profile.json")?;
-        let keys: std::collections::BTreeSet<_> = files.keys().cloned().collect();
-        let current: std::collections::BTreeSet<_> = payloads.keys().cloned().collect();
-        let legacy = [
-            "auditor",
-            "coder",
-            "python_coder",
-            "reviewer",
-            "allure_analyst",
-        ]
-        .map(|n| format!("agents/{n}.toml"))
-        .into_iter()
-        .collect();
-        if keys != current && keys != legacy {
+        let current =
+            files.len() == payloads.len() && files.keys().all(|path| payloads.contains_key(path));
+        let historical = ["python_coder", "verifier"].into_iter().any(|specialist| {
+            let roles = ["auditor", "coder", "reviewer", "allure_analyst", specialist];
+            files.len() == roles.len()
+                && roles
+                    .iter()
+                    .all(|role| files.contains_key(&format!("agents/{role}.toml")))
+        });
+        if !current && !historical {
             return Err("Состав управляемого профиля отличается от поддерживаемого".into());
         }
         let legacy_hash = (state["schema"] == 1).then_some(&state["links_sha256"]);
@@ -177,8 +178,10 @@ fn plan(home: &Path, root: &Path, adopt: bool) -> Result<Plan> {
         .iter()
         .map(|(k, v)| (k.clone(), digest(v.as_ref().unwrap())))
         .collect();
-    if owned.contains_key(RETIRED) && !payloads.contains_key(RETIRED) {
-        payloads.insert(RETIRED.into(), None);
+    for path in RETIRED {
+        if owned.contains_key(path) && !payloads.contains_key(path) {
+            payloads.insert(path.into(), None);
+        }
     }
     let mut before = Files::new();
     let mut conflicts = Vec::new();
@@ -288,7 +291,13 @@ impl Drop for Lock {
     }
 }
 fn result(home: &Path, plan: &Plan, status: &str) -> Value {
-    json!({"home":home,"status":status,"version":plan.version,"changes":plan.changes.keys().collect::<Vec<_>>(),"removed":plan.changes.iter().filter(|(_,v)|v.is_none()).map(|(k,_)|k).collect::<Vec<_>>(),"unmanaged_retired":if !plan.before.contains_key(RETIRED) && fs::symlink_metadata(home.join(RETIRED)).is_ok() { vec![RETIRED] } else { vec![] }})
+    let unmanaged_retired: Vec<_> = RETIRED
+        .into_iter()
+        .filter(|&path| {
+            !plan.before.contains_key(path) && fs::symlink_metadata(home.join(path)).is_ok()
+        })
+        .collect();
+    json!({"home":home,"status":status,"version":plan.version,"changes":plan.changes.keys().collect::<Vec<_>>(),"removed":plan.changes.iter().filter(|(_,v)|v.is_none()).map(|(k,_)|k).collect::<Vec<_>>(),"unmanaged_retired":unmanaged_retired})
 }
 fn apply_with(
     home: &Path,
@@ -482,7 +491,7 @@ mod tests {
             r#"{"version":"2.0.0"}"#,
         )
         .unwrap();
-        for name in ["auditor", "coder", "reviewer", "verifier", "allure_analyst"] {
+        for name in crate::ROLES {
             fs::write(root.join(format!("profile/agents/{name}.toml")),format!("name = \"{name}\"\ndescription = \"Role\"\ndeveloper_instructions = \"Instructions\"\n")).unwrap();
         }
         (dir, root, home)
@@ -514,20 +523,18 @@ mod tests {
         walk(home, home, &mut out);
         out
     }
-    fn legacy(home: &Path) {
+    fn old_role_hashes(home: &Path, specialist: &str) -> BTreeMap<String, String> {
         let mut hashes = BTreeMap::new();
-        for name in [
-            "auditor",
-            "coder",
-            "python_coder",
-            "reviewer",
-            "allure_analyst",
-        ] {
+        for name in ["auditor", "coder", "reviewer", "allure_analyst", specialist] {
             let relative = format!("agents/{name}.toml");
             let bytes = format!("Legacy {name}\n").into_bytes();
             atomic_write(&home.join(&relative), &bytes).unwrap();
             hashes.insert(relative, digest(&bytes));
         }
+        hashes
+    }
+    fn legacy(home: &Path) {
+        let hashes = old_role_hashes(home, "python_coder");
         let block = format!("{START}\r\nLegacy links\r\n{END}");
         atomic_write(
             &home.join("AGENTS.md"),
@@ -544,7 +551,9 @@ mod tests {
         assert!(!home.exists());
         atomic_write(&home.join("AGENTS.md"), b"User instructions\r\n").unwrap();
         atomic_write(&home.join("agents/coder.toml"), b"User-owned role").unwrap();
-        atomic_write(&home.join(RETIRED), b"User-owned Python role").unwrap();
+        for role in RETIRED {
+            atomic_write(&home.join(role), b"User-owned role").unwrap();
+        }
         let before = snapshot(&home);
         assert!(apply(&home, &root, false).is_err());
         assert_eq!(snapshot(&home), before);
@@ -554,11 +563,10 @@ mod tests {
             fs::read(backup.join("agents/coder.toml")).unwrap(),
             b"User-owned role"
         );
-        assert_eq!(result["unmanaged_retired"], json!([RETIRED]));
-        assert_eq!(
-            fs::read(home.join(RETIRED)).unwrap(),
-            b"User-owned Python role"
-        );
+        assert_eq!(result["unmanaged_retired"], json!(RETIRED));
+        for role in RETIRED {
+            assert_eq!(fs::read(home.join(role)).unwrap(), b"User-owned role");
+        }
         assert_eq!(
             fs::read(home.join("AGENTS.md")).unwrap(),
             b"User instructions\r\n"
@@ -687,20 +695,24 @@ mod tests {
         legacy(&home);
         let before = snapshot(&home);
         let planned = plan(&home, &root, false).unwrap();
-        assert_eq!(planned.changes[RETIRED], None);
+        for role in RETIRED {
+            assert_eq!(planned.changes[role], None);
+        }
         assert_eq!(snapshot(&home), before);
         let result = apply(&home, &root, false).unwrap();
-        assert_eq!(result["removed"], json!([RETIRED]));
-        assert!(!home.join(RETIRED).exists());
+        assert_eq!(result["removed"], json!(RETIRED));
         let backup = Path::new(result["backup"].as_str().unwrap());
-        assert_eq!(
-            fs::read(backup.join(RETIRED)).unwrap(),
-            before[Path::new(RETIRED)]
-        );
+        for role in RETIRED {
+            assert!(!home.join(role).exists());
+            assert_eq!(
+                fs::read(backup.join(role)).unwrap(),
+                before[Path::new(role)]
+            );
+        }
         let receipt: Value =
             serde_json::from_slice(&fs::read(backup.join("manifest.json")).unwrap()).unwrap();
         assert_eq!(receipt["created"], json!(["agents/verifier.toml"]));
-        assert_eq!(receipt["removed"], json!([RETIRED]));
+        assert_eq!(receipt["removed"], json!(RETIRED));
         let state: Value = serde_json::from_slice(&fs::read(home.join(STATE)).unwrap()).unwrap();
         assert_eq!(state["schema"], 2);
         assert!(state.get("links_sha256").is_none());
@@ -708,7 +720,9 @@ mod tests {
             fs::read(home.join("AGENTS.md")).unwrap(),
             b"User text\r\n\r\n\r\nUser tail\r\n"
         );
-        assert!(state["files"].get(RETIRED).is_none());
+        assert!(RETIRED
+            .iter()
+            .all(|role| state["files"].get(role).is_none()));
         assert_eq!(apply(&home, &root, false).unwrap()["status"], "unchanged");
         for malformed in [
             Value::Null,
@@ -737,8 +751,38 @@ mod tests {
         }
     }
     #[test]
+    fn verifier_profile_retires_only_its_owned_roles() {
+        let (_dir, root, home) = fixture();
+        let hashes = old_role_hashes(&home, "verifier");
+        atomic_write(
+            &home.join(STATE),
+            &json_bytes(&json!({"schema":2,"version":"8.7.0","files":hashes})).unwrap(),
+        )
+        .unwrap();
+        let personal = "agents/python_coder.toml";
+        atomic_write(&home.join(personal), b"Personal role").unwrap();
+        let before = snapshot(&home);
+        let result = apply(&home, &root, false).unwrap();
+        let retired = ["agents/allure_analyst.toml", "agents/reviewer.toml"];
+        assert_eq!(result["removed"], json!(retired));
+        assert_eq!(result["unmanaged_retired"], json!([personal]));
+        let backup = Path::new(result["backup"].as_str().unwrap());
+        for path in retired {
+            assert!(!home.join(path).exists());
+            assert_eq!(
+                fs::read(backup.join(path)).unwrap(),
+                before[Path::new(path)]
+            );
+        }
+        assert_eq!(fs::read(home.join(personal)).unwrap(), b"Personal role");
+        assert_eq!(apply(&home, &root, false).unwrap()["status"], "unchanged");
+    }
+    #[test]
     fn legacy_edits_missing_files_and_markers_block_adoption() {
-        for relative in ["agents/coder.toml", RETIRED, "AGENTS.md"] {
+        for relative in RETIRED
+            .into_iter()
+            .chain(["agents/coder.toml", "AGENTS.md"])
+        {
             for missing in [false, true] {
                 let (_dir, root, home) = fixture();
                 legacy(&home);
@@ -773,9 +817,9 @@ mod tests {
             let mut before = snapshot(&home);
             let write = |path: &Path, bytes: &[u8]| {
                 if path == home.join(STATE) {
-                    assert!(!home.join(RETIRED).exists());
+                    assert!(RETIRED.iter().all(|role| !home.join(role).exists()));
                     if concurrent {
-                        atomic_write(&home.join(RETIRED), b"Concurrent recreation")?;
+                        atomic_write(&home.join("agents/reviewer.toml"), b"Concurrent recreation")?;
                     }
                     return Err("Injected write failure".into());
                 }
@@ -784,7 +828,10 @@ mod tests {
             let error = apply_with(&home, &root, false, &write, &private_backup).unwrap_err();
             assert!(error.contains("Injected write failure"));
             if concurrent {
-                before.insert(RETIRED.into(), b"Concurrent recreation".to_vec());
+                before.insert(
+                    "agents/reviewer.toml".into(),
+                    b"Concurrent recreation".to_vec(),
+                );
                 assert!(error.contains("causes"));
             }
             assert_eq!(snapshot(&home), before);
