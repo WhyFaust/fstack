@@ -100,14 +100,20 @@ glab api "$mr/approvals"
 glab api "$mr/approve" --method POST -f "sha=$verified_source_sha"
 ```
 
-Передавай полный SHA проверенного head. После гонки, запрета или неизвестного
-ответа перечитай состояние; проверь `checking` и `approvals_syncing` в
-`detailed_merge_status`. При несовпадении SHA (`409`) оцени новую ревизию.
+Перед approve после push дождись окончания `checking` и `approvals_syncing`
+и появления `patch_id_sha` у текущей версии diff, когда инстанс предоставляет
+эти признаки. Передавай полный SHA проверенного head. После гонки, запрета или
+неизвестного ответа перечитай состояние. При несовпадении SHA (`409`) оцени новую ревизию.
 Операция merge для уже проверенного head:
 
 ```bash
 glab api "$mr/merge" --method PUT -f "sha=$verified_source_sha"
 ```
+
+Если проект требует merge train, используй штатную постановку проверенного
+head в очередь. При поддержке инстансом это `POST /projects/:id/merge_trains/merge_requests/:iid`
+с `sha`; дождись нового pipeline поезда и фактического результата. При смене
+состава поезда проверь актуальный pipeline. [API merge trains](https://docs.gitlab.com/api/merge_trains/)
 
 Перечитай `GET .../merge_requests/:iid`. Установи `state`, target,
 `merge_commit_sha` / `squash_commit_sha` или принятый fast-forward SHA;
