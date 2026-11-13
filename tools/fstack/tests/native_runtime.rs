@@ -62,12 +62,39 @@ impl Runtime {
         }
     }
 
+    fn hook(&self, handler: &Value, input: Option<Value>) -> Value {
+        let mut command = if cfg!(windows) {
+            let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+                .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+            let mut command = Command::new(powershell);
+            command
+                .args(["-NoProfile", "-NonInteractive", "-Command"])
+                .arg(handler["commandWindows"].as_str().unwrap());
+            command
+        } else {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args(["-c", handler["command"].as_str().unwrap()])
+                .env("PATH", "");
+            command
+        };
+        command.env("PLUGIN_ROOT", &self.root);
+        serde_json::from_str(&self.run(&mut command, input)).unwrap()
+    }
+
     fn call(&self, args: &[&str], input: Option<Value>) -> String {
-        let mut child = Command::new(&self.binary)
+        let mut command = Command::new(&self.binary);
+        command
             .arg("--package")
             .arg(&self.root)
             .args(args)
-            .env("PATH", "")
+            .env("PATH", "");
+        self.run(&mut command, input)
+    }
+
+    fn run(&self, command: &mut Command, input: Option<Value>) -> String {
+        let description = format!("{command:?}");
+        let mut child = command
             .env("CODEX_HOME", &self.home)
             .env("HOME", &self.home)
             .env("USERPROFILE", &self.home)
@@ -94,7 +121,7 @@ impl Runtime {
         let output = child.wait_with_output().unwrap();
         assert!(
             output.status.success(),
-            "{args:?}: {}",
+            "{description}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).unwrap()
@@ -567,33 +594,7 @@ fn startup_from_main_uses_the_cached_runtime_and_retires_only_owned_roles() {
         serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
     let bootstrap = &hooks["hooks"]["SessionStart"][0]["hooks"][1];
     assert_eq!(bootstrap["async"], true);
-    let invoke = || {
-        let mut command = if cfg!(windows) {
-            let mut ps = Command::new(
-                PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-                    .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-            );
-            ps.args(["-NoProfile", "-NonInteractive", "-Command"])
-                .arg(bootstrap["commandWindows"].as_str().unwrap());
-            ps
-        } else {
-            let mut shell = Command::new("/bin/sh");
-            shell.args(["-c", bootstrap["command"].as_str().unwrap()]);
-            shell
-        };
-        let output = command
-            .env("PLUGIN_ROOT", &runtime.root)
-            .env("CODEX_HOME", &runtime.home)
-            .current_dir(&runtime.project)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        serde_json::from_slice::<Value>(&output.stdout).unwrap()
-    };
+    let invoke = || runtime.hook(bootstrap, None);
 
     assert_eq!(invoke(), json!({}));
     assert!(!runtime.home.join("agents").exists());
@@ -629,6 +630,48 @@ fn startup_from_main_uses_the_cached_runtime_and_retires_only_owned_roles() {
     assert_eq!(fs::read(agents.join("coder.toml")).unwrap(), edited);
     assert!(!state_path.exists());
     assert_eq!(invoke(), json!({}));
+}
+
+#[test]
+fn prompt_hook_reports_cold_runtime_and_accepts_activation_after_installation() {
+    let runtime = Runtime::new();
+    let hooks: Value =
+        serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
+    let handler = &hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0];
+    let prompt = |turn: &str, text: &str| {
+        runtime.hook(handler, Some(json!({
+            "hook_event_name": "UserPromptSubmit", "cwd": runtime.project,
+            "session_id": "startup", "turn_id": turn, "collaboration_mode": "plan", "prompt": text
+        })))
+    };
+    let bundled = runtime._temporary.path().join("runtime");
+    fs::rename(&runtime.binary, &bundled).unwrap();
+    let unavailable = prompt("before", "/faust-mode");
+    assert!(unavailable["systemMessage"]
+        .as_str()
+        .unwrap()
+        .contains("/faust-mode"));
+    assert!(unavailable.get("decision").is_none());
+    assert!(!runtime.home.exists());
+
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(runtime.root.join(".codex-plugin/plugin.json")).unwrap())
+            .unwrap();
+    let cache = runtime
+        .home
+        .join("fstack/runtime")
+        .join(manifest["version"].as_str().unwrap())
+        .join(platform_target());
+    fs::create_dir_all(&cache).unwrap();
+    fs::rename(bundled, cache.join(runtime.binary.file_name().unwrap())).unwrap();
+    let skill = runtime.root.join("skills/faust-mode/SKILL.md");
+    for (turn, text) in [("retry", "/faust-mode"), ("next", "continue")] {
+        let result = prompt(turn, text);
+        assert!(result["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains(skill.to_str().unwrap()));
+    }
 }
 
 #[cfg(unix)]

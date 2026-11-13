@@ -601,6 +601,7 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
     contained(root, root, "tools/fstack/src/memory", true)?;
     contained(root, root, "launchers/fstack.sh", false)?;
     contained(root, root, "launchers/fstack.ps1", false)?;
+    contained(root, root, "hooks/runtime-unavailable.json", false)?;
     for (event, groups) in hooks {
         let groups = groups.as_array().ok_or("Ожидался массив обработчиков")?;
         require(groups.len() == 1, "Ожидалась одна группа хуков")?;

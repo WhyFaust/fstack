@@ -5,7 +5,7 @@ license: MIT
 compatibility: Локальный Codex с поддержкой хуков плагинов, готовый пакет fstack и vault Obsidian. На Windows используется PowerShell. Для привязки worktree нужен Git.
 metadata:
   short-description: Долговечная память проектов в Obsidian
-  version: 3.2.0
+  version: 3.2.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

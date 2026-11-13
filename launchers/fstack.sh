@@ -2,7 +2,7 @@
 set -eu
 
 package_root() {
-    CDPATH= cd -P -- "$(dirname -- "$0")/.." && pwd -P
+    CDPATH= cd -P -- "$(command -p dirname -- "$0")/.." && pwd -P
 }
 
 runtime_path() {
@@ -11,19 +11,19 @@ runtime_path() {
         printf '%s\n' "$root/bin/fstack"
         return
     fi
-    case "$(uname -s):$(uname -m)" in
+    case "$(command -p uname -s):$(command -p uname -m)" in
         Linux:x86_64) target=x86_64-unknown-linux-gnu ;;
         Darwin:arm64) target=aarch64-apple-darwin ;;
         Darwin:x86_64)
             target=x86_64-apple-darwin
-            if [ "$(sysctl -in sysctl.proc_translated 2>/dev/null || :)" = 1 ]; then
+            if [ "$(/usr/sbin/sysctl -in sysctl.proc_translated 2>/dev/null || :)" = 1 ]; then
                 target=aarch64-apple-darwin
             fi
             ;;
         *) printf '%s\n' 'fstack: неподдерживаемая ОС или архитектура' >&2; return 1 ;;
     esac
-    version=$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[,]?[[:space:]]*$/\1/p' "$root/.codex-plugin/plugin.json")
-    if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || [ "$(printf '%s\n' "$version" | wc -l)" -ne 1 ]; then
+    version=$(command -p sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[,]?[[:space:]]*$/\1/p' "$root/.codex-plugin/plugin.json")
+    if ! printf '%s\n' "$version" | command -p grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || [ "$(printf '%s\n' "$version" | command -p wc -l)" -ne 1 ]; then
         printf '%s\n' 'fstack: некорректная версия пакета' >&2
         return 1
     fi
