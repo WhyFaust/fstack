@@ -398,6 +398,16 @@ fn package_rejects_a_bundled_global_role_or_onboarding_skill() {
     fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     assert!(check(&package).unwrap_err().contains("onboardingSkill"));
 }
+#[test]
+fn package_rejects_instructions_for_a_removed_skill() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    let guide = package.join("docs").join("obsolete.md");
+    fs::write(&guide, "Use $fstack:profile").unwrap();
+    let error = check(&package).unwrap_err();
+    assert!(error.contains("obsolete.md") && error.contains("отсутствует навык profile"));
+}
 #[cfg(windows)]
 #[test]
 fn case_variants_cannot_skip_validation() {

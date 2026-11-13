@@ -659,22 +659,6 @@ fn skill_names(root: &Path) -> Result<BTreeSet<String>> {
         .collect()
 }
 
-fn references(
-    text: &str,
-    skills: &BTreeSet<String>,
-    pattern: &Regex,
-    exclude_profile: bool,
-) -> Result<()> {
-    for capture in pattern.captures_iter(text) {
-        let name = &capture[1];
-        require(
-            exclude_profile && name == "profile" || skills.contains(name),
-            format!("Отсутствует навык: {name}"),
-        )?;
-    }
-    Ok(())
-}
-
 fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
     let mut listed = BTreeSet::new();
     for row in rx!(r"(?m)^\| `([a-z0-9-]+)` \|([^\n]*)").captures_iter(listing) {
@@ -796,7 +780,13 @@ pub(crate) fn check(root: &Path) -> Result<String> {
     for path in descendants(root, &[".git", ".venv", "work"])? {
         if extension_matches(&path, "md") {
             let text = read(&path)?;
-            references(&text, &skills, rx!(r"\bfstack:([a-z][a-z0-9-]*)"), true)?;
+            for reference in rx!(r"\bfstack:([a-z][a-z0-9-]*)").captures_iter(&text) {
+                let name = &reference[1];
+                require(
+                    skills.contains(name),
+                    format!("{}: отсутствует навык {name}", path.display()),
+                )?;
+            }
             links(&path, root, &text)?;
         }
     }
