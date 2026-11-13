@@ -11,6 +11,15 @@ use std::{
 };
 type Result<T> = std::result::Result<T, String>;
 const MANIFEST: &str = ".codex-plugin/plugin.json";
+const RUNTIME_ID: &str = "launchers/runtime-id";
+const BUILD_INPUTS: &[&str] = &[
+    ".cargo",
+    ".gitattributes",
+    ".github/workflows/release.yml",
+    "hooks",
+    "launchers",
+    "tools/fstack",
+];
 fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).unwrap()
 }
@@ -311,6 +320,7 @@ impl Release<'_> {
                 "Версия {current} предшествует опубликованной {number}"
             ));
         }
+        self.check_runtime_id("HEAD")?;
         let commits = self.cmd(&[
             "git",
             "rev-list",
@@ -376,6 +386,13 @@ impl Release<'_> {
             parent["version"].as_str().ok_or("Нет версии")?,
             title,
         )?;
+        if write {
+            let runtime_id = self.runtime_id(&self.cmd(&["git", "write-tree"])?)?;
+            fs::write(self.root.join(RUNTIME_ID), format!("{runtime_id}\n"))
+                .map_err(|e| e.to_string())?;
+        } else {
+            self.check_runtime_id("HEAD")?;
+        }
         if let Some(bytes) = self.version_contents(&expected)? {
             if !write {
                 return Err(format!("В PR требуется версия {expected}; выполните release prepare для его базы и заголовка"));
@@ -475,6 +492,7 @@ impl Release<'_> {
         if !rx(r"\A[a-zA-Z0-9_-]+\z").is_match(name) {
             return Err("Некорректное имя пакета".into());
         }
+        let runtime_id = self.check_runtime_id(sha)?;
         let mut outputs = Vec::new();
         for (target, bytes) in artifacts {
             let output = self
@@ -509,7 +527,7 @@ impl Release<'_> {
             archive.write_all(bytes).map_err(|e| e.to_string())?;
             archive.finish().map_err(|e| e.to_string())?;
             let binary = output.with_file_name(format!(
-                "{name}-{number}-{target}{}",
+                "{name}-{number}-{runtime_id}-{target}{}",
                 if target.contains("windows") {
                     ".exe"
                 } else {
@@ -544,22 +562,36 @@ impl Release<'_> {
         }
         Ok(target)
     }
+    fn runtime_id(&self, revision: &str) -> Result<String> {
+        let mut args = vec!["git", "ls-tree", "-r", "-z", revision, "--"];
+        args.extend_from_slice(BUILD_INPUTS);
+        let tree = self.bytes(&args)?;
+        let mut hash = Sha256::new();
+        for entry in tree.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+            let path = entry
+                .splitn(2, |b| *b == b'\t')
+                .nth(1)
+                .ok_or("Некорректная запись git ls-tree")?;
+            if path != RUNTIME_ID.as_bytes() {
+                hash.update(entry);
+                hash.update([0]);
+            }
+        }
+        Ok(format!("{:x}", hash.finalize()))
+    }
+    fn check_runtime_id(&self, revision: &str) -> Result<String> {
+        let runtime_id = self.runtime_id(revision)?;
+        let path = format!("{revision}:{RUNTIME_ID}");
+        let declared = self.bytes(&["git", "show", &path])?;
+        if declared != format!("{runtime_id}\n").as_bytes() {
+            return Err(format!(
+                "{RUNTIME_ID} не соответствует исходникам {revision}; выполните release prepare"
+            ));
+        }
+        Ok(runtime_id)
+    }
     fn same_build_inputs(&self, base: &str, head: &str) -> Result<bool> {
-        Ok(self
-            .cmd(&[
-                "git",
-                "diff",
-                "--name-only",
-                base,
-                head,
-                "--",
-                "tools/fstack",
-                ".cargo",
-                "hooks",
-                "launchers",
-                ".github/workflows/release.yml",
-            ])?
-            .is_empty())
+        Ok(self.runtime_id(base)? == self.runtime_id(head)?)
     }
     fn finish(
         &self,
@@ -913,6 +945,18 @@ mod tests {
         git(&root, &["config", "user.email", "fixture@example.invalid"]);
         git(&root, &["config", "commit.gpgsign", "false"]);
         commit(&root, "chore: baseline");
+        let release = Release {
+            root: &root,
+            runner: &System,
+            artifacts: None,
+        };
+        save(
+            &root,
+            RUNTIME_ID,
+            format!("{}\n", release.runtime_id("HEAD").unwrap()),
+        );
+        git(&root, &["add", RUNTIME_ID]);
+        git(&root, &["commit", "--amend", "--no-edit"]);
         git(&root, &["tag", "v0.2.0"]);
         (temp, root)
     }
@@ -1151,6 +1195,18 @@ mod tests {
                 .unwrap(),
         );
         commit(&root, "fix: revise runtime");
+        let pins = Release {
+            root: &root,
+            runner: &stub,
+            artifacts: None,
+        };
+        save(
+            &root,
+            RUNTIME_ID,
+            format!("{}\n", pins.runtime_id("HEAD").unwrap()),
+        );
+        git(&root, &["add", RUNTIME_ID]);
+        git(&root, &["commit", "--amend", "--no-edit"]);
         let source = git(&root, &["rev-parse", "HEAD"]);
         let record = json!({"tag_name":"v0.2.1","draft":true,"prerelease":true,"target_commitish":"main",
             "author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{source} -->")});
@@ -1264,8 +1320,9 @@ mod tests {
                 .unwrap()
                 .read_to_end(&mut binary_bytes)
                 .unwrap();
+            let runtime_id = release.check_runtime_id(&sha).unwrap();
             let asset = root.join(format!(
-                "dist/fstack-0.3.0-{target}{}",
+                "dist/fstack-0.3.0-{runtime_id}-{target}{}",
                 if target.contains("windows") {
                     ".exe"
                 } else {
@@ -1305,6 +1362,51 @@ mod tests {
         assert_eq!(stub.calls.borrow().len(), count);
         fs::remove_dir_all(other.join(TARGETS[0])).unwrap();
         assert!(old.artifacts(&later).unwrap_err().contains("полный набор"));
+    }
+    #[test]
+    fn independent_runtime_fixes_with_same_version_conflict_on_release_identity() {
+        let (_temp, root) = fixture();
+        let release = Release {
+            root: &root,
+            runner: &System,
+            artifacts: None,
+        };
+        let base = git(&root, &["rev-parse", "HEAD"]);
+        for (branch, path) in [
+            ("first", "tools/fstack/src/one.rs"),
+            ("second", ".cargo/config.toml"),
+        ] {
+            git(&root, &["checkout", "-b", branch, &base]);
+            save(&root, path, b"input");
+            commit(&root, "fix: revise build input");
+            save(&root, path, b"final input");
+            git(&root, &["add", path]);
+            assert_eq!(
+                release
+                    .prepare_manifest(&base, "fix: revise build input", true)
+                    .unwrap(),
+                "0.2.1"
+            );
+            commit(&root, "chore: prepare release");
+            assert_eq!(
+                release.check_runtime_id("HEAD").unwrap(),
+                fs::read_to_string(root.join(RUNTIME_ID))
+                    .unwrap()
+                    .trim_end()
+            );
+        }
+        let first = release.check_runtime_id("first").unwrap();
+        let second = release.check_runtime_id("second").unwrap();
+        assert_ne!(first, second);
+        assert!(release.cmd(&["git", "merge", "first"]).is_err());
+        assert_eq!(
+            git(&root, &["diff", "--name-only", "--diff-filter=U"]),
+            RUNTIME_ID
+        );
+        save(&root, RUNTIME_ID, format!("{second}\n"));
+        commit(&root, "fix: incorrectly resolve release identity");
+        assert!(release.check_runtime_id("HEAD").is_err());
+        assert!(release.plan(stub().records.into_inner()).is_err());
     }
     #[test]
     fn pull_request_merge_and_squash_publish_the_validated_version() {

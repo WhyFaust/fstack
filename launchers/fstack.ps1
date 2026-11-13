@@ -27,13 +27,17 @@ if (!(Test-RuntimeFile $binary)) {
     $manifest = [IO.Path]::Combine($package, '.codex-plugin', 'plugin.json')
     $version = ([IO.File]::ReadAllText($manifest) | ConvertFrom-Json).version
     if ($version -cnotmatch '\A[0-9]+\.[0-9]+\.[0-9]+\z') { throw 'fstack: invalid package version' }
+    $idFile = [IO.Path]::Combine($package, 'launchers', 'runtime-id')
+    $runtimeId = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($idFile))
+    if ($runtimeId -cnotmatch '\A[0-9a-f]{64}\n\z') { throw 'fstack: invalid runtime identifier' }
+    $runtimeId = $runtimeId.TrimEnd([char]10)
     $target = 'x86_64-pc-windows-msvc'
     $codexHome = $env:CODEX_HOME
     if (!$codexHome) { $codexHome = [IO.Path]::Combine($env:USERPROFILE, '.codex') }
-    $directory = [IO.Path]::GetFullPath([IO.Path]::Combine($codexHome, "fstack\runtime\$version\$target"))
+    $directory = [IO.Path]::GetFullPath([IO.Path]::Combine($codexHome, "fstack\runtime\$version\$runtimeId\$target"))
     $binary = [IO.Path]::Combine($directory, 'fstack.exe')
     if ($InstallRuntime -and !(Test-RuntimeFile $binary)) {
-        $asset = "fstack-$version-$target.exe"
+        $asset = "fstack-$version-$runtimeId-$target.exe"
         $url = "https://github.com/WhyFaust/fstack/releases/download/v$version/$asset"
         $curl = [IO.Path]::Combine($env:SystemRoot, 'System32', 'curl.exe')
         $staging = [IO.Path]::Combine($directory, '.download-' + [Guid]::NewGuid().ToString('N'))

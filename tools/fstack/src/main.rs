@@ -602,6 +602,11 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
     contained(root, root, "launchers/fstack.sh", false)?;
     contained(root, root, "launchers/fstack.ps1", false)?;
     contained(root, root, "hooks/runtime-unavailable.json", false)?;
+    let runtime_id = read(&contained(root, root, "launchers/runtime-id", false)?)?;
+    require(
+        rx!(r"\A[0-9a-f]{64}\n\z").is_match(&runtime_id),
+        "Некорректный идентификатор сборки",
+    )?;
     for (event, groups) in hooks {
         let groups = groups.as_array().ok_or("Ожидался массив обработчиков")?;
         require(groups.len() == 1, "Ожидалась одна группа хуков")?;

@@ -46,7 +46,8 @@ struct Runtime {
     _temporary: tempfile::TempDir,
     root: PathBuf,
     binary: PathBuf,
-    home: PathBuf,
+    codex_home: PathBuf,
+    user_home: PathBuf,
     project: PathBuf,
 }
 
@@ -73,7 +74,9 @@ impl Runtime {
         fs::hard_link(&*fixture_binary, &binary).unwrap();
         #[cfg(windows)]
         fs::copy(env!("CARGO_BIN_EXE_fstack"), &binary).unwrap();
-        let home = directory.join("profile");
+        let codex_home = directory.join("codex");
+        let user_home = directory.join("user");
+        fs::create_dir(&user_home).unwrap();
         let project = directory.join("project");
         fs::create_dir(&project).unwrap();
         Self {
@@ -82,9 +85,22 @@ impl Runtime {
             _temporary: temporary,
             root,
             binary,
-            home,
+            codex_home,
+            user_home,
             project,
         }
+    }
+
+    fn runtime_cache(&self) -> PathBuf {
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(self.root.join(".codex-plugin/plugin.json")).unwrap())
+                .unwrap();
+        let id = fs::read_to_string(self.root.join("launchers/runtime-id")).unwrap();
+        self.codex_home
+            .join("fstack/runtime")
+            .join(manifest["version"].as_str().unwrap())
+            .join(id.trim_end())
+            .join(platform_target())
     }
 
     fn hook(&self, handler: &Value, input: Option<Value>) -> Value {
@@ -120,13 +136,13 @@ impl Runtime {
     fn run(&self, command: &mut Command, input: Option<Value>) -> String {
         let description = format!("{command:?}");
         let mut child = command
-            .env("CODEX_HOME", &self.home)
-            .env("HOME", &self.home)
-            .env("USERPROFILE", &self.home)
-            .env("APPDATA", self.home.join("config"))
-            .env("XDG_CONFIG_HOME", self.home.join("config"))
-            .env("LOCALAPPDATA", self.home.join("cache"))
-            .env("XDG_CACHE_HOME", self.home.join("cache"))
+            .env("CODEX_HOME", &self.codex_home)
+            .env("HOME", &self.user_home)
+            .env("USERPROFILE", &self.user_home)
+            .env("APPDATA", self.user_home.join("config"))
+            .env("XDG_CONFIG_HOME", self.user_home.join("config"))
+            .env("LOCALAPPDATA", self.user_home.join("cache"))
+            .env("XDG_CACHE_HOME", self.user_home.join("cache"))
             .current_dir(&self.project)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -214,7 +230,7 @@ fn windows_shells_preserve_hook_directory_and_utf8() {
         };
         let mut child = command
             .current_dir(&runtime.project)
-            .env("CODEX_HOME", &runtime.home)
+            .env("CODEX_HOME", &runtime.codex_home)
             .env("PLUGIN_ROOT", &runtime.root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -255,7 +271,7 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
         runtime.json(&["migrate-profile", "--apply"], None)["status"],
         "unchanged"
     );
-    assert!(!runtime.home.exists());
+    assert!(!runtime.codex_home.exists());
     let vault = runtime.root.parent().unwrap().join("vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
     runtime.json(
@@ -289,13 +305,7 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
 #[test]
 fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() {
     let mut runtime = Runtime::new();
-    let manifest = runtime.root.join(".codex-plugin/plugin.json");
-    let manifest: Value = serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
-    let cache = runtime
-        .home
-        .join("fstack/runtime")
-        .join(manifest["version"].as_str().unwrap())
-        .join(platform_target());
+    let cache = runtime.runtime_cache();
     fs::create_dir_all(&cache).unwrap();
     let cached = cache.join(runtime.binary.file_name().unwrap());
     fs::rename(&runtime.binary, &cached).unwrap();
@@ -356,7 +366,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         let output = shell
             .arg(&command)
             .current_dir(&runtime.project)
-            .env("CODEX_HOME", &runtime.home)
+            .env("CODEX_HOME", &runtime.codex_home)
             .output()
             .unwrap();
         assert!(
@@ -463,9 +473,9 @@ fn first_ordinary_turn(save_correction: bool) {
     let vault = runtime.root.parent().unwrap().join("My Work Vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
     let config = if cfg!(target_os = "macos") {
-        runtime.home.join("Library/Application Support")
+        runtime.user_home.join("Library/Application Support")
     } else {
-        runtime.home.join("config")
+        runtime.user_home.join("config")
     }
     .join("obsidian");
     fs::create_dir_all(&config).unwrap();
@@ -603,14 +613,7 @@ fn startup_from_main_uses_the_cached_runtime_and_retires_only_owned_roles() {
     use sha2::{Digest, Sha256};
 
     let runtime = Runtime::new();
-    let manifest = runtime.root.join(".codex-plugin/plugin.json");
-    let package: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
-    let version = package["version"].as_str().unwrap();
-    let cache = runtime
-        .home
-        .join("fstack/runtime")
-        .join(version)
-        .join(platform_target());
+    let cache = runtime.runtime_cache();
     fs::create_dir_all(&cache).unwrap();
     let binary = cache.join(runtime.binary.file_name().unwrap());
     fs::rename(&runtime.binary, &binary).unwrap();
@@ -622,17 +625,17 @@ fn startup_from_main_uses_the_cached_runtime_and_retires_only_owned_roles() {
     let invoke = || runtime.hook(bootstrap, None);
 
     assert_eq!(invoke(), json!({}));
-    assert!(!runtime.home.join("agents").exists());
-    assert!(!runtime.home.join("fstack/profile.json").exists());
-    assert!(!runtime.home.join("fstack/backups").exists());
+    assert!(!runtime.codex_home.join("agents").exists());
+    assert!(!runtime.codex_home.join("fstack/profile.json").exists());
+    assert!(!runtime.codex_home.join("fstack/backups").exists());
 
-    let agents = runtime.home.join("agents");
+    let agents = runtime.codex_home.join("agents");
     fs::create_dir(&agents).unwrap();
     let owned = b"name = \"auditor\"\n";
     fs::write(agents.join("auditor.toml"), owned).unwrap();
     let edited = b"name = \"coder\"\nmodel = \"my-model\"\n";
     fs::write(agents.join("coder.toml"), edited).unwrap();
-    let state_path = runtime.home.join("fstack/profile.json");
+    let state_path = runtime.codex_home.join("fstack/profile.json");
     fs::write(
         &state_path,
         json!({
@@ -677,18 +680,21 @@ fn prompt_hook_reports_cold_runtime_and_accepts_activation_after_installation() 
         .unwrap()
         .contains("/faust-mode"));
     assert!(unavailable.get("decision").is_none());
-    assert!(!runtime.home.exists());
+    assert!(!runtime.codex_home.exists());
 
-    let manifest: Value =
-        serde_json::from_slice(&fs::read(runtime.root.join(".codex-plugin/plugin.json")).unwrap())
-            .unwrap();
-    let cache = runtime
-        .home
-        .join("fstack/runtime")
-        .join(manifest["version"].as_str().unwrap())
-        .join(platform_target());
+    let cache = runtime.runtime_cache();
     fs::create_dir_all(&cache).unwrap();
     fs::rename(bundled, cache.join(runtime.binary.file_name().unwrap())).unwrap();
+    let id_file = runtime.root.join("launchers/runtime-id");
+    let original_id = fs::read(&id_file).unwrap();
+    let other_id = if original_id[0] == b'a' { "b" } else { "a" }.repeat(64);
+    for id in [format!("{other_id}\n"), format!("{}!\n", &other_id[1..])] {
+        fs::write(&id_file, id).unwrap();
+        let unavailable = prompt("other-build", "/faust-mode");
+        assert!(unavailable["systemMessage"].is_string());
+        assert!(unavailable.get("hookSpecificOutput").is_none());
+    }
+    fs::write(&id_file, original_id).unwrap();
     let skill = runtime.root.join("skills/faust-mode/SKILL.md");
     for (turn, text) in [("retry", "/faust-mode"), ("next", "continue")] {
         let result = prompt(turn, text);
@@ -716,7 +722,11 @@ fn launcher_verifies_the_selected_release_asset_before_installing() {
     fs::remove_file(&runtime.binary).unwrap();
     let fixtures = runtime._temporary.path().join("fixtures");
     fs::create_dir(&fixtures).unwrap();
-    let asset = format!("fstack-{version}-{target}");
+    let id_file = runtime.root.join("launchers/runtime-id");
+    let first_id = "a".repeat(64);
+    let second_id = "b".repeat(64);
+    fs::write(&id_file, format!("{first_id}\n")).unwrap();
+    let asset = format!("fstack-{version}-{first_id}-{target}");
     let bytes = b"fixture runtime";
     fs::write(fixtures.join(&asset), bytes).unwrap();
     let curl = fixtures.join("curl");
@@ -738,31 +748,51 @@ cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
     .unwrap();
     fs::set_permissions(curl, fs::Permissions::from_mode(0o700)).unwrap();
 
-    let install = || {
+    let install = |asset: &str| {
         Command::new("/bin/sh")
             .arg(runtime.root.join("launchers/fstack.sh"))
             .arg("--install-runtime")
             .env("PATH", format!("{}:/usr/bin:/bin", fixtures.display()))
-            .env("CODEX_HOME", &runtime.home)
+            .env("CODEX_HOME", &runtime.codex_home)
             .env("FSTACK_TEST_FIXTURES", &fixtures)
             .env("FSTACK_TEST_VERSION", version)
-            .env("FSTACK_TEST_ASSET", &asset)
+            .env("FSTACK_TEST_ASSET", asset)
             .output()
             .unwrap()
     };
     let checksum = fixtures.join(format!("{asset}.sha256"));
-    let cache = runtime
-        .home
-        .join("fstack/runtime")
-        .join(version)
-        .join(target);
+    let cache = runtime.runtime_cache();
     fs::write(&checksum, "bad checksum\n").unwrap();
-    assert!(!install().status.success());
+    assert!(!install(&asset).status.success());
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
 
     fs::write(&checksum, format!("{:x}  {asset}\n", Sha256::digest(bytes))).unwrap();
-    assert!(install().status.success());
+    assert!(install(&asset).status.success());
     assert_eq!(fs::read(cache.join("fstack")).unwrap(), bytes);
+    fs::write(&id_file, format!("{second_id}\n")).unwrap();
+    let second_asset = format!("fstack-{version}-{second_id}-{target}");
+    let second_cache = runtime.runtime_cache().join("fstack");
+    assert!(!install(&second_asset).status.success());
+    assert!(!second_cache.exists());
+    let second_bytes = b"updated fixture runtime";
+    fs::write(fixtures.join(&second_asset), second_bytes).unwrap();
+    fs::write(
+        fixtures.join(format!("{second_asset}.sha256")),
+        format!("{:x}  {second_asset}\n", Sha256::digest(second_bytes)),
+    )
+    .unwrap();
+    assert!(install(&second_asset).status.success());
+    assert_eq!(fs::read(&second_cache).unwrap(), second_bytes);
+    assert_eq!(fs::read(cache.join("fstack")).unwrap(), bytes);
+    for malformed in [
+        first_id.clone(),
+        format!("{first_id}\n\n"),
+        format!("{}\n", first_id.to_uppercase()),
+    ] {
+        fs::write(&id_file, malformed).unwrap();
+        assert!(!install(&asset).status.success());
+    }
+    fs::write(&id_file, format!("{first_id}\n")).unwrap();
     fs::remove_file(fixtures.join("curl")).unwrap();
-    assert!(install().status.success());
+    assert!(install(&asset).status.success());
 }

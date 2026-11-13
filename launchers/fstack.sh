@@ -27,12 +27,19 @@ runtime_path() {
         printf '%s\n' 'fstack: некорректная версия пакета' >&2
         return 1
     fi
+    id_file=$root/launchers/runtime-id
+    if ! IFS= read -r runtime_id < "$id_file" || [ "${#runtime_id}" -ne 64 ] ||
+        [ "$(command -p wc -c < "$id_file")" -ne 65 ] ||
+        ! printf '%s\n' "$runtime_id" | LC_ALL=C command -p grep -Eq '^[0-9a-f]{64}$'; then
+        printf '%s\n' 'fstack: некорректный идентификатор runtime' >&2
+        return 1
+    fi
     runtime_home=${CODEX_HOME:-${HOME:?}/.codex}
     case "$runtime_home" in
         /*) ;;
         *) runtime_home=$PWD/$runtime_home ;;
     esac
-    printf '%s\n' "$runtime_home/fstack/runtime/$version/$target/fstack"
+    printf '%s\n' "$runtime_home/fstack/runtime/$version/$runtime_id/$target/fstack"
 }
 
 install_runtime() {
@@ -40,9 +47,11 @@ install_runtime() {
     case "$binary" in "$2/bin/fstack") return ;; esac
     target_dir=${binary%/*}
     target=${target_dir##*/}
-    release_dir=${target_dir%/*}
+    source_dir=${target_dir%/*}
+    runtime_id=${source_dir##*/}
+    release_dir=${source_dir%/*}
     version=${release_dir##*/}
-    asset=fstack-$version-$target
+    asset=fstack-$version-$runtime_id-$target
     url=https://github.com/WhyFaust/fstack/releases/download/v$version/$asset
 
     umask 077
