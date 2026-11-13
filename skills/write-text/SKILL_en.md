@@ -4,7 +4,7 @@ description: 'Drafts posts, articles, emails, scripts, technical explanations an
 license: MIT
 metadata:
   short-description: Original prose, replies and format adaptation
-  version: 2.0.1
+  version: 2.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -13,15 +13,15 @@ metadata:
 
 ## Inputs and scope
 
-Identify what the reader needs, where the text will appear, and whose voice it uses. Prioritize explicit requirements, then supplied materials and conversational context. Start when the deliverable is clear. Ask one short question with choices if the answer changes the deliverable. A video may need a title, description or script.
+Identify what the reader needs, where the text will appear, and whose voice it uses. Prioritize explicit requirements, then supplied materials and conversational context. Start when the deliverable is clear. Ask one short question with choices if the answer changes the deliverable.
 
 ## Procedure
 
 ### Choose form and content
 
-- For a new piece, choose one central idea and verified details that matter to the audience. The opening establishes the subject and gives a reason to read. Deliver on its promise. Include a question, call to action, code word or ordering instructions when the task calls for them.
+- For a new piece, choose one central idea and verified details that matter to the audience. The opening establishes the subject and gives a reason to read. Deliver on its promise. Include a call to action when the task calls for one.
 - When changing formats, preserve the message, the author's position and material conditions. Preserve verbatim any code, payment details or legally significant wording you carry over. Adapt length, structure and formatting to the new destination. Check that scripts work aloud. Base captions on the image or its description.
-- For a reply, read the original post, the relevant parent comment and any later clarifications. Account for the recipient and what they already know. A short thank-you can be a complete reply.
+- For a reply, read the original post, the relevant parent comment and any later clarifications. Account for the recipient and what they already know.
 - For a technical explanation, documentation or instructions, apply the [clarity guidance](references/adaptation_en.md#technical-explanations-and-instructions), retaining the depth and terminology the intended reader needs.
 - For ideas, titles, outlines or critique, return the requested deliverable. Use the [adaptation reference](references/adaptation_en.md) for structure, format changes, comment threads and field constraints.
 

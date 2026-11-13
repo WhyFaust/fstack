@@ -28,7 +28,7 @@
     <rect x="410" y="290" width="550" height="142" rx="16" fill="#e7eff3" stroke="#b6cbd5"/>
     <text x="435" y="326" fill="#426578" font-size="15" font-weight="700">НУЖНА РАБОТА</text>
     <text x="435" y="363" fill="#322921" font-size="23" font-weight="700">Исполнитель и метод</text>
-    <text x="435" y="394" fill="#435e6c" font-size="17">Штатный агент с подходящим навыком</text>
+    <text x="435" y="394" fill="#435e6c" font-size="17">Доступный агент с подходящим навыком</text>
     <text x="435" y="418" fill="#435e6c" font-size="17">В отчёте — результат, источник и вывод для памяти</text>
 
     <path d="M 660 432 V 479" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>

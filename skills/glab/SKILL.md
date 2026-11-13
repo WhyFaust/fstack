@@ -5,7 +5,7 @@ license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 2.1.0
+  version: 2.1.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -34,11 +34,13 @@ fstack:resolve-review, для явно разрешённого слияния �
 Для повтора конкретной попытки в `ci retry` используй ID job. Коллекции API читай с пагинацией; первая страница
 не является полным набором.
 
+Подставь параметры целевого проекта и операции.
+
 ```bash
-glab mr view 123
+glab mr view "$mr_iid"
 glab mr list --output json
-glab ci get --pipeline-id 456 --with-job-details
-glab api projects/:id/jobs/789/trace
+glab ci get --pipeline-id "$pipeline_id" --with-job-details
+glab api "projects/:id/jobs/$job_id/trace"
 ```
 
 ### Изменения
@@ -49,10 +51,10 @@ MR, комментарий, retry, approval и merge должны входить
 Шаблон описания бери из репозитория. В текстах используй полные ссылки GitLab.
 
 ```bash
-glab mr create --draft --push --title "fix: исправить обработку ответа" --description "..."
-glab mr note create 123 -m "Результат проверки" --unique
-glab mr note create 123 --reply discussion-id -m "Ответ"
-glab mr note resolve 123 discussion-id
+glab mr create --draft --push --title "$title" --description "$description"
+glab mr note create "$mr_iid" -m "$note" --unique
+glab mr note create "$mr_iid" --reply "$discussion_id" -m "$reply"
+glab mr note resolve "$mr_iid" "$discussion_id"
 ```
 
 `--push` нужен, когда ветка ещё не опубликована. У готовой ветки не публикуй посторонние
@@ -66,10 +68,10 @@ glab mr note resolve 123 discussion-id
 
 ```powershell
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-Get-Content -LiteralPath '.\work\comment.md' -Raw -Encoding utf8 | glab mr note create 123
-$mrDescription = Get-Content -LiteralPath '.\work\description.md' -Raw -Encoding utf8
-glab mr update 123 --description $mrDescription
-glab api projects/:id/issues/123/notes -F 'body=@work/comment.md'
+Get-Content -LiteralPath $notePath -Raw -Encoding utf8 | glab mr note create $mrIid
+$mrDescription = Get-Content -LiteralPath $descriptionPath -Raw -Encoding utf8
+glab mr update $mrIid --description $mrDescription
+glab api "projects/:id/issues/$issueIid/notes" -F "body=@$notePath"
 ```
 
 Не опускай текст, если это откроет редактор. Не передавай `--description "-"`:

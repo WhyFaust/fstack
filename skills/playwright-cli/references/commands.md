@@ -12,14 +12,14 @@
 
 Справка соответствует семейству команд playwright-cli 0.1.22. При несовпадении
 установленной версии сначала прочитай её `--help`. Примеры ниже показывают
-отдельные операции, а не последовательность для безусловного выполнения.
+отдельные операции. Подставляй значения переменных и ссылки на элементы из своего снимка.
 Используй именованную собственную сессию, если браузер разделяется с другой работой.
 
 ## Открытие и навигация
 
 ```bash
-playwright-cli -s=task open https://example.com
-playwright-cli -s=task goto "https://example.com/?a=1&b=2"
+playwright-cli -s=task open "$url"
+playwright-cli -s=task goto "$next_url"
 playwright-cli -s=task go-back
 playwright-cli -s=task go-forward
 playwright-cli -s=task reload
@@ -82,8 +82,8 @@ playwright-cli eval "el => el.getAttribute('data-testid')" e15
 ```bash
 playwright-cli click e3
 playwright-cli dblclick e7
-playwright-cli fill e5 "user@example.com" --submit
-playwright-cli type "поисковый запрос"
+playwright-cli fill e5 "$value" --submit
+playwright-cli type "$text"
 playwright-cli press Enter
 playwright-cli keydown Shift
 playwright-cli keyup Shift
@@ -114,7 +114,7 @@ playwright-cli mousewheel 0 100
 
 ```bash
 playwright-cli tab-list
-playwright-cli tab-new https://example.com/other
+playwright-cli tab-new "$url"
 playwright-cli tab-select 0
 playwright-cli tab-close 2
 playwright-cli screenshot --filename=page.png
@@ -182,8 +182,8 @@ playwright-cli highlight --hide
 
 ```bash
 playwright-cli webmcp-list
-playwright-cli webmcp-call search --params '{"query":"books"}'
-playwright-cli webmcp-call echo --frame "https://example.com/widget.html (frame 2)"
+playwright-cli webmcp-call "$tool" --params "$params_json"
+playwright-cli webmcp-call "$tool" --frame "$frame"
 ```
 
 Подходящий инструмент страницы может заменить цепочку UI-действий. Имена,

@@ -1,27 +1,21 @@
 # Запись видео
 
-- [Короткая запись](#короткая-запись)
-- [Подписи и выделение](#подписи-и-выделение)
-- [Сценарий из файла](#сценарий-из-файла)
-- [API оформления](#api-оформления)
-- [Передача результата](#передача-результата)
-
 Видео WebM показывает пользовательский сценарий; оно дополняет проверки,
 но не заменяет assertions, сетевые доказательства и trace.
 
 ## Короткая запись
 
 ```bash
-playwright-cli -s=demo open https://example.com
+playwright-cli -s=demo open "$url"
 playwright-cli -s=demo video-start demo.webm --cursor --fps=60
-playwright-cli -s=demo video-chapter "Начало" --description="Открытие формы" --duration=2000
+playwright-cli -s=demo video-chapter "$title" --description="$description" --duration=2000
 playwright-cli -s=demo snapshot
-playwright-cli -s=demo click e1
+playwright-cli -s=demo click "$element_ref"
 playwright-cli -s=demo video-stop
 playwright-cli -s=demo close
 ```
 
-Путь сохранения проверь по выводу и просмотри фактический файл.
+Используй ссылку элемента из свежего снимка. Проверь путь к записи по выводу CLI.
 `--cursor` добавляет анимированный указатель и замедляет показ действий,
 чтобы его движение было видно. Обозначение главы — часть демонстрации,
 а не ожидание готовности продукта.
@@ -42,48 +36,10 @@ playwright-cli video-hide-actions
 Когда нужен управляемый показ, сначала исследуй интерфейс и устойчивые locators,
 затем запиши одну функцию для `run-code --filename=demo.js`.
 
-```javascript
-async page => {
-  await page.screencast.start({
-    path: 'demo.webm',
-    size: { width: 1280, height: 800 },
-    fps: 60,
-  });
-  let scenarioError;
-  try {
-    await page.screencast.showActions({
-      cursor: 'pointer',
-      duration: 800,
-      position: 'top-right',
-      style: {
-        highlight: 'outline: 2px solid #333',
-        title: 'font-size: 16px',
-      },
-    });
-    await page.goto('https://example.com');
-    await page.screencast.showChapter('Проверка формы', {
-      description: 'Выполнение разрешённого сценария',
-      duration: 2000,
-    });
-    await page.getByRole('button', { name: 'Continue' }).click();
-  } catch (error) {
-    scenarioError = error;
-    throw error;
-  } finally {
-    try {
-      await page.screencast.stop();
-    } catch (cleanupError) {
-      if (scenarioError) {
-        throw new AggregateError([scenarioError, cleanupError], 'Сценарий и завершение записи не удались');
-      }
-      throw cleanupError;
-    }
-  }
-}
-```
-
-Этот пример не запускается автоматически. Если запись или stop завершились
-ошибкой, сохрани обе причины, не подменяя исходный сбой успехом очистки.
+Запусти запись через `await page.screencast.start({ path, size, fps })`
+до первого действия. В блоке `try` выполни проверяемые шаги, а в `finally`
+вызови `await page.screencast.stop()`. Если завершение записи тоже упало,
+сохрани обе ошибки.
 
 ## API оформления
 
@@ -110,7 +66,3 @@ async page => {
 и занимает диск. Перед передачей просмотри файл и проверь отсутствие секретов.
 Публикация в PR допустима только в рамках поручения:
 [pr-attachments.md](pr-attachments.md).
-
-Trace сохраняет DOM, сеть и действия для диагностики; видео показывает
-визуальную последовательность. Ни одно не гарантирует меньшее место на диске:
-это зависит от длительности и содержимого.

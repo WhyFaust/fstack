@@ -4,7 +4,7 @@ description: "Proofreads, simplifies, and shortens existing prose for the same a
 license: MIT
 metadata:
   short-description: Prose editing that preserves meaning and voice
-  version: 2.0.1
+  version: 2.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -13,7 +13,7 @@ metadata:
 
 ## Inputs and scope
 
-Use the request and context to determine how much to change. For proofreading and shortening, keep the original purpose and format. To turn an article into a script or adapt material for a new audience, use [$fstack:write-text](../write-text/SKILL_en.md).
+Use the request and context to determine how much to change. For proofreading and shortening, keep the original purpose and format. For a new audience or format, use [$fstack:write-text](../write-text/SKILL_en.md).
 
 If the user limits the edit to a passage or to typos, use the surrounding text
 for context and preserve wording outside the requested scope.

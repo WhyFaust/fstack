@@ -9,7 +9,7 @@
 ```bash
 playwright-cli -s=task state-save session.auth-state.json
 playwright-cli -s=task state-load session.auth-state.json
-playwright-cli -s=task goto https://example.com
+playwright-cli -s=task goto "$url"
 ```
 
 `state-save` без имени создаёт файл с временной меткой. Формат содержит cookies
@@ -21,12 +21,12 @@ playwright-cli -s=task goto https://example.com
 ## Cookies
 
 ```bash
-playwright-cli cookie-list --domain=example.com
-playwright-cli cookie-list --path=/api
-playwright-cli cookie-get session_id
-playwright-cli cookie-set session_id demo --domain=example.com --path=/ --httpOnly --secure --sameSite=Lax
-playwright-cli cookie-set remember_me demo --expires=1893456000
-playwright-cli cookie-delete session_id
+playwright-cli cookie-list --domain="$domain"
+playwright-cli cookie-list --path="$path"
+playwright-cli cookie-get "$name"
+playwright-cli cookie-set "$name" "$value" --domain="$domain" --path=/ --httpOnly --secure --sameSite=Lax
+playwright-cli cookie-set "$name" "$value" --expires="$expires"
+playwright-cli cookie-delete "$name"
 ```
 
 `cookie-list` без фильтра показывает все доступные cookies.

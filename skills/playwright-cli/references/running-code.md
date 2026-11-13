@@ -16,39 +16,31 @@ TextEncoder и TextDecoder. Внутри `page.evaluate` выполняется 
 
 ## Состояние, разрешения и отображение
 
-```javascript
-async page => {
-  await page.context().grantPermissions(['geolocation'], {
-    origin: 'https://example.com',
-  });
-  await page.context().setGeolocation({
-    latitude: 51.5074,
-    longitude: -0.1278,
-  });
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
-  return page.viewportSize();
-}
-```
+Перед выдачей разрешения сравни origin открытой страницы с заранее заданным
+HTTP(S) origin проверяемого приложения. Если страница ещё не открыта или
+после перенаправления origin изменился, остановись. Вызови
+`page.context().grantPermissions(permissions, { origin: expectedOrigin })`
+в собственном контексте. Для координат используй
+`page.context().setGeolocation({ latitude, longitude })`, для режима
+отображения — `page.emulateMedia(options)`.
 
-Выдавай только необходимые сценарию browser permissions в собственной сессии.
-`clearPermissions` снимает разрешения, но сам по себе не доказывает сброс
-географического override. Временную среду надёжнее завершить вместе со своим
-контекстом. Для media можно задавать `media: 'print'`.
+`clearPermissions` сбрасывает разрешения. Чтобы также
+убрать переопределённое местоположение, заверши временный контекст.
+Для media можно задавать `media: 'print'`.
 
 ## Ожидание наблюдаемого результата
 
 ```javascript
 async page => {
-  await page.locator('.loading').waitFor({ state: 'hidden' });
-  await page.locator('.result').waitFor({ timeout: 10000 });
-  await page.waitForFunction(() => window.appReady === true);
-  return page.url();
+  const result = page.getByRole('status');
+  await result.waitFor({ state: 'visible', timeout: 10000 });
+  return result.textContent();
 }
 ```
 
-Выбирай условие по контракту. Отсутствие сети не означает готовность интерфейса;
-произвольная пауза не устраняет гонку. Таймаут ограничивает ожидание,
-а не заменяет нужный сигнал.
+Выбирай locator и условие по контракту. Если готовность отражена в состоянии
+страницы, проверяй его через `page.waitForFunction`. Ограничь ожидание таймаутом.
+Сетевая тишина и фиксированная пауза сами по себе не подтверждают готовность.
 
 ## Frames, загрузки и данные
 

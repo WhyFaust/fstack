@@ -1,28 +1,35 @@
 # Запуск и диагностика тестов Playwright
 
-Используй runner и команды проекта. Чтобы HTML-отчёт не открывал интерактивный
-браузер, установи `PLAYWRIGHT_HTML_OPEN=never`.
+Используй runner проекта. Playwright интерпретирует позиционный фильтр файла
+как регулярное выражение. Задай непустой `test_filter`; для буквального пути
+экранируй специальные символы регулярных выражений. Сначала выведи список
+проверок. Продолжай, только если выбраны нужные тесты.
 
 Bash:
 
 ```bash
-PLAYWRIGHT_HTML_OPEN=never npx --no-install playwright test tests/example.spec.ts
+: "${test_filter:?Задай фильтр для выбранных тестов}"
+export PLAYWRIGHT_HTML_OPEN=never
+npx --no-install playwright test --list "$test_filter"
 ```
 
 PowerShell:
 
 ```powershell
+if ([string]::IsNullOrWhiteSpace($test_filter)) { throw 'Задай фильтр для выбранных тестов' }
 $env:PLAYWRIGHT_HTML_OPEN = 'never'
-npx --no-install playwright test tests/example.spec.ts
+npx --no-install playwright test --list "$test_filter"
 ```
+
+Для обычного прогона выполни ту же команду без `--list`.
 
 Для поддерживаемой установленной версией диагностики используй `--debug=cli`.
 Запусти нужный тест фоновым процессом через доступный инструмент оболочки,
 прочитай вывод до `Debugging Instructions` и имени сессии `tw-…`.
 
 ```bash
-npx --no-install playwright test tests/example.spec.ts --debug=cli
-playwright-cli attach tw-abcdef
+npx --no-install playwright test "${test_filter:?Задай проверенный фильтр}" --debug=cli
+playwright-cli attach "$debug_session"
 playwright-cli snapshot
 ```
 

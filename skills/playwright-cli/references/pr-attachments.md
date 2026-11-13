@@ -15,12 +15,12 @@
 Проверь целевой репозиторий и PR. Тело Markdown передавай файлом.
 
 ```bash
-playwright-cli screenshot --filename=settings-after.png
-gh pr create --title "fix: сохранить имя после записи" --body-file body.md --attach "./settings-after.png#Форма после сохранения"
-gh pr comment 123 --body-file comment.md --attach ./settings-flow.webm
+playwright-cli screenshot --filename=after.png
+gh pr create --title "$title" --body-file body.md --attach "./after.png#$alt"
+gh pr comment "$pr" --body-file comment.md --attach "$video"
 ```
 
-Для встроенного изображения в теле используй `![Описание](./settings-after.png)`:
+Для встроенного изображения в теле используй `![Описание](./after.png)`:
 gh заменяет путь на URL загрузки. Невключённые в тело вложения добавляются
 в конец по порядку флагов. Суффикс `#Описание` задаёт alt для изображения;
 для видео alt не поддерживается.

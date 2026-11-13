@@ -1,16 +1,13 @@
 # Настройки GitHub вне файлов пакета
 
-PR меняет код и workflow. Правила защиты ветки включаются отдельно в настройках
-GitHub администратором; файл в репозитории не активирует их сам по себе.
+Правила защиты веток включает администратор в настройках GitHub. Файл
+в репозитории содержит декларацию для применения.
 
 ## Защита основных веток
 
 [Декларация ruleset](../.github/release-branches.ruleset.json) запрещает удаление
 и force-push основной ветки и исторических `marketplace/*`.
-Список bypass пуст: правило распространяется и на администратора. Владелец
-репозитория по-прежнему может изменить сами настройки GitHub; это защита от
-случайной операции с веткой, а не лишение владельца административных прав.
-Workflow публикует тег и артефакты GitHub Release.
+Пустой список bypass распространяет правило на администраторов.
 
 Перед применением прочитай существующие правила и выбери ID подходящего
 ruleset. Не заменяй более строгие или несвязанные правила этой декларацией.
@@ -28,13 +25,15 @@ gh api --method POST repos/WhyFaust/fstack/rulesets --input .github/release-bran
 
 ```powershell
 gh api repos/WhyFaust/fstack/rules/branches/main
-gh api repos/WhyFaust/fstack/rules/branches/marketplace%2Fx86_64-pc-windows-msvc
-gh api repos/WhyFaust/fstack/branches --paginate
+$branches = gh api repos/WhyFaust/fstack/branches --paginate --jq '.[].name'
+foreach ($branch in $branches) {
+    if ($branch -like 'marketplace/*') {
+        gh api "repos/WhyFaust/fstack/rules/branches/$([uri]::EscapeDataString($branch))"
+    }
+}
 ```
 
-Проверяй каждую существующую платформенную ветку; намеренно удалять или
-переписывать её для проверки не нужно. `enforcement: disabled` и наличие
-декларации в Git сами по себе не защищают ветки.
+В ответе для каждой защищаемой ветки должны присутствовать оба запрета.
 [Контракт REST API rulesets](https://docs.github.com/en/rest/repos/rules).
 
 ## Проверяемый контракт

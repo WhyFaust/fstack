@@ -5,7 +5,7 @@ license: MIT AND Apache-2.0
 compatibility: Установленный Playwright CLI и доступный ему браузер; Node.js нужен при запуске через npx.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
-  version: 2.0.1
+  version: 2.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -36,19 +36,19 @@ metadata:
 В PowerShell URL с `&` передавай в кавычках. Версию и неизвестные флаги проверяй
 через `playwright-cli --version` и `playwright-cli --help <command>`.
 
+Подставь URL и имя своей сессии в команды Bash.
+
 ```bash
-playwright-cli -s=fstack-task open "https://example.com"
-playwright-cli -s=fstack-task snapshot
+playwright-cli -s="$session" open "$url"
+playwright-cli -s="$session" snapshot
 ```
 
-Выбери ссылку нужного элемента из этого snapshot. Например, если это `e3`,
-выполни следующие команды.
+Для действия укажи в `element_ref` ссылку из полученного снимка.
 
 ```bash
-playwright-cli -s=fstack-task click e3
-playwright-cli -s=fstack-task snapshot
-playwright-cli -s=fstack-task screenshot --filename=page.png
-playwright-cli -s=fstack-task close
+playwright-cli -s="$session" click "$element_ref"
+playwright-cli -s="$session" snapshot
+playwright-cli -s="$session" close
 ```
 
 ### Справки по задаче

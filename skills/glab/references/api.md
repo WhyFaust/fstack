@@ -7,10 +7,10 @@
 Для чужого проекта укажи ID или URL-encoded path.
 
 ```bash
-glab api projects/group%2Fproject/merge_requests --paginate
-glab api projects/:id/issues/123/notes -F body=@work/comment.md
-glab api projects/:id --method PUT -F 'topics=["codex","skills"]'
-glab api projects/:id/merge_requests/123/notes --method POST --input work/body.json -H "Content-Type: application/json"
+glab api "projects/$encoded_project_path/merge_requests" --paginate
+glab api "projects/:id/issues/$issue_iid/notes" -F "body=@$note_file"
+glab api projects/:id --method PUT -F "topics=$topics_json"
+glab api "projects/:id/merge_requests/$mr_iid/notes" --method POST --input "$body_file" -H "Content-Type: application/json"
 ```
 
 - `-f` передаёт буквальную строку, включая начальный `@`.
@@ -20,8 +20,8 @@ glab api projects/:id/merge_requests/123/notes --method POST --input work/body.j
 - `--form` нужен для multipart, несовместим с `-f`, `-F`, `--input`.
 
 ```bash
-glab api projects/:id/uploads --method POST --form "file=@work/screenshot.png"
-glab api projects/:fullpath/wikis/attachments --method POST --form "file=@work/screenshot.png" --form "branch=main"
+glab api projects/:id/uploads --method POST --form "file=@$attachment"
+glab api projects/:fullpath/wikis/attachments --method POST --form "file=@$attachment" --form "branch=$branch"
 ```
 
 ## Артефакт конкретной попытки
@@ -32,9 +32,10 @@ glab api projects/:fullpath/wikis/attachments --method POST --form "file=@work/s
 свой ID проекта и job, заранее создай или выбери пустой каталог для вывода.
 
 ```bash
-glab api projects/42/jobs/789/artifacts > job-789.zip.part &&
-  unzip -tq job-789.zip.part &&
-  mv job-789.zip.part job-789.zip
+archive="job-$job_id.zip"
+glab api "projects/$project_id/jobs/$job_id/artifacts" > "$archive.part" &&
+  unzip -tq "$archive.part" &&
+  mv "$archive.part" "$archive"
 ```
 
 Нужны `unzip` и побайтовое перенаправление stdout. В PowerShell оно
@@ -42,12 +43,12 @@ glab api projects/42/jobs/789/artifacts > job-789.zip.part &&
 пользуйся инструментом с бинарным сохранением ответа того же API.
 При ненулевом коде или повреждённом архиве не публикуй временный файл
 как результат. Для отдельного файла используй путь
-`projects/42/jobs/789/artifacts/путь/в/архиве` и проверь его содержимое.
+`projects/$project_id/jobs/$job_id/artifacts/$artifact_path` и проверь его содержимое.
 `glab job artifact <refName> <jobName>` обращается к последнему успешному
 pipeline для ref; при проверке конкретной попытки нужен её job ID.
 
 Для коллекции, которую нужно обрабатывать построчно, используй
-`glab api projects/42/jobs --paginate --output ndjson`, если установленная
+`glab api "projects/$project_id/jobs" --paginate --output ndjson`, если установленная
 версия поддерживает этот формат. Проверь код выхода до вывода о полноте.
 
 ## Pipeline и готовность к merge
@@ -69,18 +70,19 @@ source и SHA. Branch pipeline или обычный MR pipeline может пр
 
 ### Проверить, одобрить и слить указанную ревизию
 
-Ниже Bash-пример для MR 123 в проекте 42 на уже проверенном хосте. Подставь
+На проверенном хосте подставь
 ID целевого проекта (также для fork MR), IID и полный проверенный source SHA.
 Фактический head pipeline может принадлежать другому проекту: для job и bridge
 используй `project_id` самого pipeline. Пагинируй коллекции.
 
 ```bash
-mr=projects/42/merge_requests/123
+mr="projects/$target_project_id/merge_requests/$mr_iid"
 glab api "$mr"
 glab api "$mr/pipelines" --paginate
-glab api projects/42/pipelines/456
-glab api projects/42/pipelines/456/jobs --paginate
-glab api projects/42/pipelines/456/bridges --paginate
+pipeline="projects/$pipeline_project_id/pipelines/$pipeline_id"
+glab api "$pipeline"
+glab api "$pipeline/jobs" --paginate
+glab api "$pipeline/bridges" --paginate
 glab api "$mr/approvals"
 ```
 
@@ -133,10 +135,10 @@ head в очередь. При поддержке инстансом это `POS
 `--old-line` — старую; оба требуют `--file`, но несовместимы между собой.
 
 ```bash
-glab mr note create 123 --file src/main.py --line 42 -m "Описание дефекта"
-glab mr note create 123 --file src/main.py --old-line 7 -m "Описание удалённой строки"
-glab mr note create 123 --reply discussion-id -m "Ответ"
-glab mr note reopen 123 discussion-id
+glab mr note create "$mr_iid" --file "$path" --line "$new_line" -m "$note"
+glab mr note create "$mr_iid" --file "$path" --old-line "$old_line" -m "$note"
+glab mr note create "$mr_iid" --reply "$discussion_id" -m "$reply"
+glab mr note reopen "$mr_iid" "$discussion_id"
 ```
 
 `--file`, `--reply`, `--unique` взаимоисключающие. Экспериментальные флаги сверяй

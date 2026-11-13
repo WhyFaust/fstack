@@ -5,9 +5,8 @@
 историю и вкладки браузера, но не общее состояние сервиса или тестового стенда.
 
 ```bash
-playwright-cli -s=auth-check open https://app.example.com/login
-playwright-cli -s=public-check open https://example.com
-playwright-cli -s=auth-check snapshot
+playwright-cli -s="$session" open "$url"
+playwright-cli -s="$session" snapshot
 playwright-cli list
 ```
 
@@ -38,8 +37,7 @@ playwright-cli attach --extension
 
 ```bash
 playwright-cli -s=msedge detach
-playwright-cli -s=auth-check close
-playwright-cli -s=public-check close
+playwright-cli -s="$session" close
 ```
 
 `detach` предназначен для созданной через `attach` сессии и сохраняет внешний

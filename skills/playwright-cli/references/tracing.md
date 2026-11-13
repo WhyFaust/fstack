@@ -8,10 +8,10 @@ Trace помогает связать действие с DOM, сетью, ко�
 после. Прочитай свежий снимок перед выбором element ref.
 
 ```bash
-playwright-cli -s=diagnosis open https://example.com
+playwright-cli -s=diagnosis open "$url"
 playwright-cli -s=diagnosis tracing-start
 playwright-cli -s=diagnosis snapshot
-playwright-cli -s=diagnosis click e5
+playwright-cli -s=diagnosis click "$element_ref"
 playwright-cli -s=diagnosis tracing-stop
 playwright-cli -s=diagnosis close
 ```
@@ -29,7 +29,6 @@ playwright-cli -s=diagnosis close
 
 Trace может содержать DOM с личными данными, заголовки авторизации и тела
 ответов. Перед передачей проверь содержимое и назначение получателя.
-Не записывай реальные платежи или внешние изменения только ради доказательства.
 Наличие трассы не означает, что сценарий или очистка завершились успешно.
 
 Динамическое содержимое может воспроизводиться неполно. Фиксируй версию,

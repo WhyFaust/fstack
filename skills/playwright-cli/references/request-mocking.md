@@ -4,47 +4,23 @@
 ответа. Она не подтверждает реальную интеграцию, которую заменяет.
 Включай маршруты до действия, запускающего запрос, и снимай свои маршруты после.
 
+Передай в `pattern` glob-шаблон целевых URL, в `response_json` — тело ответа.
+Для статуса используй `--status`, для заголовков — `--header` или `--remove-header`.
+
 ```bash
-playwright-cli route "**/*.jpg" --status=404
-playwright-cli route "**/api/users" --body='[{"id":1,"name":"Alice"}]' --content-type=application/json
-playwright-cli route "**/api/data" --body='{"ok":true}' --header="X-Custom: value"
-playwright-cli route "**/*" --remove-header=cookie,authorization
+playwright-cli route "$pattern" --body="$response_json" --content-type=application/json
 playwright-cli route-list
-playwright-cli unroute "**/*.jpg"
+playwright-cli unroute "$pattern"
 ```
 
-Glob-шаблоны: `**/api/users` — путь, `**/api/*/details` — сегмент,
-`**/*.{png,jpg,jpeg}` — расширения, `**/search?q=*` — параметры.
-`unroute` без шаблона снимает все маршруты сессии: применяй только в собственной.
+В glob-шаблоне `*` соответствует части одного сегмента пути, `**` — нескольким
+сегментам. `unroute` без шаблона снимает все маршруты сессии.
 
-Для условного ответа, изменения настоящего ответа и моделирования отказа
-используй `run-code --filename=route.js`. Файл содержит одну функцию-выражение.
-
-```javascript
-async page => {
-  await page.route('**/api/login', async route => {
-    const body = route.request().postDataJSON();
-    await route.fulfill({
-      status: body.username === 'admin' ? 200 : 401,
-      json: body.username === 'admin'
-        ? { token: 'mock-token' }
-        : { error: 'Invalid' },
-    });
-  });
-}
-```
-
-Изменение настоящего ответа:
-
-```javascript
-async page => {
-  await page.route('**/api/user', async route => {
-    const response = await route.fetch();
-    const json = await response.json();
-    await route.fulfill({ response, json: { ...json, isPremium: true } });
-  });
-}
-```
+Для условного или изменённого ответа используй `run-code --filename=route.js`.
+Зарегистрируй обработчик через `await page.route(pattern, async route => { … })`.
+В обработчике выбери ветку по `route.request()` и верни ожидаемые статус и
+данные через `route.fulfill({ status, json })`. Если нужен исходный ответ,
+получи его через `route.fetch()`, затем передай в `fulfill` вместе с изменениями.
 
 Для отказа: `route.abort('internetdisconnected')`; другие подходящие коды —
 `connectionrefused`, `timedout`, `connectionreset`. Для искусственной задержки

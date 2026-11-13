@@ -13,9 +13,9 @@ Playwright CLI печатает эквивалент действий на TypeS
 
 ```bash
 playwright-cli snapshot
-playwright-cli fill e3 "user@example.com"
-playwright-cli click e7
-playwright-cli generate-locator e7 --raw
+playwright-cli fill "$field_ref" "$value"
+playwright-cli generate-locator "$button_ref" --raw
+playwright-cli click "$button_ref"
 ```
 
 Сохраняй проектные fixtures и imports, конфигурацию runner, подготовку данных
@@ -37,8 +37,7 @@ playwright-cli generate-locator e7 --raw
 Запиши сценарии по существующей конвенции проекта: исходное состояние,
 пользовательские шаги, наблюдаемые результаты и владение ресурсами.
 Сценарии должны стартовать независимо, а не использовать побочные эффекты
-предыдущего кейса. Структуру файлов определяет проект, не правило «один тест
-на каждый файл» по умолчанию.
+предыдущего кейса. Структуру файлов бери из проекта.
 
 Для приложения со специальной подготовкой исследуй страницу через реальный
 тестовый вход. [playwright-tests.md](playwright-tests.md) описывает `--debug=cli`

@@ -4,7 +4,7 @@ description: "Устанавливает контракт внешнего API �
 license: MIT
 metadata:
   short-description: Проверка API по документации нужной версии
-  version: 2.0.1
+  version: 2.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
