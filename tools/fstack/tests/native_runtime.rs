@@ -24,7 +24,25 @@ fn copy_package(from: &Path, to: &Path) {
     }
 }
 
+#[cfg(unix)]
+fn fixture_binary() -> std::sync::Arc<tempfile::TempPath> {
+    use std::sync::{Arc, Mutex, Weak};
+
+    static BINARY: Mutex<Weak<tempfile::TempPath>> = Mutex::new(Weak::new());
+    let mut shared = BINARY.lock().unwrap();
+    if let Some(staged) = shared.upgrade() {
+        return staged;
+    }
+    let path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+    fs::copy(env!("CARGO_BIN_EXE_fstack"), &path).unwrap();
+    let staged = Arc::new(path);
+    *shared = Arc::downgrade(&staged);
+    staged
+}
+
 struct Runtime {
+    #[cfg(unix)]
+    _fixture_binary: std::sync::Arc<tempfile::TempPath>,
     _temporary: tempfile::TempDir,
     root: PathBuf,
     binary: PathBuf,
@@ -49,11 +67,18 @@ impl Runtime {
         } else {
             "fstack"
         });
+        #[cfg(unix)]
+        let fixture_binary = fixture_binary();
+        #[cfg(unix)]
+        fs::hard_link(&*fixture_binary, &binary).unwrap();
+        #[cfg(windows)]
         fs::copy(env!("CARGO_BIN_EXE_fstack"), &binary).unwrap();
         let home = directory.join("profile");
         let project = directory.join("project");
         fs::create_dir(&project).unwrap();
         Self {
+            #[cfg(unix)]
+            _fixture_binary: fixture_binary,
             _temporary: temporary,
             root,
             binary,

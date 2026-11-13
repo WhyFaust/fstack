@@ -327,7 +327,7 @@ fn report(plan: &Plan, status: &str) -> Value {
 }
 
 fn create_backup(home: &Path, plan: &Plan) -> Result<PathBuf> {
-    let backup_dir = home.join("fstack/backups");
+    let backup_dir = home.join("fstack").join("backups");
     match fs::symlink_metadata(&backup_dir) {
         Ok(metadata) if !is_link(&metadata) && metadata.is_dir() => {}
         Ok(_) => return Err("Ожидался обычный каталог fstack/backups".into()),
@@ -386,7 +386,7 @@ fn pending_backup(home: &Path) -> Result<Option<PathBuf>> {
     ) {
         return Err(format!("Недоступна резервная копия {directory}"));
     }
-    Ok(Some(home.join(directory)))
+    Ok(Some(home.join("fstack").join("backups").join(name)))
 }
 
 fn backed_up_plan(backup: &Path) -> Result<Plan> {
