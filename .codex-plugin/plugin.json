@@ -1,6 +1,6 @@
 {
   "name": "fstack",
-  "version": "9.0.0",
+  "version": "10.0.0",
   "description": "Faust stack — личный набор инженерных навыков Codex: от исследования до проверенного результата.",
   "author": {
     "name": "WhyFaust"
@@ -11,7 +11,7 @@
   "interface": {
     "displayName": "fstack · Faust stack",
     "shortDescription": "Личные инженерные навыки для Codex",
-    "longDescription": "Команда /faust-mode включает методы fstack и делегирование штатным агентам Codex до /faust-mode-off. Одобренные хуки подготавливают сборку для системы и ведут память проекта в Obsidian.",
+    "longDescription": "Команда /faust-mode включает методы fstack и делегирование доступным агентам Codex до /faust-mode-off. Одобренные хуки подготавливают сборку для системы и ведут память проекта в Obsidian.",
     "defaultPrompt": [
       "/faust-mode Выполни задачу с проверкой результата."
     ],

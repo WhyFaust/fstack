@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 permissions:
@@ -40,8 +41,16 @@ jobs:
       RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
       - run: cargo +1.90.0 build --release --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml
+      - name: Check reserved marketplace version
+        if: github.event_name == 'pull_request' && runner.os == 'Linux'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: 'tools/fstack/target/${{ matrix.target }}/release/fstack --package . release check-next "$PR_BASE" "$PR_TITLE"'
       - run: cargo +1.90.0 fmt --manifest-path tools/fstack/Cargo.toml -- --check
       - run: cargo +1.90.0 clippy --all-targets --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml -- -D warnings
       - run: cargo +1.90.0 test --release --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml

@@ -13,24 +13,29 @@ Linux x64 с glibc 2.35+, Windows x64, macOS Intel и Apple Silicon.
 Один источник подходит для всех поддерживаемых платформ:
 
 ```bash
-codex plugin marketplace add WhyFaust/fstack --ref main --sparse .agents --sparse .codex-plugin --sparse assets --sparse docs --sparse hooks --sparse launchers --sparse licenses --sparse skills
+codex plugin marketplace add WhyFaust/fstack --ref main
 codex plugin add fstack@fstack
 ```
 
-Sparse checkout позволяет Git получить только нужные файлы. В частности,
-он исключает бинарники из истории прежних платформенных веток.
+Зарегистрируй весь снимок ветки. Проверке пакета нужны файлы лицензий,
+исходники в `tools/fstack` и файлы, на которые ссылается документация.
 
 Одобри хуки fstack в настройках Codex и открой чат. Фоновый `SessionStart`
 определяет ОС и архитектуру, загружает бинарник версии установленного
 манифеста из официального GitHub Release, проверяет SHA-256 и сохраняет его
 в `<CODEX_HOME>/fstack/runtime/<версия>/<target>/`. Хуки памяти используют
 локальную копию. На первом запуске память и команды режима становятся доступны
-после загрузки. [Команды режима](faust-mode.md).
+после загрузки. Если запрос пришёл раньше, хук покажет сообщение о пропуске.
+После успешного `SessionStart` повтори команду режима или запрос, которому
+требуется память. [Команды режима](faust-mode.md).
 
 В существующем профиле этот же хук выполняет [миграцию прежних ролей](codex.md#миграция-прежних-ролей).
 Для нового профиля достаточно установки и штатного доверия к хукам.
 Результат подготовки виден в журнале хуков. Если релиз ещё публикуется
 или сеть временно недоступна, следующий запуск чата повторяет подготовку.
+Если до публикации этой версии в `main` вошёл следующий выпуск,
+обнови marketplace до актуального снимка и открой новый чат. У версии,
+которую успел заменить следующий выпуск, может не появиться бинарник.
 Codex может запросить одобрение после изменения кода хука.
 
 ### Через платформенный архив
@@ -79,6 +84,16 @@ codex plugin list --json
 `<CODEX_HOME>/plugins/cache/fstack/fstack/<версия>`. Сравни манифест,
 запускатели, хуки и изменённые ресурсы с подтверждённым источником.
 Для локального архива или клона сверь также платформенный бинарник.
+После подготовки бинарника перейди в `installedPath` и проверь состав пакета:
+
+```bash
+/bin/sh launchers/fstack.sh check-package .
+```
+
+```powershell
+& .\launchers\fstack.ps1 check-package .
+```
+
 Если версия осталась прежней, проверь содержимое и отсутствие удалённых файлов.
 
 ### Переход с платформенной ветки
@@ -92,7 +107,7 @@ codex plugin list --json
 
 ```bash
 codex plugin marketplace remove fstack
-codex plugin marketplace add WhyFaust/fstack --ref main --sparse .agents --sparse .codex-plugin --sparse assets --sparse docs --sparse hooks --sparse launchers --sparse licenses --sparse skills
+codex plugin marketplace add WhyFaust/fstack --ref main
 codex plugin add fstack@fstack
 codex plugin list --json
 ```

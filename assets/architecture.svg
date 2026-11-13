@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-labelledby="title desc">
   <title id="title">Состав fstack и подключение к Codex</title>
-  <desc id="desc">Команда /faust-mode включает процесс в чате до /faust-mode-off. Codex загружает навыки из установленного плагина. Координатор передаёт задания и методы штатным агентам Codex. Фоновый хук подбирает готовую сборку. Одобренные хуки находят рабочий vault и создают область проекта, нативный бинарник обслуживает память: заметки в Obsidian, привязки и очередь в профиле Codex.</desc>
+  <desc id="desc">Команда /faust-mode включает процесс в чате до /faust-mode-off. Codex загружает навыки из установленного плагина. Координатор передаёт задания и методы доступным агентам Codex. Фоновый хук подбирает готовую сборку. Одобренные хуки находят рабочий vault и создают область проекта, нативный бинарник обслуживает память: заметки в Obsidian, привязки и очередь в профиле Codex.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#865843" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
