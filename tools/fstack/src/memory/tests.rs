@@ -950,6 +950,43 @@ fn independent_entry_limits_count_canonical_and_legacy_tombstones_once() {
     assert!(store::files(&records, true).is_err());
 }
 #[test]
+fn record_limit_is_checked_on_insert_and_existing_history_stays_readable() {
+    let f = Fixture::new("auto", "pilot");
+    let root = f.root();
+    let records = root.join("Records");
+    let saved = f.save("Keep readable heliotrope", true);
+    let draft = f.save("Draft for capacity test", false);
+    let contents = fs::read_to_string(store::record(&root, id(&draft))).unwrap();
+    let synced_draft = |n| {
+        let synced_id = format!("{n:064x}");
+        fs::write(
+            store::record(&root, &synced_id),
+            contents.replace(id(&draft), &synced_id),
+        )
+        .unwrap();
+    };
+    for n in 0..4093 {
+        synced_draft(n);
+    }
+    fs::write(records.join("Personal note.md"), "Other vault data").unwrap();
+    let last = f.save("Last writable record", true);
+    let new = candidate("Next writable record");
+    let insert = || f.store.save(&f.binding, &new, true, None, None);
+    assert!(insert().is_err());
+    assert_eq!(f.save("Last writable record", true)["id"], last["id"]);
+    assert_eq!(store::files(&records, false).unwrap().len(), 4096);
+
+    synced_draft(4093);
+    assert_eq!(store::files(&records, false).unwrap().len(), 4097);
+    assert_eq!(f.store.get(&f.binding, id(&saved)).unwrap(), saved);
+    assert_eq!(f.store.search(&f.binding, "readable", 1).unwrap()[0], saved);
+    assert!(insert().is_err());
+    f.store.forget(&f.binding, id(&draft)).unwrap();
+    assert!(insert().is_err());
+    f.store.forget(&f.binding, id(&last)).unwrap();
+    assert_eq!(insert().unwrap()["status"], "memory");
+}
+#[test]
 fn promotion_rejects_oversize_without_losing_editable_inbox() {
     let f = Fixture::new("inbox", "pilot");
     let v = f.save("Keep editable heliotrope", false);

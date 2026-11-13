@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "cargo_lock_sha256": "71fa651e61719ea9eb802a9d194f660bdb1eb28c954ef82529ba0982bfd1cd4f",
-  "cargo_manifest_sha256": "f26be0241da158a9464a2ff0b290cf83d30e8eb0fde57879848c15b2f59f25d9",
+  "cargo_lock_sha256": "956478d298ff6af2ba95c972552609eeddd2bbe153572d990da3efbb68e7e74c",
+  "cargo_manifest_sha256": "336edefc70e50e8645df897d694e209276404a74da1c05c4389e3ce3858dd98d",
   "rust_version": "1.90.0",
   "targets": [
     "x86_64-unknown-linux-gnu",

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 2.1.0
+  version: 2.1.3
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -34,25 +34,33 @@ fstack:resolve-review, для явно разрешённого слияния �
 Для повтора конкретной попытки в `ci retry` используй ID job. Коллекции API читай с пагинацией; первая страница
 не является полным набором.
 
+Подставь параметры целевого проекта и операции.
+
 ```bash
-glab mr view 123
+glab mr view "$mr_iid"
 glab mr list --output json
-glab ci get --pipeline-id 456 --with-job-details
-glab api projects/:id/jobs/789/trace
+glab ci get --pipeline-id "$pipeline_id" --with-job-details
+glab api "projects/:id/jobs/$job_id/trace"
 ```
 
 ### Изменения
 
 В полном цикле GitLab используй один MR и его source branch по
-[порядку сопровождения](../watch-pr/references/gitlab-lifecycle.md).
+[порядку сопровождения](../watch-pr/SKILL.md#полный-цикл-gitlab-mr).
 MR, комментарий, retry, approval и merge должны входить в поручение пользователя. Перед повтором записи с неизвестным исходом прочитай её состояние.
 Шаблон описания бери из репозитория. В текстах используй полные ссылки GitLab.
+Сверь проект выполнения и условия запуска по [протоколу сопровождения](../watch-pr/SKILL.md#полный-цикл-gitlab-mr).
+Для разрешённого запуска отсутствующего MR pipeline отправь `POST` на
+`projects/$target_project_id/merge_requests/$mr_iid/pipelines`. Для обязательной
+ручной job используй `POST projects/$job_project_id/jobs/$job_id/play`.
+Сверь ID из ответа с последующим чтением pipeline или job.
+[API pipelines MR](https://docs.gitlab.com/api/merge_requests/#create-merge-request-pipeline) · [API ручных jobs](https://docs.gitlab.com/api/jobs/#run-a-job)
 
 ```bash
-glab mr create --draft --push --title "fix: исправить обработку ответа" --description "..."
-glab mr note create 123 -m "Результат проверки" --unique
-glab mr note create 123 --reply discussion-id -m "Ответ"
-glab mr note resolve 123 discussion-id
+glab mr create --draft --push --title "$title" --description "$description"
+glab mr note create "$mr_iid" -m "$note" --unique
+glab mr note create "$mr_iid" --reply "$discussion_id" -m "$reply"
+glab mr note resolve "$mr_iid" "$discussion_id"
 ```
 
 `--push` нужен, когда ветка ещё не опубликована. У готовой ветки не публикуй посторонние
@@ -66,22 +74,32 @@ glab mr note resolve 123 discussion-id
 
 ```powershell
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-Get-Content -LiteralPath '.\work\comment.md' -Raw -Encoding utf8 | glab mr note create 123
-$mrDescription = Get-Content -LiteralPath '.\work\description.md' -Raw -Encoding utf8
-glab mr update 123 --description $mrDescription
-glab api projects/:id/issues/123/notes -F 'body=@work/comment.md'
+Get-Content -LiteralPath $notePath -Raw -Encoding utf8 | glab mr note create $mrIid
+$mrDescription = Get-Content -LiteralPath $descriptionPath -Raw -Encoding utf8
+glab mr update $mrIid --description $mrDescription
+glab api "projects/:id/issues/$issueIid/notes" -F "body=@$notePath"
 ```
 
 Не опускай текст, если это откроет редактор. Не передавай `--description "-"`:
 поддержка stdin у команд различается. Issue/incident note не читают такой pipeline;
 для длинного текста используй API с `-F body=@file`.
 
-Для пагинации JSON, скачивания артефактов, placeholder API, diff comments,
-merged results pipelines и mergeability прочитай [справку API](references/api.md);
-обычным командам выше она не нужна.
-Источник: [документация glab](https://docs.gitlab.com/cli/).
+Для коллекции используй `glab api --paginate`. Артефакт конкретной попытки
+получи по `projects/$project_id/jobs/$job_id/artifacts`, сверив проект, ID
+и SHA job. Проверь код выхода и целостность архива перед использованием.
+Синтаксис установленной команды сверяй с `--help`. [Документация glab](https://docs.gitlab.com/cli/)
 
 ## Проверка и результат
 
-Проверяй принадлежность pipeline нужной ревизии MR и последнюю применимую попытку
-jobs; для merged results связь устанавливай по [справке API](references/api.md).
+Сверь проект, MR, текущие source и target, ID и SHA связанного pipeline, его
+последние попытки jobs и дочерние pipeline. Для jobs используй project ID
+самого pipeline. У merged results проверь родителей временного merge commit
+против обеих ревизий. После изменения target проверь актуальность результата.
+[Документация merged results pipelines](https://docs.gitlab.com/ci/pipelines/merged_results_pipelines/)
+
+Перед разрешёнными approve и merge дождись пересчёта готовности и одобрений.
+В каждую операцию передай полный проверенный source SHA параметром `sha`.
+Между записями перечитай состояние MR, approvals и CI. При несовпадении SHA
+проверь новую ревизию. Если проект требует merge train, проследи pipeline
+поезда до фактической интеграции. [API одобрений](https://docs.gitlab.com/api/merge_request_approvals/),
+[API merge requests](https://docs.gitlab.com/api/merge_requests/)

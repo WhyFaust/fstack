@@ -358,6 +358,11 @@ fn complete_package_rejects_broken_release_contracts() {
         assert!(check(&package).is_err(), "{relative}:{key}");
         fs::write(&path, original).unwrap();
     }
+    let stamp = package.join("launchers/package-version");
+    let original = fs::read(&stamp).unwrap();
+    fs::write(&stamp, "0.0.0\n").unwrap();
+    assert!(check(&package).unwrap_err().contains("Версия запускателя"));
+    fs::write(stamp, original).unwrap();
     let localized = package.join("skills/adapt-skill/agents/openai_en.yaml");
     fs::write(&localized, "interface:\n  display_name: 123\n").unwrap();
     assert!(check(&package).is_err());
@@ -381,20 +386,32 @@ fn complete_package_rejects_broken_release_contracts() {
     assert!(check(&package).is_err());
 }
 #[test]
-fn shipped_role_settings_validate_model_and_effort() {
-    for path in entries(&root().join("profile/agents")).unwrap() {
-        let name = path.file_stem().unwrap().to_str().unwrap();
-        let role = toml_file(&path).unwrap();
-        role_settings(&role, name).unwrap();
-        let mut custom = role.clone();
-        custom["model"] = json!("custom-provider/model");
-        role_settings(&custom, name).unwrap();
-        for (field, value) in [("model", ""), ("model_reasoning_effort", "unknown")] {
-            let mut invalid = role.clone();
-            invalid[field] = json!(value);
-            assert!(role_settings(&invalid, name).is_err());
-        }
-    }
+fn package_rejects_a_bundled_global_role_or_onboarding_skill() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    let role = package.join("profile/agents/default.toml");
+    fs::create_dir_all(role.parent().unwrap()).unwrap();
+    fs::write(&role, r#"name = "default""#).unwrap();
+    assert!(check(&package).unwrap_err().contains("profile/agents"));
+    fs::remove_dir_all(package.join("profile")).unwrap();
+
+    let path = package.join(".codex-plugin/plugin.json");
+    let mut manifest = json_file(&path).unwrap();
+    manifest["extensions"] =
+        json!({"com.openai":{"onboardingSkill":"./skills/faust-mode/SKILL.md"}});
+    fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(check(&package).unwrap_err().contains("onboardingSkill"));
+}
+#[test]
+fn package_rejects_instructions_for_a_removed_skill() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    let guide = package.join("docs").join("obsolete.md");
+    fs::write(&guide, "Use $fstack:profile").unwrap();
+    let error = check(&package).unwrap_err();
+    assert!(error.contains("obsolete.md") && error.contains("отсутствует навык profile"));
 }
 #[cfg(windows)]
 #[test]

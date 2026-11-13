@@ -68,37 +68,38 @@ pub fn note(path: &Path, id: &str, marker: &str, body: bool) -> Result<Option<Fi
         .map(|s| fmt::parse(&s, id, marker, body))
         .transpose()
 }
+const ENTRY_LIMIT: usize = 4096;
+
 pub fn files(dir: &Path, tombstones: bool) -> Result<Vec<PathBuf>> {
     if !io::directory(dir, false, false)? {
         return Ok(Vec::new());
     }
+    let records = dir.file_name().is_some_and(|s| s == "Records");
+    let suffix = if tombstones { "-forgotten.json" } else { ".md" };
     let mut result = Vec::new();
-    let mut count = 0;
     for entry in fs::read_dir(dir).map_err(io::err)? {
         let path = entry.map_err(io::err)?.path();
         let name = path.file_name().unwrap().to_string_lossy();
-        let is_tombstone = dir.file_name().is_some_and(|s| s == "Records")
-            && name
-                .strip_suffix("-forgotten.json")
-                .is_some_and(|s| fmt::id(s).is_ok());
-        if is_tombstone != tombstones {
-            continue;
-        }
-        count += 1;
-        if count > 4096 {
-            return Err("Memory directory entry limit exceeded".into());
-        }
-        if tombstones
-            || (path.extension().is_some_and(|s| s == "md")
-                && path
-                    .file_stem()
-                    .is_some_and(|s| fmt::id(&s.to_string_lossy()).is_ok()))
+        if name
+            .strip_suffix(suffix)
+            .is_some_and(|id| fmt::id(id).is_ok())
         {
-            result.push(path)
+            result.push(path);
+            if (tombstones || !records) && result.len() > ENTRY_LIMIT {
+                return Err("Memory directory entry limit exceeded".into());
+            }
         }
     }
     Ok(result)
 }
+pub(super) fn validate_history(id: &str, limit: usize) -> Result<()> {
+    fmt::id(id)?;
+    if !(1..=10).contains(&limit) {
+        return Err("Invalid memory history limit".into());
+    }
+    Ok(())
+}
+
 fn stem(path: &Path) -> String {
     path.file_stem().unwrap().to_string_lossy().into_owned()
 }
@@ -116,7 +117,7 @@ pub fn tombstone_ids(root: &Path) -> Result<BTreeSet<String>> {
                 .into(),
         );
     }
-    if ids.len() > 4096 {
+    if ids.len() > ENTRY_LIMIT {
         return Err("Memory tombstone entry limit exceeded".into());
     }
     Ok(ids)
@@ -498,6 +499,14 @@ impl Store {
         Ok(b)
     }
     pub fn statuses(&self, root: &Path) -> Result<(BTreeMap<String, Fields>, BTreeSet<String>)> {
+        self.record_statuses(root, files(&root.join("Records"), false)?)
+    }
+
+    fn record_statuses(
+        &self,
+        root: &Path,
+        records: Vec<PathBuf>,
+    ) -> Result<(BTreeMap<String, Fields>, BTreeSet<String>)> {
         let mut approvals = BTreeMap::new();
         for p in files(&root.join("Approved"), false)? {
             let id = stem(&p);
@@ -507,7 +516,7 @@ impl Store {
         }
         let mut inline = BTreeMap::new();
         let mut unreadable = BTreeMap::new();
-        for p in files(&root.join("Records"), false)? {
+        for p in records {
             let id = stem(&p);
             if approvals.contains_key(&id) || !io::file(&p)? {
                 continue;
@@ -594,10 +603,7 @@ impl Store {
         Err("Memory entry is unavailable".into())
     }
     pub fn history(&self, b: &Binding, id: &str, limit: usize) -> Result<Value> {
-        fmt::id(id)?;
-        if !(1..=10).contains(&limit) {
-            return Err("Invalid memory history limit".into());
-        }
+        validate_history(id, limit)?;
         let root = self.root(b)?;
         let _lock = io::lock(&root, b.root.parent().unwrap())?;
         let (approvals, _) = self.statuses(&root)?;
@@ -730,12 +736,20 @@ impl Store {
                 provenance.insert(k.into(), fmt::safe(&json!(v), 128, false)?);
             }
         }
-        let (a, h) = self.statuses(&root)?;
+        let path = record(&root, &id);
+        let records = files(&root.join("Records"), false)?;
+        let record_count = records.len();
+        let (a, h) = self.record_statuses(&root, records)?;
         if h.contains(&id) {
             return Err("Memory entry is unavailable".into());
         }
         let approved = approved && b.mode == "auto";
-        if !a.contains_key(&id) && !io::file(&record(&root, &id))? {
+        if !a.contains_key(&id) && !io::file(&path)? {
+            if record_count >= ENTRY_LIMIT {
+                return Err(
+                    "Memory record limit reached; forget an entry before saving a new one".into(),
+                );
+            }
             self.check_supersedes(&root, &fields, &a, &h)?;
             let mut metadata = fields.clone();
             metadata.remove("body");
@@ -754,7 +768,7 @@ impl Store {
                 metadata.insert("fstack_status".into(), "approved".into());
             }
             if io::write(
-                &record(&root, &id),
+                &path,
                 &fmt::markdown(MEMORY, &metadata, &fields["body"]),
                 false,
                 None,
@@ -869,7 +883,7 @@ impl Store {
             if l.is_none() {
                 let mut ids = tombstone_ids(root)?;
                 ids.insert(id.into());
-                if ids.len() > 4096 {
+                if ids.len() > ENTRY_LIMIT {
                     return Err("Memory tombstone entry limit exceeded".into());
                 }
             }

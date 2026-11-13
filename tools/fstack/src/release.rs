@@ -11,6 +11,16 @@ use std::{
 };
 type Result<T> = std::result::Result<T, String>;
 const MANIFEST: &str = ".codex-plugin/plugin.json";
+const PACKAGE_VERSION: &str = "launchers/package-version";
+const RUNTIME_ID: &str = "launchers/runtime-id";
+const BUILD_INPUTS: &[&str] = &[
+    ".cargo",
+    ".gitattributes",
+    ".github/workflows/release.yml",
+    "hooks",
+    "launchers",
+    "tools/fstack",
+];
 fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).unwrap()
 }
@@ -92,10 +102,20 @@ fn updated_manifest(mut data: Value, number: &str) -> Result<Option<Vec<u8>>> {
         (serde_json::to_string_pretty(&data).map_err(|e| e.to_string())? + "\n").into_bytes(),
     ))
 }
+pub(super) fn check_package_version(root: &Path, number: &str) -> Result<()> {
+    let path = crate::contained(root, root, PACKAGE_VERSION, false)?;
+    if fs::read(path).map_err(|e| e.to_string())? != format!("{number}\n").as_bytes() {
+        return Err(format!(
+            "Версия запускателя {PACKAGE_VERSION}: ожидается {number}; выполните release prepare"
+        ));
+    }
+    Ok(())
+}
 fn check_versions(root: &Path) -> Result<String> {
     let data = manifest(root)?;
     let current = data["version"].as_str().ok_or("Нет версии")?;
     version(current)?;
+    check_package_version(root, current)?;
     let mut count = 0;
     for folder in fs::read_dir(root.join("skills")).map_err(|e| e.to_string())? {
         let folder = folder.map_err(|e| e.to_string())?.path();
@@ -165,10 +185,6 @@ struct Release<'a> {
     runner: &'a dyn Runner,
     artifacts: Option<&'a Path>,
 }
-struct Marketplace {
-    source: String,
-    tips: BTreeMap<&'static str, String>,
-}
 impl Release<'_> {
     fn bytes(&self, args: &[&str]) -> Result<Vec<u8>> {
         self.runner.run(self.root, args, None)
@@ -196,7 +212,7 @@ impl Release<'_> {
     }
     fn check_live_main(&self, sha: &str) -> Result<()> {
         if self.live_main()? != sha {
-            return Err("main изменился перед публикацией marketplace".into());
+            return Err("main изменился перед публикацией релиза".into());
         }
         Ok(())
     }
@@ -221,23 +237,40 @@ impl Release<'_> {
             })
             .collect()
     }
-    fn signature(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
+    fn skill_at(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
         let text = String::from_utf8(self.bytes(&["git", "show", &format!("{rev}:{path}")])?)
             .map_err(|e| e.to_string())?;
-        let (mut data, body) = parse_skill(&text)?;
+        parse_skill(&text)
+    }
+    fn skill_version(&self, rev: &str, path: &str) -> Result<[u64; 3]> {
+        let (data, _) = self.skill_at(rev, path)?;
+        version(
+            data["metadata"]["version"]
+                .as_str()
+                .ok_or_else(|| format!("{path}: нет версии навыка"))?,
+        )
+    }
+    fn signature(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
+        let (mut data, body) = self.skill_at(rev, path)?;
         data["metadata"]
             .as_mapping_mut()
             .unwrap()
             .remove(serde_yaml::Value::String("version".into()));
-        Ok((data, body))
+        Ok((data, body.trim_matches('\n').to_owned()))
     }
-    fn changed(&self, base: &str) -> Result<Vec<String>> {
+    fn changed_skills(
+        &self,
+        base: &str,
+        head: &str,
+        release_level: Option<u8>,
+    ) -> Result<Vec<String>> {
         let old = self.tree(base)?;
-        let new = self.tree("HEAD")?;
-        let names: BTreeSet<_> = new
+        let new = self.tree(head)?;
+        let names: BTreeSet<_> = old
             .keys()
-            .filter(|p| rx(r"\Askills/[^/]+/SKILL\.md\z").is_match(p))
-            .map(|p| p.split('/').nth(1).unwrap().to_owned())
+            .chain(new.keys())
+            .filter_map(|p| p.strip_prefix("skills/")?.strip_suffix("/SKILL.md"))
+            .filter(|name| !name.contains('/'))
             .collect();
         let mut changed = Vec::new();
         for name in names {
@@ -246,8 +279,11 @@ impl Release<'_> {
                 old.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
             let after: BTreeMap<_, _> =
                 new.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
-            let mut different =
-                before.keys().collect::<Vec<_>>() != after.keys().collect::<Vec<_>>();
+            if before == after {
+                continue;
+            }
+            let entry = format!("{prefix}SKILL.md");
+            let mut different = before.keys().ne(after.keys());
             if !different {
                 for (path, metadata) in &after {
                     let previous = before[path];
@@ -260,7 +296,7 @@ impl Release<'_> {
                         .take(2)
                         .eq(metadata.split_whitespace().take(2))
                         && versioned
-                        && self.signature(base, path)? == self.signature("HEAD", path)?
+                        && self.signature(base, path)? == self.signature(head, path)?
                     {
                         continue;
                     }
@@ -268,8 +304,34 @@ impl Release<'_> {
                     break;
                 }
             }
+            if let Some(level) = release_level {
+                let before = old
+                    .contains_key(&entry)
+                    .then(|| self.skill_version(base, &entry))
+                    .transpose()?;
+                let after = new
+                    .contains_key(&entry)
+                    .then(|| self.skill_version(head, &entry))
+                    .transpose()?;
+                match (before, after) {
+                    (None, Some(next)) if next != [1, 0, 0] => {
+                        return Err(format!("{name}: начальная версия навыка должна быть 1.0.0"));
+                    }
+                    (Some(previous), Some(next))
+                        if next < previous || (different && next == previous) =>
+                    {
+                        return Err(format!(
+                            "{name}: требуется повышение версии изменённого навыка"
+                        ));
+                    }
+                    _ => {}
+                }
+                if level == 0 && (different || before != after) {
+                    return Err(format!("{name}: изменение навыка требует выпуска пакета"));
+                }
+            }
             if different {
-                changed.push(name);
+                changed.push(name.to_owned());
             }
         }
         Ok(changed)
@@ -307,41 +369,145 @@ impl Release<'_> {
                     .map_err(|e| e.to_string())?;
             (base, data["version"].as_str().ok_or("Нет версии")?.into())
         };
-        let level = self.change_level_since(&base, "HEAD")?;
         let current = check_versions(self.root)?;
-        let mut candidates = (0..=level)
-            .map(|l| increment(&number, l))
-            .collect::<Result<Vec<_>>>()?;
-        let mut proposed = increment(&number, level)?;
-        let head = self.cmd(&["git", "rev-parse", "HEAD"])?;
-        if level > 0 {
-            loop {
-                let tag = format!("v{proposed}");
-                let Some(record) = records.iter().find(|r| r["tag_name"] == tag) else {
-                    break;
-                };
-                match self.draft_source(record)? {
-                    Some(source) if source != head => {
-                        proposed = increment(&proposed, 1)?;
-                        candidates.push(proposed.clone());
-                    }
-                    Some(_) => break,
-                    None => return Err(format!("Версия {tag} занята неподтверждённым релизом")),
-                }
-            }
-        }
-        if !candidates.contains(&current)
-            && (level < 2
-                || !self
-                    .prepared_at_lower_level(&base, &number, &current, level, &head, &records)?)
-        {
+        let published = version(&number)?;
+        let reserved = version(&current)?;
+        if reserved < published {
             return Err(format!(
-                "Версия {current} не соответствует опубликованной или ожидающей версии"
+                "Версия {current} предшествует опубликованной {number}"
             ));
         }
+        self.check_runtime_id("HEAD")?;
+        let history = self.cmd(&[
+            "git",
+            "log",
+            "--first-parent",
+            "--reverse",
+            "--format=%H",
+            &format!("{base}..HEAD"),
+            "--",
+            MANIFEST,
+        ])?;
+        let mut reservations = Vec::new();
+        let mut previous = number.clone();
+        for commit in history.lines() {
+            let data = self.manifest_at(commit)?;
+            let next = data["version"].as_str().ok_or("Нет версии")?;
+            if next == previous {
+                continue;
+            }
+            reservations.push((commit, next.to_owned()));
+            previous = next.to_owned();
+        }
+        let mut parent = base.as_str();
+        let mut previous = number.as_str();
+        for pair in reservations.windows(2) {
+            let (commit, next) = &pair[0];
+            self.check_reservation(parent, commit, previous, next)?;
+            parent = commit;
+            previous = next;
+        }
+        self.check_reservation(parent, "HEAD", previous, &current)?;
+        let tag = format!("v{current}");
+        for record in records
+            .iter()
+            .filter(|record| record["draft"] == true && record["tag_name"] == tag)
+        {
+            self.draft_target(record, "HEAD", &current)?;
+        }
+        let level = match (published, reserved) {
+            ([a, _, _], [b, _, _]) if a != b => 3,
+            ([_, a, _], [_, b, _]) if a != b => 2,
+            ([_, _, a], [_, _, b]) if a != b => 1,
+            _ => 0,
+        };
         Ok(
-            json!({"version":proposed,"level":level,"base":base,"skills":self.changed(&base)?,"records":records}),
+            json!({"version":current,"level":level,"base":base,"skills":self.changed_skills(&base, "HEAD", None)?,"records":records}),
         )
+    }
+    fn check_reservation(
+        &self,
+        base: &str,
+        head: &str,
+        previous: &str,
+        reserved: &str,
+    ) -> Result<()> {
+        let level = self.release_level(base, head, "")?;
+        let expected = self.version_for_tree(base, head, previous, level)?;
+        if reserved != expected {
+            return Err(format!(
+                "Манифест {head}: ожидается {expected}, получено {reserved}"
+            ));
+        }
+        Ok(())
+    }
+    fn release_level(&self, base: &str, head: &str, title: &str) -> Result<u8> {
+        let commits_level = self.change_level_since(base, head)?;
+        let level = if title.is_empty() {
+            commits_level
+        } else {
+            change_level(title)
+        };
+        if !title.is_empty() && commits_level != level {
+            return Err("Заголовок PR и коммиты ветки должны задавать одинаковый уровень Conventional Commits".into());
+        }
+        Ok(level)
+    }
+    fn version_for_tree(
+        &self,
+        base: &str,
+        head: &str,
+        previous: &str,
+        level: u8,
+    ) -> Result<String> {
+        if level == 0 && !self.same_build_inputs(base, head)? {
+            return Err(
+                "Изменение runtime, хуков или сборки требует fix:, feat: или breaking change"
+                    .into(),
+            );
+        }
+        self.changed_skills(base, head, Some(level))?;
+        increment(previous, level)
+    }
+    fn prepare_manifest(&self, base: &str, title: &str, write: bool) -> Result<String> {
+        let base = self.cmd(&[
+            "git",
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{base}^{{commit}}"),
+        ])?;
+        self.cmd(&["git", "merge-base", "--is-ancestor", &base, "HEAD"])?;
+        let parent = self.manifest_at(&base)?;
+        let inputs = if write {
+            self.cmd(&["git", "write-tree"])?
+        } else {
+            "HEAD".into()
+        };
+        let level = self.release_level(&base, "HEAD", title)?;
+        let expected = self.version_for_tree(
+            &base,
+            &inputs,
+            parent["version"].as_str().ok_or("Нет версии")?,
+            level,
+        )?;
+        if write {
+            let runtime_id = self.runtime_id(&inputs)?;
+            fs::write(self.root.join(PACKAGE_VERSION), format!("{expected}\n"))
+                .map_err(|e| e.to_string())?;
+            fs::write(self.root.join(RUNTIME_ID), format!("{runtime_id}\n"))
+                .map_err(|e| e.to_string())?;
+        } else {
+            self.check_runtime_id("HEAD")?;
+            check_package_version(self.root, &expected)?;
+        }
+        if let Some(bytes) = self.version_contents(&expected)? {
+            if !write {
+                return Err(format!("В PR требуется версия {expected}; выполните release prepare для его базы и заголовка"));
+            }
+            fs::write(self.root.join(MANIFEST), bytes).map_err(|e| e.to_string())?;
+        }
+        Ok(expected)
     }
     fn change_level_since(&self, base: &str, head: &str) -> Result<u8> {
         Ok(change_level(&self.cmd(&[
@@ -354,142 +520,6 @@ impl Release<'_> {
     fn manifest_at(&self, revision: &str) -> Result<Value> {
         serde_json::from_slice(&self.bytes(&["git", "show", &format!("{revision}:{MANIFEST}")])?)
             .map_err(|e| e.to_string())
-    }
-    fn last_version_change(
-        &self,
-        base: &str,
-        head: &str,
-        current: &str,
-    ) -> Result<Option<(String, String, Value)>> {
-        if self.manifest_at(head)?["version"] != current {
-            return Ok(None);
-        }
-        let commits = self.cmd(&[
-            "git",
-            "log",
-            "--first-parent",
-            "--format=%H",
-            &format!("{base}..{head}"),
-            "--",
-            MANIFEST,
-        ])?;
-        for commit in commits.lines() {
-            let line = self.cmd(&["git", "rev-list", "--parents", "-n", "1", commit])?;
-            let mut parents = line.split_whitespace().skip(1);
-            let Some(parent) = parents.next() else {
-                return Ok(None);
-            };
-            let previous = self.manifest_at(parent)?;
-            if previous["version"] != current {
-                return Ok(parents
-                    .next()
-                    .is_none()
-                    .then(|| (commit.into(), parent.into(), previous)));
-            }
-        }
-        Ok(None)
-    }
-    fn prepared_at_lower_level(
-        &self,
-        base: &str,
-        published: &str,
-        current: &str,
-        current_level: u8,
-        head: &str,
-        records: &[Value],
-    ) -> Result<bool> {
-        let Some((commit, parent, previous)) = self.last_version_change(base, head, current)?
-        else {
-            return Ok(false);
-        };
-        let previous_number = previous["version"].as_str().ok_or("Нет версии")?.to_owned();
-        if self.cmd(&["git", "log", "-1", "--format=%s", &commit])?
-            != format!("chore(release): v{current}")
-            || !self.release_commit_matches(
-                &parent,
-                &commit,
-                updated_manifest(previous, current)?,
-            )?
-        {
-            return Ok(false);
-        }
-        self.cmd(&["git", "merge-base", "--is-ancestor", base, &parent])?;
-        let level = self.change_level_since(base, &parent)?;
-        if level == 0 || level >= current_level {
-            return Ok(false);
-        }
-        let [major, minor, patch] = version(current)?;
-        let [start_major, start_minor, start_patch] = version(&increment(published, level)?)?;
-        if [major, minor] != [start_major, start_minor] || patch <= start_patch {
-            return Ok(false);
-        }
-        for reserved_patch in start_patch..patch {
-            let tag = format!("v{major}.{minor}.{reserved_patch}");
-            let Some(record) = records.iter().find(|r| r["tag_name"] == tag) else {
-                return Ok(false);
-            };
-            let Some(source) = self.draft_source(record)? else {
-                return Ok(false);
-            };
-            if source == parent {
-                return Ok(false);
-            }
-            self.cmd(&["git", "merge-base", "--is-ancestor", &source, &parent])?;
-        }
-        let [previous_major, previous_minor, previous_patch] = version(&previous_number)?;
-        let previous_in_series = [major, minor] == [previous_major, previous_minor]
-            && (start_patch..patch).contains(&previous_patch);
-        let previous_candidates = (0..level)
-            .map(|bump| increment(published, bump))
-            .collect::<Result<Vec<_>>>()?;
-        if !previous_in_series
-            && !previous_candidates.contains(&previous_number)
-            && (level < 2
-                || !self.prepared_at_lower_level(
-                    base,
-                    published,
-                    &previous_number,
-                    level,
-                    &parent,
-                    records,
-                )?)
-        {
-            return Ok(false);
-        }
-        let tag = format!("v{current}");
-        match records.iter().find(|r| r["tag_name"] == tag) {
-            Some(record) => Ok(self.draft_source(record)?.is_some()),
-            None => Ok(true),
-        }
-    }
-    fn draft_source(&self, record: &Value) -> Result<Option<String>> {
-        if record["draft"] != true || record["author"]["login"] != "github-actions[bot]" {
-            return Ok(None);
-        }
-        let marker = rx(r"(?m)^<!-- release-source:([a-f0-9]{40}) -->$");
-        let body = record["body"].as_str().unwrap_or("");
-        let captures: Vec<_> = marker.captures_iter(body).collect();
-        if captures.is_empty() {
-            return Ok(None);
-        }
-        if captures.len() != 1 {
-            return Err("Неоднозначная исходная ревизия черновика".into());
-        }
-        let sha = &captures[0][1];
-        let tag = record["tag_name"].as_str().ok_or("Нет тега")?;
-        let number = tag.strip_prefix('v').ok_or("Некорректный тег черновика")?;
-        version(number)?;
-        self.cmd(&["git", "merge-base", "--is-ancestor", sha, "HEAD"])?;
-        let saved = self.manifest_at(sha)?;
-        if saved["version"] != number {
-            return Err("Версия черновика не совпадает с манифестом его коммита".into());
-        }
-        if !self.cmd(&["git", "tag", "--list", tag])?.is_empty()
-            && self.cmd(&["git", "rev-parse", &format!("{tag}^{{commit}}")])? != sha
-        {
-            return Err(format!("Тег {tag} указывает на другую ревизию"));
-        }
-        Ok(Some(sha.into()))
     }
     fn version_contents(&self, number: &str) -> Result<Option<Vec<u8>>> {
         updated_manifest(manifest(self.root)?, number)
@@ -532,34 +562,7 @@ impl Release<'_> {
                 return Err("Некорректный source_sha артефакта".into());
             }
             if source != sha {
-                let parents = self.cmd(&["git", "rev-list", "--parents", "-n", "1", sha])?;
-                if parents.split_whitespace().skip(1).collect::<Vec<_>>() != vec![source]
-                    || self.cmd(&["git", "diff", "--name-only", source, sha])? != MANIFEST
-                    || !self
-                        .cmd(&["git", "diff", "--summary", source, sha])?
-                        .is_empty()
-                {
-                    return Err(
-                        "Исходная ревизия бинарного артефакта не совпадает с релизом".into(),
-                    );
-                }
-                let mut before: Value = serde_json::from_slice(&self.bytes(&[
-                    "git",
-                    "show",
-                    &format!("{source}:{MANIFEST}"),
-                ])?)
-                .map_err(|e| e.to_string())?;
-                let after_bytes = self.bytes(&["git", "show", &format!("{sha}:{MANIFEST}")])?;
-                let after: Value =
-                    serde_json::from_slice(&after_bytes).map_err(|e| e.to_string())?;
-                version(after["version"].as_str().ok_or("Нет версии артефакта")?)?;
-                before["version"] = after["version"].clone();
-                if (serde_json::to_string_pretty(&before).map_err(|e| e.to_string())? + "\n")
-                    .as_bytes()
-                    != after_bytes
-                {
-                    return Err("Коммит релиза изменяет не только версию манифеста".into());
-                }
+                return Err("Исходная ревизия бинарного артефакта не совпадает с релизом".into());
             }
             let binary = binary_name(target);
             if data["binary"] != binary {
@@ -597,6 +600,7 @@ impl Release<'_> {
         if !rx(r"\A[a-zA-Z0-9_-]+\z").is_match(name) {
             return Err("Некорректное имя пакета".into());
         }
+        let runtime_id = self.check_runtime_id(sha)?;
         let mut outputs = Vec::new();
         for (target, bytes) in artifacts {
             let output = self
@@ -630,173 +634,73 @@ impl Release<'_> {
                 .map_err(|e| e.to_string())?;
             archive.write_all(bytes).map_err(|e| e.to_string())?;
             archive.finish().map_err(|e| e.to_string())?;
-            let checksum = output.with_extension("zip.sha256");
-            let hash = format!(
-                "{:x}",
-                Sha256::digest(fs::read(&output).map_err(|e| e.to_string())?)
-            );
-            fs::write(
-                &checksum,
-                format!(
-                    "{hash}  {}\n",
-                    output.file_name().unwrap().to_string_lossy()
-                ),
-            )
-            .map_err(|e| e.to_string())?;
-            outputs.extend([output, checksum]);
+            let binary = output.with_file_name(format!(
+                "{name}-{number}-{runtime_id}-{target}{}",
+                if target.contains("windows") {
+                    ".exe"
+                } else {
+                    ""
+                }
+            ));
+            fs::write(&binary, bytes).map_err(|e| e.to_string())?;
+            outputs.push(write_checksum(&binary, bytes)?);
+            outputs.push(binary);
+            let archive_bytes = fs::read(&output).map_err(|e| e.to_string())?;
+            outputs.push(write_checksum(&output, &archive_bytes)?);
+            outputs.push(output);
         }
         Ok(outputs)
     }
-    fn marketplace_tree(&self, source_tree: &[u8], target: &str, binary: &[u8]) -> Result<String> {
-        let blob = self.command(&["git", "hash-object", "-w", "--stdin"], Some(binary))?;
-        let entry = format!("100755 blob {blob}\t{}\0", binary_name(target));
-        let bin = self.command(&["git", "mktree", "-z"], Some(entry.as_bytes()))?;
-        let mut root = source_tree.to_vec();
-        root.extend(format!("040000 tree {bin}\tbin\0").as_bytes());
-        self.command(&["git", "mktree", "-z"], Some(&root))
-    }
-    fn marketplace_heads(&self, sha: &str) -> Result<Option<Marketplace>> {
-        let main = "refs/heads/main";
-        let mut query = vec!["git", "ls-remote", "--refs", "origin", main];
-        let branches = TARGETS.map(marketplace_branch);
-        query.extend(branches.iter().map(String::as_str));
-        let remote = self.cmd(&query)?;
-        let mut refs: BTreeMap<_, _> = remote
-            .lines()
-            .map(|line| {
-                let (oid, name) = line.split_once('\t').ok_or("Некорректный ref Git")?;
-                Ok((name, oid))
-            })
-            .collect::<Result<_>>()?;
-        if refs.remove(main) != Some(sha) {
-            return Err("main изменился перед публикацией marketplace".into());
-        }
-        if refs.is_empty() {
-            return Ok(None);
-        }
-        if branches
-            .iter()
-            .any(|branch| !refs.contains_key(branch.as_str()))
+    fn draft_target(&self, record: &Value, head: &str, number: &str) -> Result<String> {
+        let body = record["body"].as_str().unwrap_or("");
+        let marker = rx(r"(?m)^<!-- release-source:([a-f0-9]{40}) -->$");
+        let mut matches = marker.captures_iter(body);
+        let target = matches.next().ok_or("Нет ревизии черновика")?[1].to_owned();
+        if matches.next().is_some()
+            || record["author"]["login"] != "github-actions[bot]"
+            || record["draft"] != true
         {
-            return Err("Неполный набор веток marketplace".into());
+            return Err("Черновик не принадлежит этому выпуску".into());
         }
-        let mut fetch = vec!["git", "fetch", "--no-tags", "origin"];
-        fetch.extend(refs.values().copied());
-        self.cmd(&fetch)?;
-        let marker = rx(r"\Arelease-source: ([a-f0-9]{40})\z");
-        let mut source = None;
-        let mut tips = BTreeMap::new();
-        for (target, branch) in TARGETS.into_iter().zip(branches) {
-            let tip = refs[branch.as_str()];
-            let body = self.cmd(&["git", "log", "-1", "--format=%b", tip])?;
-            let captured = marker
-                .captures(&body)
-                .ok_or_else(|| format!("Ветка {branch} не содержит ревизию выпуска"))?;
-            if source
-                .as_deref()
-                .is_some_and(|previous| previous != &captured[1])
-            {
-                return Err("Ветки marketplace относятся к разным релизам".into());
-            }
-            source = Some(captured[1].to_owned());
-            tips.insert(target, tip.to_owned());
-        }
-        Ok(Some(Marketplace {
-            source: source.ok_or("Нет ревизии marketplace")?,
-            tips,
-        }))
-    }
-    fn marketplace_source_tree(&self, sha: &str) -> Result<Vec<u8>> {
-        let source_tree = self.bytes(&["git", "ls-tree", "-z", sha])?;
-        if source_tree
-            .split(|byte| *byte == 0)
-            .any(|entry| entry.ends_with(b"\tbin"))
+        self.cmd(&["git", "merge-base", "--is-ancestor", &target, head])?;
+        if self.manifest_at(&target)?["version"] != number
+            || !self.same_build_inputs(&target, head)?
+            || !self.changed_skills(&target, head, None)?.is_empty()
         {
-            return Err("Дерево релиза уже содержит bin".into());
+            return Err("Исходники черновика отличаются от проверенного выпуска".into());
         }
-        Ok(source_tree)
+        Ok(target)
     }
-    fn marketplace_artifacts(&self, heads: &Marketplace) -> Result<Vec<(String, Vec<u8>)>> {
-        let source_tree = self.marketplace_source_tree(&heads.source)?;
-        heads
-            .tips
-            .iter()
-            .map(|(&target, tip)| {
-                let path = format!("{tip}:bin/{}", binary_name(target));
-                let binary = self.bytes(&["git", "cat-file", "blob", &path])?;
-                if binary.is_empty()
-                    || self.cmd(&["git", "rev-parse", &format!("{tip}^{{tree}}")])?
-                        != self.marketplace_tree(&source_tree, target, &binary)?
-                {
-                    return Err(format!(
-                        "Снимок {} не совпадает с исходным деревом релиза",
-                        marketplace_branch(target)
-                    ));
-                }
-                Ok((target.to_owned(), binary))
-            })
-            .collect()
-    }
-    fn publish_marketplace(
-        &self,
-        number: &str,
-        sha: &str,
-        artifacts: &[(String, Vec<u8>)],
-        heads: Option<&Marketplace>,
-    ) -> Result<()> {
-        let mut push = vec![
-            "git",
-            "-c",
-            "push.followTags=false",
-            "push",
-            "--atomic",
-            "origin",
-        ];
-        let mut refspecs = Vec::new();
-        if let Some(heads) = heads {
-            self.cmd(&["git", "merge-base", "--is-ancestor", &heads.source, sha])?;
-            let previous: Value = serde_json::from_slice(&self.bytes(&[
-                "git",
-                "show",
-                &format!("{}:{MANIFEST}", heads.source),
-            ])?)
-            .map_err(|e| e.to_string())?;
-            if version(
-                previous["version"]
-                    .as_str()
-                    .ok_or("Нет версии marketplace")?,
-            )? >= version(number)?
-            {
-                return Err("Ветки marketplace уже содержат этот или более новый выпуск".into());
+    fn runtime_id(&self, revision: &str) -> Result<String> {
+        let mut args = vec!["git", "ls-tree", "-r", "-z", revision, "--"];
+        args.extend_from_slice(BUILD_INPUTS);
+        let tree = self.bytes(&args)?;
+        let mut hash = Sha256::new();
+        for entry in tree.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+            let path = entry
+                .splitn(2, |b| *b == b'\t')
+                .nth(1)
+                .ok_or("Некорректная запись git ls-tree")?;
+            if path != RUNTIME_ID.as_bytes() && path != PACKAGE_VERSION.as_bytes() {
+                hash.update(entry);
+                hash.update([0]);
             }
         }
-        let source_tree = self.marketplace_source_tree(sha)?;
-        for (target, binary) in artifacts {
-            let tree = self.marketplace_tree(&source_tree, target, binary)?;
-            let message =
-                format!("chore(marketplace): v{number} {target}\n\nrelease-source: {sha}");
-            let mut commit = vec![
-                "git",
-                "-c",
-                "user.name=github-actions[bot]",
-                "-c",
-                "user.email=41898282+github-actions[bot]@users.noreply.github.com",
-                "commit-tree",
-                "--no-gpg-sign",
-                &tree,
-                "-m",
-                &message,
-            ];
-            if let Some(heads) = heads {
-                commit.extend(["-p", &heads.tips[target.as_str()]]);
-            }
-            let snapshot = self.cmd(&commit)?;
-            refspecs.push(format!("{snapshot}:{}", marketplace_branch(target)));
+        Ok(format!("{:x}", hash.finalize()))
+    }
+    fn check_runtime_id(&self, revision: &str) -> Result<String> {
+        let runtime_id = self.runtime_id(revision)?;
+        let path = format!("{revision}:{RUNTIME_ID}");
+        let declared = self.bytes(&["git", "show", &path])?;
+        if declared != format!("{runtime_id}\n").as_bytes() {
+            return Err(format!(
+                "{RUNTIME_ID} не соответствует исходникам {revision}; выполните release prepare"
+            ));
         }
-        push.extend(refspecs.iter().map(String::as_str));
-        self.check_live_main(sha)?;
-        self.cmd(&push)?;
-        Ok(())
+        Ok(runtime_id)
+    }
+    fn same_build_inputs(&self, base: &str, head: &str) -> Result<bool> {
+        Ok(self.runtime_id(base)? == self.runtime_id(head)?)
     }
     fn finish(
         &self,
@@ -804,36 +708,26 @@ impl Release<'_> {
         number: &str,
         records: &[Value],
         base: &str,
-        sha: &str,
+        head: &str,
     ) -> Result<()> {
         version(number)?;
         let tag = format!("v{number}");
-        let marker = format!("<!-- release-source:{sha} -->");
         let existing = records.iter().find(|r| r["tag_name"] == tag);
+        if existing.is_some_and(|r| r["draft"] != true) {
+            return Err(format!("Релиз {tag} уже опубликован"));
+        }
+        let target = existing
+            .map(|r| self.draft_target(r, head, number))
+            .transpose()?;
+        let sha = target.as_deref().unwrap_or(head);
+        let marker = format!("<!-- release-source:{sha} -->");
         if !self.cmd(&["git", "tag", "--list", &tag])?.is_empty()
             && self.cmd(&["git", "rev-parse", &format!("{tag}^{{commit}}")])? != sha
         {
             return Err(format!("Тег {tag} указывает на другую ревизию"));
         }
-        if let Some(record) = existing {
-            if record["draft"] != true {
-                return Err(format!(
-                    "Релиз {tag} уже опубликован; проверьте его ревизию"
-                ));
-            }
-            if record["author"]["login"] != "github-actions[bot]"
-                || !record["body"].as_str().unwrap_or("").contains(&marker)
-            {
-                return Err(format!("Черновик {tag} не принадлежит этому выпуску"));
-            }
-        }
-        let validated = self.artifacts(sha)?;
-        let heads = self.marketplace_heads(sha)?;
-        let published = heads.as_ref().filter(|heads| heads.source == sha);
-        let artifacts = match published {
-            Some(heads) => self.marketplace_artifacts(heads)?,
-            None => validated,
-        };
+        self.check_live_main(head)?;
+        let artifacts = self.artifacts(head)?;
         let outputs = self.archive(number, sha, &artifacts)?;
         if existing.is_none() {
             let entries = self.cmd(&[
@@ -869,10 +763,7 @@ impl Release<'_> {
         upload.extend(output_names.iter().map(String::as_str));
         upload.extend(["--repo", repo, "--clobber"]);
         self.cmd(&upload)?;
-        if published.is_none() {
-            self.publish_marketplace(number, sha, &artifacts, heads.as_ref())?;
-        }
-        self.check_live_main(sha)?;
+        self.check_live_main(head)?;
         self.cmd(&[
             "gh",
             "release",
@@ -880,75 +771,14 @@ impl Release<'_> {
             &tag,
             "--repo",
             repo,
+            "--target",
+            sha,
             "--draft=false",
+            "--prerelease=false",
             "--latest",
         ])?;
         println!("{}", json!({"published":tag,"sha":sha}));
         Ok(())
-    }
-    fn recover(&self, repo: &str, expected: &str, candidate: &str) -> Result<()> {
-        let error="main изменился после начала проверки; дождитесь нового workflow или запустите workflow_dispatch для актуальной main";
-        if !rx(r"\A[a-f0-9]{40}\z").is_match(candidate) {
-            return Err(error.into());
-        }
-        self.cmd(&["git", "fetch", "--no-tags", "origin", candidate])?;
-        let parents = self.cmd(&["git", "rev-list", "--parents", "-n", "1", candidate])?;
-        if parents.split_whitespace().skip(1).collect::<Vec<_>>() != vec![expected] {
-            return Err(error.into());
-        }
-        let subject = self.cmd(&["git", "log", "-1", "--format=%s", candidate])?;
-        let pattern = rx(r"\Achore\(release\): (v[0-9]+\.[0-9]+\.[0-9]+)\z");
-        let captured = pattern.captures(&subject).ok_or(error)?;
-        let tag = &captured[1];
-        let records = self.records(repo)?;
-        if records.iter().filter(|r| r["tag_name"] == tag).any(|r| {
-            r["author"]["login"] != "github-actions[bot]"
-                || !r["body"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains(&format!("<!-- release-source:{candidate} -->"))
-        }) {
-            return Err(error.into());
-        }
-        let plan = self.plan(
-            records
-                .into_iter()
-                .filter(|r| r["tag_name"] != tag)
-                .collect(),
-        )?;
-        let number = plan["version"].as_str().ok_or(error)?;
-        if plan["level"] == 0 || subject != format!("chore(release): v{number}") {
-            return Err(error.into());
-        }
-        if !self.release_commit_matches(expected, candidate, self.version_contents(number)?)? {
-            return Err(error.into());
-        }
-        self.cmd(&["git", "checkout", "--detach", candidate])?;
-        Ok(())
-    }
-    fn release_commit_matches(
-        &self,
-        expected: &str,
-        candidate: &str,
-        contents: Option<Vec<u8>>,
-    ) -> Result<bool> {
-        let changed = self.cmd(&["git", "diff", "--name-only", expected, candidate])?;
-        if changed.lines().collect::<Vec<_>>()
-            != if contents.is_some() {
-                vec![MANIFEST]
-            } else {
-                vec![]
-            }
-            || !self
-                .cmd(&["git", "diff", "--summary", expected, candidate])?
-                .is_empty()
-        {
-            return Ok(false);
-        }
-        if let Some(bytes) = contents {
-            return Ok(self.bytes(&["git", "show", &format!("{candidate}:{MANIFEST}")])? == bytes);
-        }
-        Ok(true)
     }
     fn publish(&self, repo: &str, event: &BTreeMap<String, String>) -> Result<()> {
         if event.get("GITHUB_ACTIONS").map(String::as_str) != Some("true")
@@ -968,69 +798,20 @@ impl Release<'_> {
         if !self.cmd(&["git", "status", "--porcelain"])?.is_empty() {
             return Err("Рабочее дерево содержит изменения".into());
         }
-        let live = self.live_main()?;
-        self.artifacts(expected)?;
-        if live != expected {
-            self.recover(repo, expected, &live)?;
-        }
-        let head = self.cmd(&["git", "rev-parse", "HEAD"])?;
-        for record in self.records(repo)? {
-            let Some(sha) = self.draft_source(&record)? else {
-                continue;
-            };
-            let tag = record["tag_name"].as_str().ok_or("Нет тега")?;
-            if sha != head {
-                println!(
-                    "{}",
-                    json!({"status":"draft_preserved","tag":tag,"sha":sha,"message":"Старый черновик оставлен без изменений: текущие бинарные артефакты собраны из другой ревизии; его версия зарезервирована."})
-                );
-                continue;
-            }
-            let number = tag.strip_prefix('v').ok_or("Некорректный тег черновика")?;
-            self.finish(
-                repo,
-                number,
-                std::slice::from_ref(&record),
-                &format!("{sha}^"),
-                &sha,
-            )?;
-            self.cmd(&["git", "fetch", "origin", "tag", tag])?;
-        }
+        self.check_live_main(expected)?;
         let plan = self.plan(self.records(repo)?)?;
         if plan["level"] == 0 {
             println!("Нет изменений, требующих релиза.");
             return Ok(());
         }
-        let number = plan["version"].as_str().unwrap();
-        let changed = self.version_contents(number)?;
-        if let Some(content) = &changed {
-            fs::write(self.root.join(MANIFEST), content).map_err(|e| e.to_string())?;
-        }
         self.runner.check(self.root)?;
-        self.cmd(&["git", "config", "user.name", "github-actions[bot]"])?;
-        self.cmd(&[
-            "git",
-            "config",
-            "user.email",
-            "41898282+github-actions[bot]@users.noreply.github.com",
-        ])?;
-        if changed.is_some() {
-            self.cmd(&["git", "add", "--", MANIFEST])?;
-        }
-        if !self
-            .cmd(&["git", "diff", "--cached", "--name-only"])?
-            .is_empty()
-        {
-            self.cmd(&["git", "commit", "-m", &format!("chore(release): v{number}")])?;
-        }
-        self.cmd(&["git", "push", "origin", "HEAD:main"])?;
-        let sha = self.cmd(&["git", "rev-parse", "HEAD"])?;
+        let number = plan["version"].as_str().unwrap();
         self.finish(
             repo,
             number,
             plan["records"].as_array().unwrap(),
             plan["base"].as_str().unwrap(),
-            &sha,
+            expected,
         )
     }
 }
@@ -1040,9 +821,14 @@ const TARGETS: [&str; 4] = [
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
 ];
-fn marketplace_branch(target: &str) -> String {
-    format!("refs/heads/marketplace/{target}")
+fn write_checksum(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    let filename = path.file_name().unwrap().to_string_lossy();
+    let checksum = path.with_file_name(format!("{filename}.sha256"));
+    let hash = format!("{:x}", Sha256::digest(bytes));
+    fs::write(&checksum, format!("{hash}  {filename}\n")).map_err(|e| e.to_string())?;
+    Ok(checksum)
 }
+
 fn binary_name(target: &str) -> &str {
     if target.contains("windows") {
         "fstack.exe"
@@ -1112,12 +898,30 @@ pub fn run(args: &[OsString], package: &Path) -> Result<()> {
         println!("{}", check_versions(package)?);
         return Ok(());
     }
+    if matches!(action, "prepare" | "check-next") && matches!(args.len(), 2 | 3) {
+        let base = args[1].to_str().ok_or("Некорректная база PR")?;
+        let title = args
+            .get(2)
+            .map(|s| s.to_str().ok_or("Некорректный заголовок PR"))
+            .transpose()?
+            .unwrap_or("");
+        let release = Release {
+            root: package,
+            runner: &System,
+            artifacts: None,
+        };
+        println!(
+            "{}",
+            release.prepare_manifest(base, title, action == "prepare")?
+        );
+        return Ok(());
+    }
     let artifacts = if action == "publish" && args.len() == 3 && args[1] == "--artifacts" {
         Some(Path::new(&args[2]))
     } else if action == "plan" && args.len() == 1 {
         None
     } else {
-        return Err("Использование: fstack release check|plan|publish --artifacts DIR|artifact --target TARGET --binary PATH --output DIR".into());
+        return Err("Использование: fstack release check|prepare BASE [TITLE]|check-next BASE [TITLE]|plan|publish --artifacts DIR|artifact --target TARGET --binary PATH --output DIR".into());
     };
     let release = Release {
         root: package,
@@ -1183,10 +987,14 @@ mod tests {
                 return Err(format!("Сбой gh release {}", args[2]));
             }
             if self.publish_tag && args[1..3] == ["release", "edit"] {
-                System.run(root, &["git", "tag", args[3]], None)?;
+                let target = args[args.iter().position(|s| *s == "--target").unwrap() + 1];
+                assert!(args.contains(&"--prerelease=false"));
+                System.run(root, &["git", "tag", args[3], target], None)?;
                 System.run(root, &["git", "push", "origin", args[3]], None)?;
                 for record in self.records.borrow_mut().iter_mut() {
                     if record["tag_name"] == args[3] {
+                        record["target_commitish"] = json!(target);
+                        record["prerelease"] = json!(false);
                         record["draft"] = json!(false);
                     }
                 }
@@ -1230,6 +1038,7 @@ mod tests {
             MANIFEST,
             b"{\"name\": \"fstack\", \"version\": \"0.2.0\"}",
         );
+        save(&root, PACKAGE_VERSION, "0.2.0\n");
         save(&root, ".gitignore", b"dist/\n");
         for name in ["alpha", "beta"] {
             save(
@@ -1246,6 +1055,18 @@ mod tests {
         git(&root, &["config", "user.email", "fixture@example.invalid"]);
         git(&root, &["config", "commit.gpgsign", "false"]);
         commit(&root, "chore: baseline");
+        let release = Release {
+            root: &root,
+            runner: &System,
+            artifacts: None,
+        };
+        save(
+            &root,
+            RUNTIME_ID,
+            format!("{}\n", release.runtime_id("HEAD").unwrap()),
+        );
+        git(&root, &["add", RUNTIME_ID]);
+        git(&root, &["commit", "--amend", "--no-edit"]);
         git(&root, &["tag", "v0.2.0"]);
         (temp, root)
     }
@@ -1340,7 +1161,10 @@ mod tests {
         let updated = original.replace("version: 0.2.0", "version: \"9.0.0\" # spelling");
         fs::write(&path, &updated).unwrap();
         commit(&root, "chore: version only");
-        assert_eq!(release.changed("v0.2.0").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
+            Vec::<String>::new()
+        );
         save(&root, "skills/alpha/SKILL.en.md", &updated);
         assert_eq!(check_versions(&root).unwrap(), "0.2.0");
         save(&root, "skills/alpha/SKILL.en.md", &original);
@@ -1353,29 +1177,86 @@ mod tests {
             "skills/gamma/SKILL.md",
             b"---\nname: gamma\nmetadata:\n  version: 1.0.0\n---\nNew skill\n",
         );
+        let beta = root.join("skills/beta/SKILL.md");
+        fs::write(
+            &beta,
+            fs::read_to_string(&beta).unwrap().replace("0.2.0", "0.2.1"),
+        )
+        .unwrap();
         commit(&root, "feat: resources");
         assert_eq!(
-            release.changed("v0.2.0").unwrap(),
+            release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
             ["alpha", "beta", "gamma"]
         );
         fs::remove_file(root.join("skills/alpha/references/run.md")).unwrap();
         commit(&root, "refactor: undo resource");
-        assert_eq!(release.changed("v0.2.0").unwrap(), ["beta", "gamma"]);
-        let plan = release.plan(stub.records.borrow().clone()).unwrap();
-        assert_eq!(plan["version"], "0.3.0");
+        assert_eq!(
+            release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
+            ["beta", "gamma"]
+        );
         let skill_before = fs::read(&path).unwrap();
-        save(
-            &root,
-            MANIFEST,
-            release.version_contents("0.3.0").unwrap().unwrap(),
+        assert!(release.prepare_manifest("v0.2.0", "", false).is_err());
+        assert_eq!(
+            release.prepare_manifest("v0.2.0", "", true).unwrap(),
+            "0.3.0"
         );
         assert_eq!(fs::read(&path).unwrap(), skill_before);
         assert!(release.version_contents("0.3.0").unwrap().is_none());
-        commit(&root, "chore(release): v0.3.0");
         assert_eq!(
-            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            release.prepare_manifest("v0.2.0", "", false).unwrap(),
             "0.3.0"
         );
+    }
+    #[test]
+    fn skill_changes_require_both_a_skill_version_and_a_release() {
+        let (_temp, root) = fixture();
+        let stub = stub();
+        let release = Release {
+            root: &root,
+            runner: &stub,
+            artifacts: None,
+        };
+        let base = git(&root, &["rev-parse", "HEAD"]);
+        let path = root.join("skills/alpha/SKILL.md");
+        let original = fs::read_to_string(&path).unwrap();
+        let formatted = original
+            .replace("version: 0.2.0", "version: '0.2.0' # stable")
+            .replace("---\n# Original", "---\n\n# Original")
+            + "\n";
+        fs::write(&path, formatted).unwrap();
+        commit(&root, "docs: format skill metadata");
+        assert_eq!(release.prepare_manifest(&base, "", false).unwrap(), "0.2.0");
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["level"],
+            0
+        );
+        let changed = original.replace("# Original body alpha", "# Changed procedure");
+        fs::write(&path, &changed).unwrap();
+        commit(&root, "docs: clarify procedure");
+        assert!(release
+            .prepare_manifest(&base, "", false)
+            .unwrap_err()
+            .contains("повышение версии"));
+        assert!(release
+            .plan(stub.records.borrow().clone())
+            .unwrap_err()
+            .contains("повышение версии"));
+        fs::write(&path, changed.replace("0.2.0", "0.2.1")).unwrap();
+        git(&root, &["add", "skills"]);
+        assert!(release
+            .prepare_manifest(&base, "", true)
+            .unwrap_err()
+            .contains("выпуска пакета"));
+        commit(&root, "fix: correct procedure");
+        release.prepare_manifest(&base, "", true).unwrap();
+        commit(&root, "chore: prepare release");
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "0.2.1"
+        );
+        save(&root, PACKAGE_VERSION, "0.2.0\n");
+        assert!(check_versions(&root).is_err());
+        assert!(release.prepare_manifest(&base, "", false).is_err());
     }
     #[test]
     fn event_and_live_main_reject_unvalidated_commits() {
@@ -1409,11 +1290,10 @@ mod tests {
     fn draft_ownership_tag_identity_and_archive_checksum() {
         let (_temp, root) = fixture();
         let stub = stub();
-        let artifacts = artifacts(&root, &git(&root, &["rev-parse", "HEAD"]));
         let release = Release {
             root: &root,
             runner: &stub,
-            artifacts: Some(&artifacts),
+            artifacts: None,
         };
         save(
             &root,
@@ -1422,6 +1302,11 @@ mod tests {
         );
         commit(&root, "chore(release): v0.2.1");
         let sha = git(&root, &["rev-parse", "HEAD"]);
+        let artifacts = artifacts(&root, &sha);
+        let release = Release {
+            artifacts: Some(&artifacts),
+            ..release
+        };
         origin(&root);
         let mut record = json!({"tag_name":"v0.2.1","draft":true,"body":format!("<!-- release-source:{sha} -->"),"author":{"login":"human"}});
         assert!(release
@@ -1470,87 +1355,65 @@ mod tests {
         assert!(stub.calls.borrow().is_empty());
     }
     #[test]
-    fn rerun_recovers_only_exact_version_commit_without_double_publication() {
-        for tampered in [false, true] {
-            let (_temp, root) = fixture();
-            let mut stub = stub();
-            stub.publish_tag = true;
-            save(&root, "skills/alpha/reference.md", "Validated instruction");
-            commit(&root, "fix: validated change");
-            let source = git(&root, &["rev-parse", "HEAD"]);
-            let artifacts = artifacts(&root, &source);
-            let release = Release {
-                root: &root,
-                runner: &stub,
-                artifacts: Some(&artifacts),
-            };
-            save(
-                &root,
-                MANIFEST,
-                release.version_contents("0.2.1").unwrap().unwrap(),
-            );
-            if tampered {
-                save(&root, "skills/alpha/unvalidated.md", "Unvalidated");
-            }
-            commit(&root, "chore(release): v0.2.1");
-            let candidate = git(&root, &["rev-parse", "HEAD"]);
-            origin(&root);
-            git(&root, &["checkout", "--detach", &source]);
-            stub.records.borrow_mut().push(json!({"tag_name":"v0.2.1","draft":true,"prerelease":false,"author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{candidate} -->")}));
-            if tampered {
-                assert!(release
-                    .publish("fixture/fstack", &event(&source))
-                    .unwrap_err()
-                    .contains("main изменился"));
-                assert_eq!(git(&root, &["rev-parse", "HEAD"]), source);
-                assert!(stub.calls.borrow().is_empty());
-                assert!(!root.join("dist").exists());
-            } else {
-                stub.fail_release_action.set(Some("edit"));
-                assert!(release.publish("fixture/fstack", &event(&source)).is_err());
-                let published = remote_marketplace(&root);
-                assert_eq!(published.lines().count(), TARGETS.len());
-                let archive = root.join("dist/fstack-0.2.1-x86_64-unknown-linux-gnu.zip");
-                let checksum = fs::read(archive.with_extension("zip.sha256")).unwrap();
-                stub.calls.borrow_mut().clear();
-                stub.fail_release_action.set(None);
-                git(&root, &["checkout", "--detach", &source]);
-                let binary = root.parent().unwrap().join("rebuilt-binary");
-                fs::write(&binary, b"Different rebuild bytes from the same source").unwrap();
-                artifact(
-                    &[
-                        "--target".into(),
-                        TARGETS[0].into(),
-                        "--binary".into(),
-                        binary.into_os_string(),
-                        "--output".into(),
-                        artifacts.as_os_str().to_owned(),
-                    ],
-                    &root,
-                )
-                .unwrap();
-                release.publish("fixture/fstack", &event(&source)).unwrap();
-                assert_eq!(git(&root, &["rev-parse", "HEAD"]), candidate);
-                assert_eq!(
-                    stub.calls
-                        .borrow()
-                        .iter()
-                        .map(|v| v[2].as_str())
-                        .collect::<Vec<_>>(),
-                    ["upload", "edit"]
-                );
-                assert_eq!(remote_marketplace(&root), published);
-                assert_eq!(
-                    fs::read(archive.with_extension("zip.sha256")).unwrap(),
-                    checksum
-                );
-                stub.calls.borrow_mut().clear();
-                git(&root, &["checkout", "--detach", &source]);
-                release.publish("fixture/fstack", &event(&source)).unwrap();
-                assert!(stub.calls.borrow().is_empty());
-                assert_eq!(remote_marketplace(&root), published);
-            }
-        }
+    fn retry_resumes_owned_draft_even_after_docs_only_push() {
+        let (_temp, root) = fixture();
+        let mut stub = stub();
+        stub.publish_tag = true;
+        save(&root, "tools/fstack/src/runtime.rs", b"runtime one");
+        save(
+            &root,
+            MANIFEST,
+            updated_manifest(manifest(&root).unwrap(), "0.2.1")
+                .unwrap()
+                .unwrap(),
+        );
+        save(&root, PACKAGE_VERSION, "0.2.1\n");
+        commit(&root, "fix: revise runtime");
+        let pins = Release {
+            root: &root,
+            runner: &stub,
+            artifacts: None,
+        };
+        save(
+            &root,
+            RUNTIME_ID,
+            format!("{}\n", pins.runtime_id("HEAD").unwrap()),
+        );
+        git(&root, &["add", RUNTIME_ID]);
+        git(&root, &["commit", "--amend", "--no-edit"]);
+        let source = git(&root, &["rev-parse", "HEAD"]);
+        let record = json!({"tag_name":"v0.2.1","draft":true,"prerelease":true,"target_commitish":"main",
+            "author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{source} -->")});
+        stub.records.borrow_mut().push(record);
+        save(&root, "guide.md", b"clarification");
+        commit(&root, "docs: clarify setup");
+        let head = git(&root, &["rev-parse", "HEAD"]);
+        origin(&root);
+        let artifacts = artifacts(&root, &head);
+        let release = Release {
+            root: &root,
+            runner: &stub,
+            artifacts: Some(&artifacts),
+        };
+        stub.fail_release_action.set(Some("edit"));
+        assert!(release.publish("fixture/fstack", &event(&head)).is_err());
+        stub.calls.borrow_mut().clear();
+        stub.fail_release_action.set(None);
+        release.publish("fixture/fstack", &event(&head)).unwrap();
+        assert_eq!(
+            stub.calls
+                .borrow()
+                .iter()
+                .map(|v| v[2].as_str())
+                .collect::<Vec<_>>(),
+            ["upload", "edit"]
+        );
+        assert_eq!(git(&root, &["rev-parse", "v0.2.1"]), source);
+        assert_eq!(stub.records.borrow()[1]["target_commitish"], source);
+        assert_eq!(stub.records.borrow()[1]["prerelease"], false);
+        stub.calls.borrow_mut().clear();
+        release.publish("fixture/fstack", &event(&head)).unwrap();
+        assert!(stub.calls.borrow().is_empty());
     }
     #[test]
     fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
@@ -1561,6 +1424,22 @@ mod tests {
             "skills/alpha/reference.md",
             b"Independent skill resource\n",
         );
+        save(
+            &root,
+            MANIFEST,
+            updated_manifest(manifest(&root).unwrap(), "0.3.0")
+                .unwrap()
+                .unwrap(),
+        );
+        let alpha = root.join("skills/alpha/SKILL.md");
+        fs::write(
+            &alpha,
+            fs::read_to_string(&alpha)
+                .unwrap()
+                .replace("0.2.0", "0.2.1"),
+        )
+        .unwrap();
+        save(&root, PACKAGE_VERSION, "0.3.0\n");
         commit(&root, "feat: validated behavior");
         let sha = git(&root, &["rev-parse", "HEAD"]);
         origin(&root);
@@ -1597,18 +1476,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["create", "upload", "edit"]
         );
-        assert_eq!(git(&root, &["diff", "--name-only", &sha, "HEAD"]), MANIFEST);
+        assert_eq!(git(&root, &["rev-parse", "HEAD"]), sha);
         assert_eq!(check_versions(&root).unwrap(), "0.3.0");
         for target in TARGETS {
-            let branch = format!("refs/heads/marketplace/{target}");
-            git(&root, &["fetch", "--no-tags", "origin", &branch]);
             let binary = format!("bin/{}", binary_name(target));
-            assert_eq!(
-                git(&root, &["diff", "--name-only", "HEAD", "FETCH_HEAD"]),
-                binary
-            );
-            assert!(git(&root, &["ls-tree", "-r", "FETCH_HEAD", "--", &binary])
-                .starts_with("100755 blob "));
             let path = root.join(format!("dist/fstack-0.3.0-{target}.zip"));
             let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
             let mut bytes = Vec::new();
@@ -1632,13 +1503,30 @@ mod tests {
                 .unwrap()
                 .read_to_end(&mut binary_bytes)
                 .unwrap();
+            let runtime_id = release.check_runtime_id(&sha).unwrap();
+            let asset = root.join(format!(
+                "dist/fstack-0.3.0-{runtime_id}-{target}{}",
+                if target.contains("windows") {
+                    ".exe"
+                } else {
+                    ""
+                }
+            ));
+            assert_eq!(fs::read(&asset).unwrap(), binary_bytes);
             assert_eq!(
-                release
-                    .bytes(&["git", "show", &format!("FETCH_HEAD:{binary}")])
-                    .unwrap(),
-                binary_bytes
+                fs::read_to_string(asset.with_file_name(format!(
+                    "{}.sha256",
+                    asset.file_name().unwrap().to_string_lossy()
+                )))
+                .unwrap(),
+                format!(
+                    "{:x}  {}\n",
+                    Sha256::digest(&binary_bytes),
+                    asset.file_name().unwrap().to_string_lossy()
+                )
             );
         }
+        assert!(remote_marketplace(&root).is_empty());
         let head = git(&root, &["rev-parse", "HEAD"]);
         save(&root, "unrelated.md", "New behavior");
         commit(&root, "fix: later change");
@@ -1659,131 +1547,125 @@ mod tests {
         assert!(old.artifacts(&later).unwrap_err().contains("полный набор"));
     }
     #[test]
-    fn marketplace_rolls_forward_atomically_and_preserves_the_checkout() {
+    fn independent_runtime_fixes_with_same_version_conflict_on_release_identity() {
         let (_temp, root) = fixture();
-        let first = git(&root, &["rev-parse", "HEAD"]);
-        origin(&root);
-        let artifacts: Vec<_> = TARGETS
-            .into_iter()
-            .map(|target| (target.to_owned(), target.as_bytes().to_vec()))
-            .collect();
         let release = Release {
             root: &root,
             runner: &System,
             artifacts: None,
         };
-        release
-            .publish_marketplace("0.2.0", &first, &artifacts, None)
-            .unwrap();
-        let before = remote_marketplace(&root);
-        assert_eq!(before.lines().count(), TARGETS.len());
-        let contents = release.version_contents("0.2.1").unwrap().unwrap();
-        save(&root, MANIFEST, contents);
-        commit(&root, "chore(release): v0.2.1");
-        let second = git(&root, &["rev-parse", "HEAD"]);
-        let bare = root.parent().unwrap().join("origin.git");
-        assert!(release.marketplace_heads(&second).is_err());
-        git(&root, &["push", "origin", "HEAD:main"]);
-        let heads = release.marketplace_heads(&second).unwrap().unwrap();
-        git(&bare, &["config", "receive.advertiseAtomic", "false"]);
+        let base = git(&root, &["rev-parse", "HEAD"]);
+        for (branch, path) in [
+            ("first", "tools/fstack/src/one.rs"),
+            ("second", ".cargo/config.toml"),
+        ] {
+            git(&root, &["checkout", "-b", branch, &base]);
+            save(&root, path, b"input");
+            commit(&root, "fix: revise build input");
+            save(&root, path, b"final input");
+            git(&root, &["add", path]);
+            assert_eq!(
+                release
+                    .prepare_manifest(&base, "fix: revise build input", true)
+                    .unwrap(),
+                "0.2.1"
+            );
+            commit(&root, "chore: prepare release");
+            assert_eq!(
+                release.check_runtime_id("HEAD").unwrap(),
+                fs::read_to_string(root.join(RUNTIME_ID))
+                    .unwrap()
+                    .trim_end()
+            );
+        }
+        let first = release.check_runtime_id("first").unwrap();
+        let second = release.check_runtime_id("second").unwrap();
+        assert_ne!(first, second);
+        assert!(release.cmd(&["git", "merge", "first"]).is_err());
+        assert_eq!(
+            git(&root, &["diff", "--name-only", "--diff-filter=U"]),
+            RUNTIME_ID
+        );
+        save(&root, RUNTIME_ID, format!("{second}\n"));
+        commit(&root, "fix: incorrectly resolve release identity");
+        assert!(release.check_runtime_id("HEAD").is_err());
+        assert!(release.plan(stub().records.into_inner()).is_err());
+    }
+    #[test]
+    fn preview_merge_squash_and_rebase_accept_the_same_finished_change() {
+        let (_temp, root) = fixture();
+        let base = git(&root, &["rev-parse", "HEAD"]);
+        let stub = stub();
+        let release = Release {
+            root: &root,
+            runner: &stub,
+            artifacts: None,
+        };
+        git(&root, &["checkout", "-b", "feature"]);
+        save(&root, "tools/fstack/src/main.rs", b"new runtime");
+        commit(&root, "feat!: new runtime protocol");
         assert!(release
-            .publish_marketplace("0.2.1", &second, &artifacts, Some(&heads))
+            .prepare_manifest(&base, "fix: too small", false)
             .is_err());
-        assert_eq!(remote_marketplace(&root), before);
-        git(&bare, &["config", "receive.advertiseAtomic", "true"]);
+        assert_eq!(
+            release
+                .prepare_manifest(&base, "feat!: new runtime protocol", true)
+                .unwrap(),
+            "1.0.0"
+        );
+        commit(&root, "chore: reserve package version");
+        save(&root, "tools/fstack/src/main.rs", b"final runtime");
+        git(&root, &["add", "tools/fstack/src/main.rs"]);
         release
-            .publish_marketplace("0.2.1", &second, &artifacts, Some(&heads))
+            .prepare_manifest(&base, "feat!: new runtime protocol", true)
             .unwrap();
-        assert_eq!(git(&bare, &["rev-parse", "main"]), second);
-        assert!(git(&root, &["status", "--porcelain"]).is_empty());
-        for line in before.lines() {
-            let (oid, name) = line.split_once('\t').unwrap();
-            assert_eq!(git(&bare, &["rev-parse", &format!("{name}^")]), oid);
-        }
-        let after = remote_marketplace(&root);
-        let heads = release.marketplace_heads(&second).unwrap().unwrap();
-        assert_eq!(heads.source, second);
-        assert!(release.marketplace_heads(&first).is_err());
-        assert_eq!(remote_marketplace(&root), after);
+        commit(&root, "fix: address review");
+        let feature_tree = git(&root, &["rev-parse", "HEAD^{tree}"]);
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "1.0.0"
+        );
+        let feature = git(&root, &["rev-parse", "HEAD^"]);
+        assert!(release
+            .prepare_manifest(&feature, "feat: misleading title", false)
+            .is_err());
+        git(&root, &["checkout", "main"]);
+        git(
+            &root,
+            &["merge", "--no-ff", "feature", "-m", "Merge pull request #1"],
+        );
+        assert_eq!(
+            release
+                .prepare_manifest(&base, "feat!: new runtime protocol", false)
+                .unwrap(),
+            "1.0.0"
+        );
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "1.0.0"
+        );
+        git(&root, &["reset", "--hard", &base]);
+        git(&root, &["merge", "--squash", "feature"]);
+        git(&root, &["commit", "-m", "feat!: new runtime protocol"]);
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "1.0.0"
+        );
+        git(&root, &["reset", "--hard", &base]);
+        git(&root, &["cherry-pick", &format!("{base}..feature")]);
+        assert_eq!(git(&root, &["rev-parse", "HEAD^{tree}"]), feature_tree);
+        origin(&root);
+        let sha = git(&root, &["rev-parse", "HEAD"]);
+        let artifacts = artifacts(&root, &sha);
+        let release = Release {
+            artifacts: Some(&artifacts),
+            ..release
+        };
+        release.publish("fixture/fstack", &event(&sha)).unwrap();
+        assert_eq!(stub.calls.borrow().last().unwrap()[2], "edit");
     }
     #[test]
-    fn stale_owned_drafts_reserve_versions_without_blocking_current_release() {
-        for message in ["docs: later clarification", "fix: later correction"] {
-            let (_temp, root) = fixture();
-            let stub = stub();
-            save(&root, "validated.md", "Validated change");
-            commit(&root, "fix: validated change");
-            let release = Release {
-                root: &root,
-                runner: &stub,
-                artifacts: None,
-            };
-            save(
-                &root,
-                MANIFEST,
-                release.version_contents("0.2.1").unwrap().unwrap(),
-            );
-            commit(&root, "chore(release): v0.2.1");
-            let stale = git(&root, &["rev-parse", "HEAD"]);
-            git(&root, &["tag", "v0.2.1"]);
-            let draft = json!({"tag_name":"v0.2.1","draft":true,"prerelease":false,"author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{stale} -->")});
-            stub.records.borrow_mut().push(draft.clone());
-            save(&root, "later.md", "Later work");
-            commit(&root, message);
-            let source = git(&root, &["rev-parse", "HEAD"]);
-            origin(&root);
-            let artifacts = artifacts(&root, &source);
-            let release = Release {
-                root: &root,
-                runner: &stub,
-                artifacts: Some(&artifacts),
-            };
-            for invalid in [
-                {
-                    let mut record = draft.clone();
-                    record["author"]["login"] = json!("human");
-                    record
-                },
-                {
-                    let mut record = draft.clone();
-                    record["body"] = json!("No source marker");
-                    record
-                },
-                {
-                    let mut record = draft.clone();
-                    record["body"] = json!(format!("<!-- release-source:{source} -->"));
-                    record
-                },
-            ] {
-                stub.records.borrow_mut()[1] = invalid;
-                assert!(release.publish("fixture/fstack", &event(&source)).is_err());
-                assert!(stub.calls.borrow().is_empty());
-                assert_eq!(git(&root, &["rev-parse", "HEAD"]), source);
-                assert_eq!(check_versions(&root).unwrap(), "0.2.1");
-            }
-            stub.records.borrow_mut()[1] = draft.clone();
-            assert_eq!(
-                release.plan(stub.records.borrow().clone()).unwrap()["version"],
-                "0.2.2"
-            );
-            release.publish("fixture/fstack", &event(&source)).unwrap();
-            assert_eq!(check_versions(&root).unwrap(), "0.2.2");
-            assert_eq!(stub.records.borrow()[1], draft);
-            assert_eq!(git(&root, &["rev-parse", "v0.2.1"]), stale);
-            let calls = stub.calls.borrow();
-            assert_eq!(
-                calls.iter().map(|v| v[2].as_str()).collect::<Vec<_>>(),
-                ["create", "upload", "edit"]
-            );
-            assert!(calls.iter().all(|v| v[3] == "v0.2.2"));
-            assert!(!root
-                .join("dist/fstack-0.2.1-x86_64-unknown-linux-gnu.zip")
-                .exists());
-        }
-    }
-
-    #[test]
-    fn higher_bump_accepts_manifest_prepared_after_stale_reservation() {
+    fn consecutive_unpublished_changes_require_distinct_runtime_versions() {
         let (_temp, root) = fixture();
         let stub = stub();
         let release = Release {
@@ -1791,64 +1673,53 @@ mod tests {
             runner: &stub,
             artifacts: None,
         };
-        let prepare = |number: &str| {
-            save(
-                &root,
-                MANIFEST,
-                release.version_contents(number).unwrap().unwrap(),
-            );
-            commit(&root, &format!("chore(release): v{number}"));
-            let sha = git(&root, &["rev-parse", "HEAD"]);
-            json!({"tag_name":format!("v{number}"),"draft":true,"prerelease":false,"author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{sha} -->")})
-        };
-        git(&root, &["commit", "--allow-empty", "-m", "fix: first"]);
-        let mut records = stub.records.borrow().clone();
-        records.push(prepare("0.2.1"));
-        git(&root, &["commit", "--allow-empty", "-m", "fix: second"]);
-        assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.2.2");
-        let parent = git(&root, &["rev-parse", "HEAD"]);
-        save(
-            &root,
-            MANIFEST,
-            release.version_contents("0.2.2").unwrap().unwrap(),
+        let original = git(&root, &["rev-parse", "HEAD"]);
+        save(&root, "tools/fstack/src/main.rs", b"first");
+        commit(&root, "feat!: initial implementation");
+        assert!(release
+            .prepare_manifest(&original, "fix: too small", false)
+            .is_err());
+        assert_eq!(
+            release
+                .prepare_manifest(&original, "feat!: breaking rollout", true)
+                .unwrap(),
+            "1.0.0"
         );
-        commit(&root, "feat: manually changed version");
-        assert!(release.plan(records.clone()).is_err());
-        git(&root, &["reset", "--hard", &parent]);
-        save(
-            &root,
-            MANIFEST,
-            release.version_contents("0.1.0").unwrap().unwrap(),
+        git(&root, &["reset", "--soft", &original]);
+        commit(&root, "feat!: breaking rollout");
+        let first = git(&root, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "1.0.0"
         );
-        commit(&root, "docs: set unrelated version");
-        prepare("0.2.2");
-        git(&root, &["commit", "--allow-empty", "-m", "feat: later"]);
-        assert!(release.plan(records.clone()).is_err());
-        git(&root, &["reset", "--hard", &parent]);
-        let prepared = prepare("0.2.2");
-        git(&root, &["commit", "--allow-empty", "-m", "feat: later"]);
-        let mut metadata = manifest(&root).unwrap();
-        metadata["description"] = json!("Updated description");
-        save(&root, MANIFEST, serde_json::to_vec(&metadata).unwrap());
-        commit(&root, "docs: clarify package description");
-
-        assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.3.0");
-        assert!(release.plan(records[..1].to_vec()).is_err());
-        records.push(prepared);
-        assert_eq!(release.plan(records.clone()).unwrap()["version"], "0.3.0");
-        let mut foreign_reservation = records.clone();
-        foreign_reservation[1]["author"]["login"] = json!("human");
-        assert!(release.plan(foreign_reservation).is_err());
-        let mut foreign_current = records.clone();
-        foreign_current[2]["author"]["login"] = json!("human");
-        assert!(release.plan(foreign_current).is_err());
-        prepare("0.2.1");
-        save(
-            &root,
-            MANIFEST,
-            release.version_contents("0.2.2").unwrap().unwrap(),
+        let draft = json!({"tag_name":"v1.0.0","draft":true,"prerelease":false,
+            "author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{first} -->")});
+        stub.records.borrow_mut().push(draft);
+        save(&root, "tools/fstack/src/main.rs", b"second");
+        commit(&root, "fix: runtime correction");
+        assert!(release.prepare_manifest(&first, "", false).is_err());
+        assert!(release.plan(stub.records.borrow().clone()).is_err());
+        assert_eq!(release.prepare_manifest(&first, "", true).unwrap(), "1.0.1");
+        git(&root, &["reset", "--soft", &first]);
+        commit(&root, "fix: runtime correction");
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "1.0.1"
         );
-        commit(&root, "docs: manually restored version");
-        assert!(release.plan(records).is_err());
+        let second = git(&root, &["rev-parse", "HEAD"]);
+        save(&root, "docs/usage.md", b"details");
+        commit(&root, "docs: clarify usage");
+        assert_eq!(
+            release.prepare_manifest(&second, "", false).unwrap(),
+            "1.0.1"
+        );
+        assert_eq!(
+            release.plan(stub.records.borrow().clone()).unwrap()["version"],
+            "1.0.1"
+        );
+        save(&root, "hooks/hook.sh", b"new runtime input");
+        commit(&root, "docs: wrong classification");
+        assert!(release.prepare_manifest(&second, "", false).is_err());
+        assert!(release.plan(stub.records.borrow().clone()).is_err());
     }
 }

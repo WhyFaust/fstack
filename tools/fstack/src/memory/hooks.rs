@@ -17,21 +17,39 @@ pub fn scope_id(b: &Binding, cwd: &Path) -> String {
     }
     pending::digest(&parts)
 }
-fn prefix() -> Result<String> {
+fn prefix(package: &Path) -> Result<String> {
     let p = std::env::current_exe()
         .map_err(io::err)?
         .canonicalize()
         .map_err(io::err)?;
-    let p = p.to_str().ok_or("Invalid memory executable path")?;
-    if p.chars()
-        .any(|c| matches!(c, '"' | '`' | '$' | '\r' | '\n') || (!cfg!(windows) && c == '\\'))
-    {
-        return Err("Memory command path cannot be used in a shell command".into());
-    }
+    let package_argument = if crate::enclosing_package(&p) == Some(package) || cfg!(test) {
+        String::new()
+    } else {
+        format!(" --package {}", shell_path(package)?)
+    };
     Ok(format!(
-        "{}\"{p}\" memory",
-        if cfg!(windows) { "& " } else { "" }
+        "{}{}{package_argument} memory",
+        if cfg!(windows) { "& " } else { "" },
+        shell_path(&p)?
     ))
+}
+
+fn shell_path(path: &Path) -> Result<String> {
+    let path = path.to_str().ok_or("Invalid memory command path")?;
+    let mut quoted = String::from("\"");
+    for ch in path.chars() {
+        #[cfg(windows)]
+        if matches!(ch, '$' | '`' | '"' | '“' | '”' | '„') {
+            quoted.push('`');
+        }
+        #[cfg(not(windows))]
+        if matches!(ch, '$' | '`' | '"' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(ch);
+    }
+    quoted.push('"');
+    Ok(quoted)
 }
 fn extra(event: &str, context: String) -> Value {
     json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":context}})
@@ -98,7 +116,7 @@ enum Posted {
     RetryCorrection(String),
     Stage(String, Value),
 }
-fn posted(payload: &Value) -> Result<Option<Posted>> {
+fn posted(payload: &Value, package: &Path) -> Result<Option<Posted>> {
     if payload["tool_name"] != "Bash"
         || payload.get("agent_id").is_some()
         || payload.get("agent_type").is_some()
@@ -117,7 +135,7 @@ fn posted(payload: &Value) -> Result<Option<Posted>> {
     let Some(command) = input.get("command").and_then(Value::as_str) else {
         return Ok(None);
     };
-    let prefix = prefix()?;
+    let prefix = prefix(package)?;
     if payload["tool_response"]
         .as_str()
         .is_some_and(|s| s.trim() == "{\"ready\":true}")
@@ -297,7 +315,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         return Ok(coordinator_only());
     }
     let staged = if event == "PostToolUse" {
-        posted(payload)?
+        posted(payload, &store.package)?
     } else {
         None
     };
@@ -343,7 +361,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             };
             if let Some(target) = target {
                 let token = pending.issue(&key, &target, generation, "setup", session, turn)?;
-                let prefix = prefix()?;
+                let prefix = prefix(&store.package)?;
                 let setup = format!("В обычном режиме подключи память проекта отдельной командой из текущего cwd: {prefix} ensure --turn {token}. Хук вернёт инструкции для этого же хода. В Plan пропусти эту команду.");
                 return Ok(extra(
                     event,
@@ -359,7 +377,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     };
     let scope = scope_id(&b, cwd);
     if issuing {
-        let prefix = prefix()?;
+        let prefix = prefix(&store.package)?;
         let mut ids = Vec::new();
         let mut search_failed = false;
         if let Some(prompt) = payload["prompt"].as_str().filter(|s| !s.trim().is_empty()) {

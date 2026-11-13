@@ -2,7 +2,6 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -15,9 +14,6 @@ macro_rules! rx {
         &*PATTERN
     }};
 }
-
-const ROLES: [&str; 3] = ["auditor", "coder", "verifier"];
-const EFFORTS: [&str; 6] = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 fn require(ok: bool, message: impl Into<String>) -> Result<()> {
     if ok {
@@ -558,26 +554,13 @@ fn resources(folder: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn role_settings(role: &Value, name: &str) -> Result<()> {
-    require(ROLES.contains(&name), "Неизвестная роль")?;
-    require(
-        nonempty(&role["model"]),
-        format!("{name}: некорректная модель роли"),
-    )?;
-    require(
-        role["model_reasoning_effort"]
-            .as_str()
-            .is_some_and(|e| EFFORTS.contains(&e)),
-        format!("{name}: некорректный reasoning роли"),
-    )
-}
-
 fn versions(root: &Path, manifest: &Value) -> Result<()> {
     let pattern = rx!(r"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z");
     require(
         pattern.is_match(string(manifest, "version")?),
         "Некорректная версия пакета",
     )?;
+    release::check_package_version(root, string(manifest, "version")?)?;
     let mut count = 0;
     for folder in entries(&root.join("skills"))? {
         if !folder.is_dir() {
@@ -617,29 +600,47 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
         "Неверный набор событий памяти",
     )?;
     contained(root, root, "tools/fstack/src/memory", true)?;
+    contained(root, root, "launchers/fstack.sh", false)?;
+    contained(root, root, "launchers/fstack.ps1", false)?;
+    contained(root, root, "hooks/runtime-unavailable.json", false)?;
+    let runtime_id = read(&contained(root, root, "launchers/runtime-id", false)?)?;
+    require(
+        rx!(r"\A[0-9a-f]{64}\n\z").is_match(&runtime_id),
+        "Некорректный идентификатор сборки",
+    )?;
     for (event, groups) in hooks {
         let groups = groups.as_array().ok_or("Ожидался массив обработчиков")?;
+        require(groups.len() == 1, "Ожидалась одна группа хуков")?;
+        let handlers = groups[0]["hooks"].as_array().ok_or("Нет команд хуков")?;
         require(
-            groups.len() == 1 && groups[0]["hooks"].as_array().is_some_and(|h| h.len() == 1),
-            "Ожидалась одна команда памяти",
+            handlers.len() == if event == "SessionStart" { 2 } else { 1 },
+            "Неверное число команд хуков",
         )?;
         if event == "PostToolUse" {
             require(groups[0]["matcher"] == "^Bash$", "Ожидался фильтр оболочки")?;
         }
-        let handler = &groups[0]["hooks"][0];
-        require(handler["type"] == "command", "Ожидался командный хук")?;
-        let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
-        let windows = format!(
-            r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
-        );
-        require(
-            string(handler, "command")? == posix,
-            format!("{event}: неверная команда command"),
-        )?;
-        require(
-            string(handler, "commandWindows")? == windows,
-            format!("{event}: неверная команда commandWindows"),
-        )?;
+        for (index, handler) in handlers.iter().enumerate() {
+            let bootstrap = index == 1;
+            let event = if bootstrap { "Bootstrap" } else { event };
+            require(
+                handler["async"].as_bool().unwrap_or(false) == bootstrap
+                    && handler["timeout"] == if bootstrap { 420 } else { 5 },
+                format!("{event}: неверный режим запуска хука"),
+            )?;
+            require(handler["type"] == "command", "Ожидался командный хук")?;
+            let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
+            let windows = format!(
+                r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
+            );
+            require(
+                string(handler, "command")? == posix,
+                format!("{event}: неверная команда command"),
+            )?;
+            require(
+                string(handler, "commandWindows")? == windows,
+                format!("{event}: неверная команда commandWindows"),
+            )?;
+        }
         contained(root, root, "hooks/memory.sh", false)?;
         contained(root, root, "hooks/memory.ps1", false)?;
     }
@@ -657,22 +658,6 @@ fn skill_names(root: &Path) -> Result<BTreeSet<String>> {
                 .ok_or_else(|| "Некорректное имя каталога".into())
         })
         .collect()
-}
-
-fn references(
-    text: &str,
-    skills: &BTreeSet<String>,
-    pattern: &Regex,
-    exclude_profile: bool,
-) -> Result<()> {
-    for capture in pattern.captures_iter(text) {
-        let name = &capture[1];
-        require(
-            exclude_profile && name == "profile" || skills.contains(name),
-            format!("Отсутствует навык: {name}"),
-        )?;
-    }
-    Ok(())
 }
 
 fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
@@ -711,10 +696,12 @@ pub(crate) fn check(root: &Path) -> Result<String> {
         manifest["skills"] == "./skills/",
         "Некорректный каталог навыков",
     )?;
-    let extension = &manifest["extensions"]["com.openai"];
-    if truthy(&extension["onboardingSkill"]) {
-        contained(root, root, string(extension, "onboardingSkill")?, false)?;
-    }
+    require(
+        manifest["extensions"]["com.openai"]
+            .get("onboardingSkill")
+            .is_none(),
+        "Автоматический пакет не объявляет onboardingSkill",
+    )?;
     require(!truthy(&manifest["mcpServers"]), "Неожиданная интеграция")?;
     hooks(root, string(&manifest, "hooks")?)?;
     let catalog = json_file(&root.join(".agents/plugins/marketplace.json"))?;
@@ -780,73 +767,27 @@ pub(crate) fn check(root: &Path) -> Result<String> {
             "Ожидался PNG",
         )?;
     }
-    let role_paths: Vec<_> = entries(&root.join("profile/agents"))?
-        .into_iter()
-        .filter(|p| extension_matches(p, "toml"))
-        .collect();
-    let expected: HashSet<_> = ROLES.iter().copied().collect();
-    let actual: HashSet<_> = role_paths
-        .iter()
-        .filter_map(|p| p.file_stem().and_then(|n| n.to_str()))
-        .collect();
-    require(
-        actual == expected,
-        "Набор ролей не совпадает с синхронизацией",
-    )?;
-    for path in &role_paths {
-        let name = path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .ok_or("Некорректное имя роли")?;
-        let role = toml_file(path)?;
-        require(
-            role["name"] == name
-                && nonempty(&role["description"])
-                && nonempty(&role["developer_instructions"]),
-            format!("Некорректная роль: {name}"),
-        )?;
-        role_settings(&role, name)?;
-        references(
-            string(&role, "developer_instructions")?,
-            &skills,
-            rx!(r"fstack:([a-z0-9-]+)"),
-            false,
-        )?;
-    }
-    let config = toml_file(&root.join("profile/config.example.toml"))?;
-    let agents = &config["agents"];
-    require(
-        agents["enabled"].is_boolean(),
-        "agents.enabled должен быть boolean",
-    )?;
-    if let Some(limit) = agents.get("max_concurrent_threads_per_session") {
-        require(
-            limit.as_u64().is_some_and(|v| v > 0),
-            "Лимит подагентов должен быть положительным целым числом",
-        )?;
-    }
-    for (settings, model, effort) in [
-        (&config, "model", "model_reasoning_effort"),
-        (
-            agents,
-            "default_subagent_model",
-            "default_subagent_reasoning_effort",
-        ),
+    for relative in [
+        "profile/agents",
+        "profile/config.example.toml",
+        ".codex/agents",
+        "agents",
     ] {
         require(
-            nonempty(&settings[model]),
-            format!("Некорректная модель примера: {model}"),
-        )?;
-        require(
-            EFFORTS.contains(&string(settings, effort)?),
-            format!("Некорректный reasoning: {effort}"),
+            !root.join(relative).exists(),
+            format!("Пакет не устанавливает глобальные роли или настройки: {relative}"),
         )?;
     }
-    contained(root, root, "tools/fstack/src/profile.rs", false)?;
     for path in descendants(root, &[".git", ".venv", "work"])? {
         if extension_matches(&path, "md") {
             let text = read(&path)?;
-            references(&text, &skills, rx!(r"\bfstack:([a-z][a-z0-9-]*)"), true)?;
+            for reference in rx!(r"\bfstack:([a-z][a-z0-9-]*)").captures_iter(&text) {
+                let name = &reference[1];
+                require(
+                    skills.contains(name),
+                    format!("{}: отсутствует навык {name}", path.display()),
+                )?;
+            }
             links(&path, root, &text)?;
         }
     }
@@ -862,28 +803,16 @@ fn main_result() -> Result<()> {
     let package = package_root(&mut arguments)?;
     let command = arguments.first().and_then(|s| s.to_str()).unwrap_or("");
     match (command, arguments.len()) {
+        ("gitlab-ci-action", 1) => return gitlab_ci::run(std::io::stdin().lock()),
         ("memory", _) => return memory::run(&arguments[1..], &package),
-        ("profile", _) => {
-            if let Err(error) = profile::run(&arguments[1..], &package) {
-                let value: Value = serde_json::from_str(&error).unwrap_or_else(|_| json!({"status":"error", "message": error}));
-                println!("{value}");
-                std::process::exit(if value["status"] == "conflict" { 1 } else { 2 });
-            }
-            return Ok(());
-        },
+        ("migrate-profile", _) => return profile_migration::run(&arguments[1..]),
         ("release", _) => return release::run(&arguments[1..], &package),
         ("check-installation", _) => return installation::run(&arguments[1..], &package),
         ("check-package", 2) => println!("{}", check(Path::new(&arguments[1]))?),
         ("resources", 3) => resources(Path::new(&arguments[2]), Path::new(&arguments[1]))?,
         ("metadata", 2) => println!("{}", metadata(Path::new(&arguments[1]))?),
         ("structure", 2) => skill_structure(Path::new(&arguments[1]))?,
-        ("role-settings", 2) => {
-            let mut input = String::new();
-            io::stdin().read_to_string(&mut input).map_err(|e| e.to_string())?;
-            let role: Value = serde_json::from_str(&input).map_err(|e| e.to_string())?;
-            role_settings(&role, arguments[1].to_str().ok_or("Некорректное имя роли")?)?;
-        }
-        _ => return Err("Использование: fstack [--package ROOT] memory | profile | release | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH | role-settings NAME (JSON stdin)".into()),
+        _ => return Err("Использование: fstack [--package ROOT] memory | migrate-profile | gitlab-ci-action | release | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH".into()),
     }
     Ok(())
 }
@@ -906,19 +835,24 @@ fn package_root(arguments: &mut Vec<std::ffi::OsString>) -> Result<PathBuf> {
         return root.canonicalize().map_err(|e| e.to_string());
     }
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-    executable
-        .ancestors()
-        .skip(1)
-        .find(|p| p.join(".codex-plugin/plugin.json").is_file())
+    enclosing_package(&executable)
         .map(Path::to_path_buf)
         .ok_or_else(|| "Не найден пакет рядом с исполняемым файлом; укажите --package ROOT".into())
 }
 
+fn enclosing_package(executable: &Path) -> Option<&Path> {
+    executable
+        .ancestors()
+        .skip(1)
+        .find(|path| path.join(".codex-plugin/plugin.json").is_file())
+}
+
+mod gitlab_ci;
 mod installation;
 mod memory;
 #[cfg(test)]
 mod package_tests;
-mod profile;
+mod profile_migration;
 mod release;
 
 fn native_notices(root: &Path) -> Result<()> {

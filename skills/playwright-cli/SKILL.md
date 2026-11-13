@@ -5,7 +5,7 @@ license: MIT AND Apache-2.0
 compatibility: Установленный Playwright CLI и доступный ему браузер; Node.js нужен при запуске через npx.
 metadata:
   short-description: Работа с веб-интерфейсом через Playwright CLI
-  version: 2.0.1
+  version: 2.0.3
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -17,10 +17,8 @@ metadata:
 Выбери именованную сессию, если браузером пользуется другая работа. Перед действием
 получи свежий snapshot и используй ссылки на элементы из него. После навигации или
 существенного изменения DOM обнови ссылки. При смене вкладки получи snapshot именно
-её содержимого, прежде чем использовать ссылку на элемент. Если открыта существующая
-пользовательская сессия, проверь нужную вкладку и способ завершения по
-[справке о сессиях](references/session-management.md). Закрывай только
-собственные ресурсы.
+её содержимого. Сессию, подключённую через `attach`, освободи командой
+`detach`. Завершай через `close` только браузер, созданный тобой через `open`.
 
 Разрешение открыть страницу само по себе не разрешает отправку сообщения,
 покупку или изменение данных.
@@ -36,42 +34,35 @@ metadata:
 В PowerShell URL с `&` передавай в кавычках. Версию и неизвестные флаги проверяй
 через `playwright-cli --version` и `playwright-cli --help <command>`.
 
-```bash
-playwright-cli -s=fstack-task open "https://example.com"
-playwright-cli -s=fstack-task snapshot
-```
-
-Выбери ссылку нужного элемента из этого snapshot. Например, если это `e3`,
-выполни следующие команды.
+Подставь URL и имя своей сессии в команды Bash.
 
 ```bash
-playwright-cli -s=fstack-task click e3
-playwright-cli -s=fstack-task snapshot
-playwright-cli -s=fstack-task screenshot --filename=page.png
-playwright-cli -s=fstack-task close
+playwright-cli -s="$session" open "$url"
+playwright-cli -s="$session" snapshot
 ```
 
-### Справки по задаче
+Для действия укажи в `element_ref` ссылку из полученного снимка.
 
-| Задача | Справка |
-| --- | --- |
-| Команды, вкладки, эмуляция | [commands.md](references/commands.md) |
-| Владение сессией | [session-management.md](references/session-management.md) |
-| Cookies и локальное состояние | [storage-state.md](references/storage-state.md) |
-| Нестандартный Playwright-код | [running-code.md](references/running-code.md) |
-| Атрибуты и локаторы | [element-attributes.md](references/element-attributes.md) |
-| Запуск и диагностика тестов | [playwright-tests.md](references/playwright-tests.md) |
-| Проектирование и исправление тестов | [test-generation.md](references/test-generation.md) |
-| Подмена запросов | [request-mocking.md](references/request-mocking.md) |
-| Трассировка | [tracing.md](references/tracing.md) |
-| Запись видео | [video-recording.md](references/video-recording.md) |
-| Вложения в PR | [pr-attachments.md](references/pr-attachments.md) |
+```bash
+playwright-cli -s="$session" click "$element_ref"
+playwright-cli -s="$session" snapshot
+playwright-cli -s="$session" close
+```
 
-Читай только справку нужного режима. Установка CLI и браузера — отдельное изменение
-среды; используй существующий инструмент, если его достаточно.
-Справки переведены и сокращены; Copyright (c) Microsoft Corporation.
-При распространении сохраняй [текст Apache-2.0](../../licenses/Apache-2.0.txt).
-Собственные инструкции fstack распространяются по MIT.
+При автоматизации теста выбирай устойчивый локатор по роли, подписи или test ID.
+Ожидай наблюдаемое состояние, заданное требованием. Перед запуском проверь
+выборку тестов через `playwright test --list` с тем же фильтром у runner проекта.
+При подмене ответа укажи, какую часть интеграции она исключает.
+
+Разделяй профили и данные стенда между параллельными сессиями. Проверяй origin
+перед выдачей разрешений. Сохранённые cookies и storage state содержат данные
+авторизации. Перед передачей снимков, видео и трасс проверь их содержимое
+и полномочия на публикацию.
+
+[Playwright CLI](https://github.com/microsoft/playwright-cli),
+[Playwright Test](https://playwright.dev/docs/test-cli).
+Материалы Playwright CLI адаптированы. Copyright (c) Microsoft Corporation.
+[Apache-2.0](../../licenses/Apache-2.0.txt). Собственные инструкции fstack распространяются по MIT.
 
 ## Проверка и результат
 

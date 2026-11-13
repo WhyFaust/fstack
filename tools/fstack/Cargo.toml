@@ -21,7 +21,7 @@ unicode-casefold = "0.2"
 tempfile = "3"
 
 zip = { version = "2", default-features = false, features = ["deflate"] }
-serde = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 rust-stemmers = "1.2.0"
 
 [target.'cfg(windows)'.dependencies]
