@@ -1,9 +1,0 @@
-model = "gpt-6.1-sol"
-model_reasoning_effort = "low"
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
-
-[agents]
-enabled = true
-default_subagent_model = "gpt-6.1-sol"
-default_subagent_reasoning_effort = "medium"

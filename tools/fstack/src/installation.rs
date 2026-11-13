@@ -1,4 +1,4 @@
-use super::{json, json_file, require, resources, Result, ROLES};
+use super::{json, json_file, require, resources, Result};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::fs;
@@ -171,11 +171,6 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     let directory = temporary.path();
     let home = directory.join("codex");
     fs::create_dir(&home).map_err(|e| e.to_string())?;
-    fs::copy(
-        root.join("profile/config.example.toml"),
-        home.join("config.toml"),
-    )
-    .map_err(|e| e.to_string())?;
     let execute = |args: &[&str]| {
         command(
             &executable,
@@ -234,64 +229,24 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     });
     require(
         native_path.is_file(),
-        "В установленном пакете нет платформенного bin/fstack; подготовьте полный пакет",
+        "Для проверки клиента подготовьте полный локальный пакет с бинарником",
     )?;
-    let native = native_path.into_os_string();
-    let mut profile_args: Vec<OsString> = vec![
-        "profile".into(),
-        "--home".into(),
-        home.as_os_str().into(),
-        "--apply".into(),
-    ];
-    command(&native, &profile_args, &home, directory)?;
+    let config = fs::read(home.join("config.toml")).map_err(|error| error.to_string())?;
+    let migration = command(
+        &native_path.into_os_string(),
+        &["migrate-profile".into(), "--apply".into()],
+        &home,
+        directory,
+    )?;
+    let migration: Value = serde_json::from_str(&migration).map_err(|error| error.to_string())?;
     require(
-        !home.join("AGENTS.md").exists(),
-        "Установка создала общий AGENTS.md",
+        migration["status"] == "unchanged"
+            && fs::read(home.join("config.toml")).map_err(|error| error.to_string())? == config
+            && ["AGENTS.md", "agents", "fstack/profile.json"]
+                .iter()
+                .all(|path| !home.join(path).exists()),
+        "Новый профиль содержит файлы ролей или настройки fstack",
     )?;
-    profile_args.pop();
-    let repeat: Value = serde_json::from_str(&command(&native, &profile_args, &home, directory)?)
-        .map_err(|e| e.to_string())?;
-    require(
-        repeat["status"] == "unchanged",
-        "Повторная синхронизация меняет профиль",
-    )?;
-    let state = json_file(&home.join("fstack/profile.json"))?;
-    let files = state["files"].as_object().ok_or("Нет files состояния")?;
-    let expected_files: std::collections::BTreeSet<_> =
-        ROLES.iter().map(|n| format!("agents/{n}.toml")).collect();
-    require(
-        files
-            .keys()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>()
-            == expected_files
-            && state["schema"] == 2
-            && state.get("links_sha256").is_none(),
-        "Состояние содержит другой набор файлов",
-    )?;
-    let installed_roles: std::collections::BTreeSet<_> = super::entries(&home.join("agents"))?
-        .into_iter()
-        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-        .filter_map(|p| p.file_stem().map(|n| n.to_string_lossy().into_owned()))
-        .collect();
-    require(
-        installed_roles == ROLES.iter().map(|n| n.to_string()).collect(),
-        "Установлен другой набор ролей",
-    )?;
-    for name in ROLES {
-        let relative = format!("agents/{name}.toml");
-        let source =
-            fs::read(installed_path.join("profile").join(&relative)).map_err(|e| e.to_string())?;
-        require(
-            fs::read(home.join(&relative)).map_err(|e| e.to_string())? == source,
-            format!("Роль отличается: {name}"),
-        )?;
-        use sha2::{Digest, Sha256};
-        require(
-            files[&relative] == format!("{:x}", Sha256::digest(source)),
-            "Хеш роли отличается",
-        )?;
-    }
     let mut client = Client::start(&executable, &home, directory)?;
     client.request(1, "initialize", json!({"clientInfo":{"name":"fstack-installation-check","version":"1.0"},"capabilities":{"experimentalApi":true,"explicitGatewayOauth":true}}))?;
     client.send(json!({"method":"initialized"}))?;
@@ -345,7 +300,13 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         .filter_map(|v| v["eventName"].as_str())
         .collect();
     require(
-        hooks.len() == events.len() && actual == events,
+        hooks.len() == events.len() + 1
+            && hooks
+                .iter()
+                .filter(|v| v["eventName"] == "sessionStart")
+                .count()
+                == 2
+            && actual == events,
         "Обнаруженные события не совпадают с пакетом",
     )?;
     for hook in hooks {
@@ -362,7 +323,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     }
     println!(
         "{}",
-        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"skill_files_and_catalog":"matched_source","hooks_discovered":events,"profile_roundtrip":"unchanged","roles_installed":ROLES,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
+        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"skill_files_and_catalog":"matched_source","hooks_discovered":events,"fresh_profile_migration":"unchanged","global_roles_installed":false,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
     );
     Ok(())
 }

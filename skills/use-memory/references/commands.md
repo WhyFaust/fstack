@@ -9,23 +9,24 @@
 - [Переход с прежнего формата](#переход-с-прежнего-формата)
 - [Запись из чата](#запись-из-чата)
 
-Запускай `bin/fstack memory` из каталога подключённого проекта.
+Запускай `/bin/sh /path/to/fstack/launchers/fstack.sh memory` из каталога проекта.
+В платформенном архиве также доступен прямой запуск `bin/fstack`.
 Путь ниже обозначает готовый бинарник в установленном пакете fstack.
-На Windows это `bin/fstack.exe`, вызываемый через PowerShell.
+На Windows используй `& C:\path\to\fstack\launchers\fstack.ps1 memory` через PowerShell.
 Python, Rust и Cargo пользователю не нужны. Бинарник находит ресурсы рядом
 с собой; для отдельной сборки разработчика есть `fstack --package ROOT memory ...`.
 
 ## Чтение и статус
 
 ```text
-"/path/to/fstack/bin/fstack" memory status
-"/path/to/fstack/bin/fstack" memory search "условия выпуска" --limit 5
-"/path/to/fstack/bin/fstack" memory show ID
-"/path/to/fstack/bin/fstack" memory history ID --limit 5
-"/path/to/fstack/bin/fstack" memory diagnostics
-"/path/to/fstack/bin/fstack" memory inbox
-"/path/to/fstack/bin/fstack" memory shared search "язык отчёта" --limit 3
-"/path/to/fstack/bin/fstack" memory shared show ID
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory status
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory search "условия выпуска" --limit 5
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory show ID
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory history ID --limit 5
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory diagnostics
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory inbox
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory shared search "язык отчёта" --limit 3
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory shared show ID
 ```
 
 `search` возвращает полные записи текущего проекта. `--limit` принимает 1–50,
@@ -74,7 +75,7 @@ Python, Rust и Cargo пользователю не нужны. Бинарник
 без поиска интерпретатора или программы в PATH.
 
 ```text
-"/path/to/fstack/bin/fstack" memory init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory init --vault "/path/to/vault" --repo "/path/to/project" --project my-project --mode auto
 ```
 
 Первое подключение по умолчанию использует `auto`. Codex сам сохраняет
@@ -90,7 +91,7 @@ Python, Rust и Cargo пользователю не нужны. Бинарник
 учитывают это решение до явного `init`.
 
 ```text
-"/path/to/fstack/bin/fstack" memory disable
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory disable
 ```
 
 ## Переход с прежнего формата
@@ -101,7 +102,7 @@ Python, Rust и Cargo пользователю не нужны. Бинарник
 проекта первую фазу.
 
 ```text
-"/path/to/fstack/bin/fstack" memory migrate
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory migrate
 ```
 
 Команда готовит именованную страницу в каталоге прежней `Project.md`,
@@ -110,7 +111,7 @@ Python, Rust и Cargo пользователю не нужны. Бинарник
 файлов, включая JSON, на всех устройствах запусти вторую фазу.
 
 ```text
-"/path/to/fstack/bin/fstack" memory migrate --prune-legacy
+/bin/sh "/path/to/fstack/launchers/fstack.sh" memory migrate --prune-legacy
 ```
 
 Она удаляет перенесённые отметки, опустевшие каталоги `Approved` и `Forgotten`
@@ -134,16 +135,6 @@ Python, Rust и Cargo пользователю не нужны. Бинарник
 Передай один объект JSON в `pack` через стандартный ввод в UTF-8. Команда
 вернёт строку base64url в JSON. Возьми содержимое строки без JSON-кавычек
 и вызови отдельную команду в той же рабочей папке.
-
-```bash
-"/absolute/path/to/fstack/bin/fstack" memory stage --turn TOKEN --payload BASE64URL
-```
-
-На Windows используй форму PowerShell.
-
-```powershell
-& "C:\absolute\path\to\fstack\bin\fstack.exe" memory stage --turn TOKEN --payload BASE64URL
-```
 
 Возьми готовый префикс команды и токен из контекста хука. Подставь только
 строку из `pack`. Хук принимает один вызов без пайпа, перенаправления

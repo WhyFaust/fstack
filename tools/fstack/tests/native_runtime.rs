@@ -64,6 +64,8 @@ impl Runtime {
 
     fn call(&self, args: &[&str], input: Option<Value>) -> String {
         let mut child = Command::new(&self.binary)
+            .arg("--package")
+            .arg(&self.root)
             .args(args)
             .env("PATH", "")
             .env("CODEX_HOME", &self.home)
@@ -197,11 +199,11 @@ fn windows_shells_preserve_hook_directory_and_utf8() {
 fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
     let runtime = Runtime::new();
     runtime.call(&["check-package", runtime.root.to_str().unwrap()], None);
-    let before = runtime.json(&["profile"], None);
-    assert_ne!(before["status"], "unchanged");
-    runtime.json(&["profile", "--apply"], None);
-    assert!(!runtime.home.join("AGENTS.md").exists());
-    assert_eq!(runtime.json(&["profile"], None)["status"], "unchanged");
+    assert_eq!(
+        runtime.json(&["migrate-profile", "--apply"], None)["status"],
+        "unchanged"
+    );
+    assert!(!runtime.home.exists());
     let vault = runtime.root.parent().unwrap().join("vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
     runtime.json(
@@ -234,7 +236,18 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
 
 #[test]
 fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() {
-    let runtime = Runtime::new();
+    let mut runtime = Runtime::new();
+    let manifest = runtime.root.join(".codex-plugin/plugin.json");
+    let manifest: Value = serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
+    let cache = runtime
+        .home
+        .join("fstack/runtime")
+        .join(manifest["version"].as_str().unwrap())
+        .join(platform_target());
+    fs::create_dir_all(&cache).unwrap();
+    let cached = cache.join(runtime.binary.file_name().unwrap());
+    fs::rename(&runtime.binary, &cached).unwrap();
+    runtime.binary = cached;
     let vault = runtime.root.parent().unwrap().join("vault");
     let offline = vault.with_file_name("offline");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
@@ -271,7 +284,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
             .as_str()
             .unwrap();
         let pattern = regex::Regex::new(
-            r#"((?:& )?"[^"]+" memory stage --turn [0-9a-f]{64}\.[0-9a-f]{32}) --correction"#,
+            r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn [0-9a-f]{64}\.[0-9a-f]{32}) --correction"#,
         )
         .unwrap();
         let prefix = &pattern.captures(context).unwrap()[1];
@@ -370,7 +383,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
             .unwrap()
     );
     let (command, token) = regex::Regex::new(
-        r#"((?:& )?"[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
+        r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
     )
     .unwrap()
     .captures(context)
@@ -521,4 +534,167 @@ fn first_ordinary_turn(save_correction: bool) {
         .join(connected["project"].as_str().unwrap())
         .join("Records")
         .is_dir());
+}
+
+fn platform_target() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("macos", "x86_64") => "x86_64-apple-darwin",
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        ("windows", "x86_64") => "x86_64-pc-windows-msvc",
+        pair => panic!("unsupported test platform: {pair:?}"),
+    }
+}
+
+#[test]
+fn startup_from_main_uses_the_cached_runtime_and_retires_only_owned_roles() {
+    use sha2::{Digest, Sha256};
+
+    let runtime = Runtime::new();
+    let manifest = runtime.root.join(".codex-plugin/plugin.json");
+    let package: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    let version = package["version"].as_str().unwrap();
+    let cache = runtime
+        .home
+        .join("fstack/runtime")
+        .join(version)
+        .join(platform_target());
+    fs::create_dir_all(&cache).unwrap();
+    let binary = cache.join(runtime.binary.file_name().unwrap());
+    fs::rename(&runtime.binary, &binary).unwrap();
+
+    let hooks: Value =
+        serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
+    let bootstrap = &hooks["hooks"]["SessionStart"][0]["hooks"][1];
+    assert_eq!(bootstrap["async"], true);
+    let invoke = || {
+        let mut command = if cfg!(windows) {
+            let mut ps = Command::new(
+                PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+                    .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+            );
+            ps.args(["-NoProfile", "-NonInteractive", "-Command"])
+                .arg(bootstrap["commandWindows"].as_str().unwrap());
+            ps
+        } else {
+            let mut shell = Command::new("/bin/sh");
+            shell.args(["-c", bootstrap["command"].as_str().unwrap()]);
+            shell
+        };
+        let output = command
+            .env("PLUGIN_ROOT", &runtime.root)
+            .env("CODEX_HOME", &runtime.home)
+            .current_dir(&runtime.project)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+
+    assert_eq!(invoke(), json!({}));
+    assert!(!runtime.home.join("agents").exists());
+    assert!(!runtime.home.join("fstack/profile.json").exists());
+    assert!(!runtime.home.join("fstack/backups").exists());
+
+    let agents = runtime.home.join("agents");
+    fs::create_dir(&agents).unwrap();
+    let owned = b"name = \"auditor\"\n";
+    fs::write(agents.join("auditor.toml"), owned).unwrap();
+    let edited = b"name = \"coder\"\nmodel = \"my-model\"\n";
+    fs::write(agents.join("coder.toml"), edited).unwrap();
+    let state_path = runtime.home.join("fstack/profile.json");
+    fs::write(
+        &state_path,
+        json!({
+            "schema": 2,
+            "version": "9.0.0",
+            "files": {
+                "agents/auditor.toml": format!("{:x}", Sha256::digest(owned)),
+                "agents/coder.toml": format!("{:x}", Sha256::digest(b"old coder")),
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let response = invoke();
+    assert!(response["systemMessage"]
+        .as_str()
+        .unwrap()
+        .contains("agents/coder.toml"));
+    assert!(!agents.join("auditor.toml").exists());
+    assert_eq!(fs::read(agents.join("coder.toml")).unwrap(), edited);
+    assert!(!state_path.exists());
+    assert_eq!(invoke(), json!({}));
+}
+
+#[cfg(unix)]
+#[test]
+fn launcher_verifies_the_selected_release_asset_before_installing() {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::PermissionsExt;
+
+    let runtime = Runtime::new();
+    let target = platform_target();
+    let version = "9.123.456";
+    fs::write(
+        runtime.root.join(".codex-plugin/plugin.json"),
+        format!("{{\n  \"version\": \"{version}\"\n}}\n"),
+    )
+    .unwrap();
+    fs::remove_file(&runtime.binary).unwrap();
+    let fixtures = runtime._temporary.path().join("fixtures");
+    fs::create_dir(&fixtures).unwrap();
+    let asset = format!("fstack-{version}-{target}");
+    let bytes = b"fixture runtime";
+    fs::write(fixtures.join(&asset), bytes).unwrap();
+    let curl = fixtures.join("curl");
+    fs::write(
+        &curl,
+        r#"#!/bin/sh
+while [ "${1#https://}" = "$1" ]; do
+    [ "$#" -gt 0 ] || exit 2
+    shift
+done
+case "$1" in
+    "https://github.com/WhyFaust/fstack/releases/download/v$FSTACK_TEST_VERSION/$FSTACK_TEST_ASSET"*) ;;
+    *) exit 3 ;;
+esac
+[ "$2" = --output ] || exit 4
+cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(curl, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let install = || {
+        Command::new("/bin/sh")
+            .arg(runtime.root.join("launchers/fstack.sh"))
+            .arg("--install-runtime")
+            .env("PATH", format!("{}:/usr/bin:/bin", fixtures.display()))
+            .env("CODEX_HOME", &runtime.home)
+            .env("FSTACK_TEST_FIXTURES", &fixtures)
+            .env("FSTACK_TEST_VERSION", version)
+            .env("FSTACK_TEST_ASSET", &asset)
+            .output()
+            .unwrap()
+    };
+    let checksum = fixtures.join(format!("{asset}.sha256"));
+    let cache = runtime
+        .home
+        .join("fstack/runtime")
+        .join(version)
+        .join(target);
+    fs::write(&checksum, "bad checksum\n").unwrap();
+    assert!(!install().status.success());
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
+
+    fs::write(&checksum, format!("{:x}  {asset}\n", Sha256::digest(bytes))).unwrap();
+    assert!(install().status.success());
+    assert_eq!(fs::read(cache.join("fstack")).unwrap(), bytes);
+    fs::remove_file(fixtures.join("curl")).unwrap();
+    assert!(install().status.success());
 }

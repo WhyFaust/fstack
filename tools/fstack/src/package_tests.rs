@@ -381,20 +381,22 @@ fn complete_package_rejects_broken_release_contracts() {
     assert!(check(&package).is_err());
 }
 #[test]
-fn shipped_role_settings_validate_model_and_effort() {
-    for path in entries(&root().join("profile/agents")).unwrap() {
-        let name = path.file_stem().unwrap().to_str().unwrap();
-        let role = toml_file(&path).unwrap();
-        role_settings(&role, name).unwrap();
-        let mut custom = role.clone();
-        custom["model"] = json!("custom-provider/model");
-        role_settings(&custom, name).unwrap();
-        for (field, value) in [("model", ""), ("model_reasoning_effort", "unknown")] {
-            let mut invalid = role.clone();
-            invalid[field] = json!(value);
-            assert!(role_settings(&invalid, name).is_err());
-        }
-    }
+fn package_rejects_a_bundled_global_role_or_onboarding_skill() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    let role = package.join("profile/agents/default.toml");
+    fs::create_dir_all(role.parent().unwrap()).unwrap();
+    fs::write(&role, r#"name = "default""#).unwrap();
+    assert!(check(&package).unwrap_err().contains("profile/agents"));
+    fs::remove_dir_all(package.join("profile")).unwrap();
+
+    let path = package.join(".codex-plugin/plugin.json");
+    let mut manifest = json_file(&path).unwrap();
+    manifest["extensions"] =
+        json!({"com.openai":{"onboardingSkill":"./skills/faust-mode/SKILL.md"}});
+    fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(check(&package).unwrap_err().contains("onboardingSkill"));
 }
 #[cfg(windows)]
 #[test]
