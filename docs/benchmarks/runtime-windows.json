@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "kind": "runtime",
+  "created_at": "2026-11-14T20:15:57.503212+00:00",
+  "revision": "61237c8597e20adedb164865f78ed44daa1b95f2",
+  "tracked_changes": false,
+  "inputs": {
+    "runtime_sha256": "51d14dbea71a2dd5500b848f5fc825c78618a2f599f460710285ce1a3d1a8562",
+    "templates_sha256": "047164ad2d93a5660f1b075da85cc19157c943897d266f1c81f6327d1956fba6",
+    "harness_sha256": "ee90b6e6a94a3d48bd656f9ed3b942eeffc1392a72622004d4c3b540b796f6a1"
+  },
+  "binary_sha256": "bbc8b5a0448b52ce731e79ccfce548ebd874cd0b25a2687981ec6a3208a775fd",
+  "build": {
+    "toolchain": "1.90.0",
+    "profile": "release",
+    "locked": true,
+    "target": null,
+    "verified_by": "cargo compiler-artifact from measured sources"
+  },
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "processor": "AMD64 Family 25 Model 33 Stepping 2, AuthenticAMD",
+    "python": "3.14.7"
+  },
+  "settings": {
+    "samples": 11,
+    "warmups": 1,
+    "records": 256
+  },
+  "results": {
+    "show": {
+      "samples_ms": [
+        233.497,
+        231.288,
+        220.641,
+        221.488,
+        221.965,
+        226.29,
+        220.786,
+        220.1,
+        220.137,
+        221.485,
+        218.586
+      ],
+      "median_ms": 221.485,
+      "p95_ms": 233.497,
+      "verified": true
+    },
+    "search_hit": {
+      "samples_ms": [
+        688.684,
+        691.092,
+        686.241,
+        690.819,
+        684.389,
+        684.679,
+        686.253,
+        691.063,
+        686.861,
+        687.982,
+        688.616
+      ],
+      "median_ms": 687.982,
+      "p95_ms": 691.092,
+      "verified": true
+    },
+    "search_miss": {
+      "samples_ms": [
+        686.992,
+        683.584,
+        695.902,
+        686.637,
+        688.617,
+        684.924,
+        693.452,
+        687.102,
+        691.319,
+        688.623,
+        687.284
+      ],
+      "median_ms": 687.284,
+      "p95_ms": 695.902,
+      "verified": true
+    }
+  }
+}
