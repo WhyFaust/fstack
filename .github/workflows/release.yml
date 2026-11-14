@@ -54,6 +54,23 @@ jobs:
       - run: cargo +1.90.0 fmt --manifest-path tools/fstack/Cargo.toml -- --check
       - run: cargo +1.90.0 clippy --all-targets --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml -- -D warnings
       - run: cargo +1.90.0 test --release --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml
+      - uses: actions/setup-python@v7
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.11'
+      - name: Проверка бенчмарков и опубликованной таблицы
+        if: runner.os == 'Linux'
+        run: |
+          python -m unittest discover -s tools/fstack/benchmarks -p 'test_*.py' -v
+          python tools/fstack/benchmarks/benchmark.py report --check
+          python tools/fstack/benchmarks/benchmark.py run --target '${{ matrix.target }}' --output "$RUNNER_TEMP/runtime-benchmark.json"
+      - uses: actions/upload-artifact@v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          name: runtime-benchmark
+          path: ${{ runner.temp }}/runtime-benchmark.json
+          if-no-files-found: error
+          retention-days: 30
       - run: |
           mkdir -p bin
           cp 'tools/fstack/target/${{ matrix.target }}/release/${{ matrix.binary }}' 'bin/${{ matrix.binary }}'
