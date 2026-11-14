@@ -8,3 +8,4 @@ dist/
 /tools/fstack/target/
 /bin/
 /tools/fstack/benchmarks/__pycache__/
+/tools/fstack/evals/__pycache__/

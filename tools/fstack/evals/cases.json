@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "provenance": "https://github.com/WhyFaust/fstack",
+  "limitations": "12 случаев из четырёх исторических изменений памяти; это узкий корпус, не 12 независимых проектов. Публичный holdout означает исключение из настройки в данном эксперименте.",
+  "cases": [
+    {
+      "id": "large-project",
+      "split": "development",
+      "family": "ownership",
+      "base": "481e249fe8852d9f09e79ab5bd7aef68d62fde3c",
+      "reference": "9613877394c9200cf8933c6b48ba75fa96adbc49",
+      "prompt": "После больших ручных дополнений к странице проекта память перестаёт сохраняться. Нужно сохранить весь текст пользователя, поддержку старого имени Project.md и корректные ссылки на проект.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_large_project_pages_keep_their_links_and_content",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "body-marker",
+      "split": "holdout",
+      "family": "ownership",
+      "base": "481e249fe8852d9f09e79ab5bd7aef68d62fde3c",
+      "reference": "9613877394c9200cf8933c6b48ba75fa96adbc49",
+      "prompt": "В папке проекта есть пользовательский файл с именем проекта, а служебная страница осталась Project.md. Строка с похожим маркером в теле пользовательской заметки не должна делать её служебной.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_project_marker_in_body_keeps_legacy_page_selected",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "damaged-record",
+      "split": "control",
+      "family": "memory",
+      "base": "778a07fbc053487caa3526a4054a0de075d062d7",
+      "reference": "5d6132d800f526997d6e443d4a43744cf7afb337",
+      "prompt": "Проверь следующее поведение; исправляй только подтверждённый дефект, иначе оставь код без изменений. Повреждённую запись памяти невозможно забыть по её известному ID. Нужно восстановить возможность удаления и не допустить возвращения её устаревшей копии после синхронизации.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_forget_can_remove_a_damaged_record_by_id",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "unrelated-draft",
+      "split": "control",
+      "family": "memory",
+      "base": "778a07fbc053487caa3526a4054a0de075d062d7",
+      "reference": "5d6132d800f526997d6e443d4a43744cf7afb337",
+      "prompt": "Проверь следующее поведение; исправляй только подтверждённый дефект, иначе оставь код без изменений. Ручная правка метаданных одного черновика мешает чтению остальных решений. Исправь причину, сохранив правила подтверждения и скрытия заменённых записей.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_unrelated_draft_metadata_does_not_block_other_entries",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "large-library",
+      "split": "development",
+      "family": "memory",
+      "base": "778a07fbc053487caa3526a4054a0de075d062d7",
+      "reference": "5d6132d800f526997d6e443d4a43744cf7afb337",
+      "prompt": "После расширения таблицы Obsidian Library.base память перестаёт работать. Пользовательская таблица может быть большой; сохрани её содержимое и работоспособность записи памяти.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_large_library_does_not_block_memory_operations",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "slug-secret",
+      "split": "holdout",
+      "family": "memory",
+      "base": "778a07fbc053487caa3526a4054a0de075d062d7",
+      "reference": "5d6132d800f526997d6e443d4a43744cf7afb337",
+      "prompt": "Имя проекта sk-platform-integration допустимо, но создание связей памяти отклоняется как возможный секрет. Исправь ложное срабатывание, сохранив проверку секретов в содержимом заметок.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_graph_links_allow_valid_slugs_that_resemble_secrets",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "migration-edits",
+      "split": "development",
+      "family": "migration",
+      "base": "a83c9d9ff1ea68535156708db34d255a22eede06",
+      "reference": "481e249fe8852d9f09e79ab5bd7aef68d62fde3c",
+      "prompt": "В графе Obsidian все проекты называются Project. Сделай имена узлов различимыми по проекту, сохрани ручные изменения страниц и возможность перехода со старой структуры при неполной синхронизации.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_named_project_migration_preserves_edits_and_waits_for_records_before_pruning",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "migration-conflict",
+      "split": "holdout",
+      "family": "migration",
+      "base": "a83c9d9ff1ea68535156708db34d255a22eede06",
+      "reference": "481e249fe8852d9f09e79ab5bd7aef68d62fde3c",
+      "prompt": "Переход к именованным страницам проектов должен сохранять пользовательский файл на целевом пути и расходящиеся копии. Реализуй переход, который сообщает о конфликте и не теряет данные.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_named_project_collision_and_divergent_copies_are_preserved",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "migration-missing",
+      "split": "holdout",
+      "family": "migration",
+      "base": "a83c9d9ff1ea68535156708db34d255a22eede06",
+      "reference": "481e249fe8852d9f09e79ab5bd7aef68d62fde3c",
+      "prompt": "При переходе к именованным страницам очистка старой страницы не должна разрывать ссылки: подтверждение заметки уже синхронизировалось, сама заметка ещё нет. Исправь обработку этого порядка доставки.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_prune_retains_legacy_project_page_while_approved_record_is_missing",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "inbox-edits",
+      "split": "control",
+      "family": "memory",
+      "base": "9613877394c9200cf8933c6b48ba75fa96adbc49",
+      "reference": "9613877394c9200cf8933c6b48ba75fa96adbc49",
+      "prompt": "Проверь, сохраняются ли ручные изменения черновика при подтверждении из другого профиля и не появляется ли дубль. Исправляй только подтверждённые дефекты; при корректном поведении оставь код без изменений.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_inbox_promotion_preserves_manual_edit_and_deduplicates_across_profiles",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "stale-sync",
+      "split": "control",
+      "family": "memory",
+      "base": "9613877394c9200cf8933c6b48ba75fa96adbc49",
+      "reference": "9613877394c9200cf8933c6b48ba75fa96adbc49",
+      "prompt": "Проверь, может ли устаревшая синхронизированная копия вернуть заменённую или забытую запись в поиск. Исправляй только подтверждённые дефекты, сохрани действующие решения.",
+      "oracle_file": "scripts/tests/test_memory_store.py",
+      "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_supersedes_and_tombstone_hide_stale_sync_copy",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    },
+    {
+      "id": "mode-preserve",
+      "split": "development",
+      "family": "hooks",
+      "base": "5a1456b1619c9dc07851177c13640ab40a09bcf3",
+      "reference": "77f7f9e75c53f1d6b3f3561e57a6c8a51dbe7983",
+      "prompt": "Повторное подключение перемещённого vault меняет явно выбранный inbox на auto. Сохрани выбранный пользователем режим при восстановлении привязки; явная смена режима должна продолжать работать.",
+      "oracle_file": "scripts/tests/test_memory_hooks.py",
+      "test": "scripts.tests.test_memory_hooks.MemoryHookTests.test_stage_respects_inbox_mode_approval_and_forgetting",
+      "criteria": [
+        "Решена заявленная проблема без ослабления контракта.",
+        "Не потеряны пользовательские данные и действующие ограничения.",
+        "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
+      ]
+    }
+  ]
+}

@@ -104,6 +104,10 @@ pub fn ensure_hub(root: &Path, package: &Path) -> Result<()> {
     }
     let p = root.join("Home.md");
     let raw = io::read(&p)?.ok_or("Memory home is unavailable")?;
+    if io::hash(&raw) == "729b696f2bf702273534e08d2b566f12d3df1d4b478ee7fcd62d151b14a281bc" {
+        io::write(&p, &asset(package, "Home.md")?, true, Some(&raw))?;
+        return Ok(());
+    }
     let updated = if raw.contains(OLD_BASE) {
         raw.replacen(OLD_BASE, LINK, 1)
     } else if !raw.contains(LINK) {
@@ -120,6 +124,12 @@ pub fn ensure_library(root: &Path, package: &Path) -> Result<()> {
         io::write(&p, &asset(package, "Library.base")?, false, None)?;
     }
     let raw = io::read(&p)?.ok_or("Cannot initialize memory library")?;
+    // Обновлять оформление только у точного прежнего штатного шаблона.
+    // Пользовательские views и существующие имена embeds сохраняются.
+    if io::hash(&raw) == "f057f0c4569fe43d735f494ccf22e38c72dea33534c670675ac9723b614461b4" {
+        io::write(&p, &asset(package, "Library.base")?, true, Some(&raw))?;
+        return Ok(());
+    }
     let approval = "file(file.path.replace(\"/Records/\", \"/Approved/\"))";
     let old = "file(file.path.replace(\"/Records/\", \"/Forgotten/\"))";
     let new = "file(file.folder + \"/\" + file.basename + \"-forgotten.json\")";
