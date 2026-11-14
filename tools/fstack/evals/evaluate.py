@@ -48,11 +48,18 @@ def write(path: Path, data):
 def reserve(path: Path, data) -> bool:
     """Зафиксировать начало оплачиваемой попытки до запуска модели."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
     try:
-        with path.open("x", encoding="utf-8") as stream:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".reserve-", delete=False) as stream:
+            temporary = Path(stream.name)
             json.dump(data, stream, ensure_ascii=False, indent=2)
+        os.link(temporary, path)
     except FileExistsError:
         return False
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return True
 
 

@@ -35,6 +35,14 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(evaluate.reserve(target, {"status": "interrupted"}))
             self.assertFalse(evaluate.reserve(target, {"status": "completed"}))
             self.assertEqual(evaluate.read(target), {"status": "interrupted"})
+            unpublished = Path(directory) / "unpublished.json"
+            def interrupt_dump(data, stream, **kwargs):
+                stream.write('{"status":')
+                raise KeyboardInterrupt
+            with patch.object(evaluate.json, "dump", side_effect=interrupt_dump), self.assertRaises(KeyboardInterrupt):
+                evaluate.reserve(unpublished, {"status": "interrupted"})
+            self.assertFalse(unpublished.exists())
+            self.assertEqual(list(Path(directory).glob(".reserve-*")), [])
 
     def test_judge_preserves_interruption_and_refuses_changed_artifacts(self):
         with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
