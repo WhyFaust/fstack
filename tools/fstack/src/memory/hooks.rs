@@ -417,7 +417,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             recall = recall,
             prefix = prefix,
             token = token,
-            skill = store.package.join("skills/use-memory/SKILL.md").display(),
+            skill = store.package.join("skills/memory/SKILL.md").display(),
         );
         let instructions = match coordinator {
             Some(text) => format!("{text} {instructions}"),
@@ -514,7 +514,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     }
     if outcome == Some(Stop::Review) {
         return Ok(
-            json!({"decision":"block","reason":"Оценка памяти за ход ещё не принята. Вне Plan используй последнюю команду stage из UserPromptSubmit. Для устойчивой поправки проекта передай --correction, если нового знания нет — --skip. Для остальных операций прочитай fstack:use-memory. Если подготовка недоступна, сообщи об этом и заверши задачу."}),
+            json!({"decision":"block","reason":"Оценка памяти за ход ещё не принята. Вне Plan используй последнюю команду stage из UserPromptSubmit. Для устойчивой поправки проекта передай --correction, если нового знания нет — --skip. Для остальных операций прочитай fstack:memory. Если подготовка недоступна, сообщи об этом и заверши задачу."}),
         );
     }
     if failed {

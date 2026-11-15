@@ -436,7 +436,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         .unwrap();
     assert!(context.contains(" show ID"));
     let installed_skill = regex::Regex::new(
-        r#"((?:[A-Za-z]:[\\/]|\\\\|/)[^"\n]*?[\\/]skills[\\/]use-memory[\\/]SKILL\.md)"#,
+        r#"((?:[A-Za-z]:[\\/]|\\\\|/)[^"\n]*?[\\/]skills[\\/]memory[\\/]SKILL\.md)"#,
     )
     .unwrap()
     .captures(context)
@@ -447,7 +447,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         Path::new(installed_skill).canonicalize().unwrap(),
         runtime
             .root
-            .join("skills/use-memory/SKILL.md")
+            .join("skills/memory/SKILL.md")
             .canonicalize()
             .unwrap()
     );

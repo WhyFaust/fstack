@@ -1,0 +1,6 @@
+interface:
+  display_name: Измерение ускорения без потери покрытия
+  short_description: Измерение ускорения без потери покрытия
+  default_prompt: Используй $fstack:perf, чтобы измерить эффект изменения до и после при одинаковом объёме полезной работы.
+policy:
+  allow_implicit_invocation: false

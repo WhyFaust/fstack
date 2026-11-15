@@ -13,8 +13,7 @@ const LINK: &str = "[[Codex Memory/Projects|Все проекты]]";
 const OLD_LINK: &str = "[[Codex Memory/Home|Все проекты]]";
 const OLD_BASE:&str="```base\nfilters:\n  and:\n    - 'file.inFolder(\"Codex Memory/Projects\")'\n    - 'file.path.endsWith(\"/Project.md\")'\n    - 'note.fstack_memory_project != null'\nformulas:\n  project: 'link(file.path, note.fstack_memory_project)'\nviews:\n  - type: list\n    name: Проекты\n    order: [formula.project]\n```";
 pub fn asset(package: &Path, name: &str) -> Result<String> {
-    std::fs::read_to_string(package.join("skills/use-memory/assets/vault").join(name))
-        .map_err(io::err)
+    std::fs::read_to_string(package.join("skills/memory/assets/vault").join(name)).map_err(io::err)
 }
 pub fn marker(text: Option<&str>, marker: &str) -> bool {
     text.and_then(|s| s.strip_prefix("---\n"))

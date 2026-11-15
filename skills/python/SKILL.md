@@ -4,7 +4,7 @@ description: 'Дополняет реализацию, диагностику и
 license: MIT
 metadata:
   short-description: Python, окружение, типы и ресурсы
-  version: 2.0.5
+  version: 2.0.6
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -14,7 +14,7 @@ metadata:
 ## Вход и границы
 
 Применяй вместе с основным методом работы и правилами репозитория:
-fstack:verify-result для доказательств, fstack:no-comments при изменении кода.
+fstack:verify для доказательств, fstack:no-comments при изменении кода.
 Используй существующие инструменты проекта.
 
 ## Порядок работы
@@ -74,5 +74,5 @@ linter и type checker. Не переноси проект на другой too
 ## Проверка и результат
 
 Для существенного инженерного решения
-используй fstack:engineering-principles. Передай изменённую область, важные
+используй fstack:principles. Передай изменённую область, важные
 версии, выполненные проверки и оставшиеся ресурсы или ограничения.

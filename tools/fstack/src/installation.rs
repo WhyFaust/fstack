@@ -1,4 +1,5 @@
-use super::{json, json_file, require, resources, Result};
+use crate::{json, package, Result};
+use package::{json_file, require, resources};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::fs;
@@ -130,7 +131,7 @@ fn command(
 }
 
 fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
-    for installed_file in super::descendants(&installed.join("skills"), &[])? {
+    for installed_file in package::descendants(&installed.join("skills"), &[])? {
         if installed_file.is_file() {
             let relative = installed_file
                 .strip_prefix(installed)
@@ -142,10 +143,10 @@ fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
         }
     }
     let mut files = vec![source.join("docs/skills.md")];
-    files.extend(super::descendants(&source.join("skills"), &[])?);
+    files.extend(package::descendants(&source.join("skills"), &[])?);
     for file in files.into_iter().filter(|path| path.is_file()) {
         let relative = file.strip_prefix(source).map_err(|e| e.to_string())?;
-        let target = super::contained(installed, installed, relative, false)?;
+        let target = package::contained(installed, installed, relative, false)?;
         require(
             fs::read(&file).map_err(|e| e.to_string())?
                 == fs::read(&target).map_err(|e| e.to_string())?,
@@ -161,9 +162,9 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         [flag, path] if flag == "--codex" => path.clone(),
         _ => return Err("check-installation [--codex PATH]".into()),
     };
-    super::check(root)?;
+    package::check(root)?;
     let version = json_file(&root.join(".codex-plugin/plugin.json"))?["version"].clone();
-    let expected: std::collections::BTreeSet<_> = super::skill_names(root)?
+    let expected: std::collections::BTreeSet<_> = package::skill_names(root)?
         .into_iter()
         .map(|n| format!("fstack:{n}"))
         .collect();
@@ -217,7 +218,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         "Нет включённого плагина",
     )?;
     check_installed_methods(root, &installed_path)?;
-    for path in super::entries(&installed_path.join("skills"))? {
+    for path in package::entries(&installed_path.join("skills"))? {
         if path.is_dir() {
             resources(&path, &installed_path)?;
         }

@@ -111,7 +111,7 @@ fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
         "Объясни /faust-mode",
         "`/faust-mode`",
         "> /faust-mode task",
-        "$fstack:debug-failure task",
+        "$fstack:debug task",
     ] {
         let output = f.hook("UserPromptSubmit", "plain", json!({"prompt":prompt}));
         let context = output["hookSpecificOutput"]["additionalContext"]

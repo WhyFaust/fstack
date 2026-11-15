@@ -2,58 +2,59 @@
 
 Выбирай навык по ожидаемому результату. Для явного вызова используй
 `$fstack:<имя-навыка>`. Команда `/faust-mode` включает координацию на весь чат.
+При обновлении с 10.x используй [таблицу новых имён](skill-names.md).
 
 ## Основные методы
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
-| `select-skills` | Один основной метод и необходимые предметные дополнения | [Открыть](../skills/select-skills/SKILL.md) |
-| `investigate-code` | Исследование кода по исходным данным | [Открыть](../skills/investigate-code/SKILL.md) |
-| `improve-codebase` | Аудит и приоритетный backlog улучшений | [Открыть](../skills/improve-codebase/SKILL.md) |
-| `plan-improvement` | План выбранного улучшения и сверка его актуальности | [Открыть](../skills/plan-improvement/SKILL.md) |
-| `implement-change` | Реализация законченного изменения | [Открыть](../skills/implement-change/SKILL.md) |
-| `adapt-skill` | Создание, перенос и улучшение исходников навыков | [Открыть](../skills/adapt-skill/SKILL.md) |
-| `debug-failure` | Причина сбоя и проверка исправления | [Открыть](../skills/debug-failure/SKILL.md) |
-| `refactor-code` | Упрощение кода с сохранением контрактов | [Открыть](../skills/refactor-code/SKILL.md) |
-| `review-change` | Ревью изменения по контрактам и фактам | [Открыть](../skills/review-change/SKILL.md) |
-| `verify-result` | Проверки и доказательства готовности | [Открыть](../skills/verify-result/SKILL.md) |
+| `route` | Один основной метод и необходимые предметные дополнения | [Открыть](../skills/route/SKILL.md) |
+| `how` | Исследование кода по исходным данным | [Открыть](../skills/how/SKILL.md) |
+| `audit` | Аудит и приоритетный backlog улучшений | [Открыть](../skills/audit/SKILL.md) |
+| `scope` | План выбранного улучшения и сверка его актуальности | [Открыть](../skills/scope/SKILL.md) |
+| `implement` | Реализация законченного изменения | [Открыть](../skills/implement/SKILL.md) |
+| `skill` | Создание, перенос и улучшение исходников навыков | [Открыть](../skills/skill/SKILL.md) |
+| `debug` | Причина сбоя и проверка исправления | [Открыть](../skills/debug/SKILL.md) |
+| `refactor` | Упрощение кода с сохранением контрактов | [Открыть](../skills/refactor/SKILL.md) |
+| `review` | Ревью изменения по контрактам и фактам | [Открыть](../skills/review/SKILL.md) |
+| `verify` | Проверки и доказательства готовности | [Открыть](../skills/verify/SKILL.md) |
 
 ## Инженерные решения
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
-| `engineering-principles` | Критерии архитектуры, состояния и проверки | [Открыть](../skills/engineering-principles/SKILL.md) |
-| `design-change` | Проектирование модели и границ изменения | [Открыть](../skills/design-change/SKILL.md) |
-| `design-ui` | Пользовательский сценарий, компоненты и визуальная проверка UI | [Открыть](../skills/design-ui/SKILL.md) |
-| `assess-impact` | Последствия изменения и затронутые потребители | [Открыть](../skills/assess-impact/SKILL.md) |
-| `simplify-change` | Упрощение готового diff без расширения задачи | [Открыть](../skills/simplify-change/SKILL.md) |
-| `manage-state` | Владение состоянием и конкурентными записями | [Открыть](../skills/manage-state/SKILL.md) |
-| `model-check-state` | Проверка свойства автомата по коду и трасса в Mermaid | [Открыть](../skills/model-check-state/SKILL.md) |
-| `manage-resources` | Жизненный цикл и очистка собственных ресурсов | [Открыть](../skills/manage-resources/SKILL.md) |
-| `migrate-contract` | Миграция контрактов и всех потребителей | [Открыть](../skills/migrate-contract/SKILL.md) |
-| `measure-performance` | Измерение ускорения без потери покрытия | [Открыть](../skills/measure-performance/SKILL.md) |
-| `trace-history` | Причины решений по истории и источникам | [Открыть](../skills/trace-history/SKILL.md) |
+| `principles` | Критерии архитектуры, состояния и проверки | [Открыть](../skills/principles/SKILL.md) |
+| `design` | Проектирование модели и границ изменения | [Открыть](../skills/design/SKILL.md) |
+| `ui` | Пользовательский сценарий, компоненты и визуальная проверка UI | [Открыть](../skills/ui/SKILL.md) |
+| `impact` | Последствия изменения и затронутые потребители | [Открыть](../skills/impact/SKILL.md) |
+| `simplify` | Упрощение готового diff без расширения задачи | [Открыть](../skills/simplify/SKILL.md) |
+| `state` | Владение состоянием и конкурентными записями | [Открыть](../skills/state/SKILL.md) |
+| `model-check` | Проверка свойства автомата по коду и трасса в Mermaid | [Открыть](../skills/model-check/SKILL.md) |
+| `resources` | Жизненный цикл и очистка собственных ресурсов | [Открыть](../skills/resources/SKILL.md) |
+| `migrate` | Миграция контрактов и всех потребителей | [Открыть](../skills/migrate/SKILL.md) |
+| `perf` | Измерение ускорения без потери покрытия | [Открыть](../skills/perf/SKILL.md) |
+| `why` | Причины решений по истории и источникам | [Открыть](../skills/why/SKILL.md) |
 
 ## Выполнение и продолжение
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
 | `faust-mode` | Включение полного процесса на весь чат до `/faust-mode-off` | [Открыть](../skills/faust-mode/SKILL.md) |
-| `plan-work` | План законченных этапов, зависимостей и проверок | [Открыть](../skills/plan-work/SKILL.md) |
-| `delegate-work` | Поручения, владение и завершение подагентов | [Открыть](../skills/delegate-work/SKILL.md) |
-| `checkpoint-task` | Сохранение проверяемой точки продолжения | [Открыть](../skills/checkpoint-task/SKILL.md) |
-| `resume-task` | Продолжение задачи со сверкой живого состояния | [Открыть](../skills/resume-task/SKILL.md) |
-| `prepare-verification` | Подготовка воспроизводимой проверки проекта | [Открыть](../skills/prepare-verification/SKILL.md) |
-| `verify-project` | Проверка проекта через реальный сценарий | [Открыть](../skills/verify-project/SKILL.md) |
-| `maintain-verification` | Поддержание актуальности проектной проверки | [Открыть](../skills/maintain-verification/SKILL.md) |
+| `plan` | План законченных этапов, зависимостей и проверок | [Открыть](../skills/plan/SKILL.md) |
+| `delegate` | Поручения, владение и завершение подагентов | [Открыть](../skills/delegate/SKILL.md) |
+| `checkpoint` | Сохранение проверяемой точки продолжения | [Открыть](../skills/checkpoint/SKILL.md) |
+| `resume` | Продолжение задачи со сверкой живого состояния | [Открыть](../skills/resume/SKILL.md) |
+| `test-setup` | Подготовка воспроизводимой проверки проекта | [Открыть](../skills/test-setup/SKILL.md) |
+| `test` | Проверка проекта через реальный сценарий | [Открыть](../skills/test/SKILL.md) |
+| `test-update` | Поддержание актуальности проектной проверки | [Открыть](../skills/test-update/SKILL.md) |
 
 ## PR и MR
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
 | `watch-pr` | Состояние и сопровождение PR или MR | [Открыть](../skills/watch-pr/SKILL.md) |
-| `resolve-review` | Разбор и исправление замечаний ревью | [Открыть](../skills/resolve-review/SKILL.md) |
-| `ship-pr` | Слияние проверенной ревизии PR или MR | [Открыть](../skills/ship-pr/SKILL.md) |
+| `feedback` | Разбор и исправление замечаний ревью | [Открыть](../skills/feedback/SKILL.md) |
+| `merge` | Слияние проверенной ревизии PR или MR | [Открыть](../skills/merge/SKILL.md) |
 
 ## Предметные инструменты
 
@@ -61,7 +62,7 @@
 | --- | --- | --- |
 | `python` | Python-код, окружение, типы и ресурсы | [Открыть](../skills/python/SKILL.md) |
 | `no-comments` | Понятный код без лишних комментариев, с сохранением внешних ограничений | [Открыть](../skills/no-comments/SKILL.md) |
-| `find-docs` | Проверка API по документации нужной версии | [Открыть](../skills/find-docs/SKILL.md) |
+| `docs` | Проверка API по документации нужной версии | [Открыть](../skills/docs/SKILL.md) |
 | `glab` | GitLab CLI для операций, недоступных через MCP | [Открыть](../skills/glab/SKILL.md) |
 | `playwright-cli` | Работа с веб-интерфейсом через Playwright CLI | [Открыть](../skills/playwright-cli/SKILL.md) |
 
@@ -69,9 +70,9 @@
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
-| `write-text` | Новый авторский текст, комментарий, ответ, идеи, названия, план или адаптация под другую аудиторию, формат или площадку. Вызов `$fstack:write-text` | [Открыть](../skills/write-text/SKILL.md), [English](../skills/write-text/SKILL_en.md) |
-| `edit-text` | Вычитка, упрощение или сокращение текста для той же аудитории в прежнем формате. Вызов `$fstack:edit-text` | [Открыть](../skills/edit-text/SKILL.md), [English](../skills/edit-text/SKILL_en.md) |
-| `research-for-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов `$fstack:research-for-text` | [Открыть](../skills/research-for-text/SKILL.md), [English](../skills/research-for-text/SKILL_en.md) |
+| `write` | Новый авторский текст, комментарий, ответ, идеи, названия, план или адаптация под другую аудиторию, формат или площадку. Вызов `$fstack:write` | [Открыть](../skills/write/SKILL.md), [English](../skills/write/SKILL_en.md) |
+| `edit` | Вычитка, упрощение или сокращение текста для той же аудитории в прежнем формате. Вызов `$fstack:edit` | [Открыть](../skills/edit/SKILL.md), [English](../skills/edit/SKILL_en.md) |
+| `research-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов `$fstack:research-text` | [Открыть](../skills/research-text/SKILL.md), [English](../skills/research-text/SKILL_en.md) |
 | `deepread` | Разбор присланного материала и выполнение поручения по нему с проверкой данных по источнику. Вызов `$fstack:deepread` | [Открыть](../skills/deepread/SKILL.md) |
 
 Поиск можно запросить отдельно или подключить к написанию и правке, когда нужны
@@ -81,6 +82,6 @@
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
-| `use-memory` | Поправки проекта и общие предпочтения в Obsidian | [Открыть](../skills/use-memory/SKILL.md) |
-| `use-rtk` | Сокращение шума RTK с сохранением доказательств | [Открыть](../skills/use-rtk/SKILL.md) |
-| `codex-config-evaluation` | Контролируемое сравнение настроек и навыков | [Открыть](../skills/codex-config-evaluation/SKILL.md) |
+| `memory` | Поправки проекта и общие предпочтения в Obsidian | [Открыть](../skills/memory/SKILL.md) |
+| `rtk` | Сокращение шума RTK с сохранением доказательств | [Открыть](../skills/rtk/SKILL.md) |
+| `eval` | Контролируемое сравнение настроек и навыков | [Открыть](../skills/eval/SKILL.md) |

@@ -1,0 +1,6 @@
+interface:
+  display_name: Подготовка воспроизводимой проверки проекта
+  short_description: Подготовка воспроизводимой проверки проекта
+  default_prompt: "С помощью $fstack:test-setup подготовь воспроизводимую инструкцию на основе действующих команд проекта."
+policy:
+  allow_implicit_invocation: false

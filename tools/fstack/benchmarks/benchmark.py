@@ -37,7 +37,7 @@ def fingerprint(paths, root=ROOT):
 
 def inputs():
     runtime = ROOT / "tools/fstack"
-    templates = ROOT / "skills/use-memory/assets/vault"
+    templates = ROOT / "skills/memory/assets/vault"
     if not (templates / "Home.md").is_file():
         raise ValueError("Нет обязательного шаблона памяти Home.md")
     return {

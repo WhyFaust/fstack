@@ -1,0 +1,6 @@
+interface:
+  display_name: Проектирование модели и границ изменения
+  short_description: Проектирование модели и границ изменения
+  default_prompt: Используй $fstack:design, чтобы разрешить вопрос модели, границ или интерфейса и определить проверку выбранного решения.
+policy:
+  allow_implicit_invocation: false

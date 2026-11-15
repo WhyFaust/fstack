@@ -5,7 +5,7 @@ license: MIT
 compatibility: Установленный glab с авторизацией для целевого GitLab; доступ к репозиторию и API.
 metadata:
   short-description: GitLab CLI для операций, недоступных через MCP
-  version: 2.1.3
+  version: 2.2.0
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -16,14 +16,14 @@ metadata:
 
 Сначала проверь возможности и фактическую доступность GitLab MCP. Если нужной
 операции нет или повторные timeout мешают её выполнению, сверив состояние,
-область и авторизацию по fstack:verify-result, используй CLI. Отказ политики
+область и авторизацию по fstack:verify, используй CLI. Отказ политики
 или доступа не разрешает такой переход и не является основанием менять токен.
 Установи хост, проект, MR, ветку и ревизию. Если задача относится к другому проекту
 или есть несколько remotes, проверь целевой проект чтением перед записью. Номер MR
 имеет смысл в пределах проекта. Неизвестные опции проверяй через `glab <command> --help`.
 
 Для состояния и сопровождения MR используй fstack:watch-pr, для замечаний —
-fstack:resolve-review, для явно разрешённого слияния — fstack:ship-pr.
+fstack:feedback, для явно разрешённого слияния — fstack:merge.
 Этот навык задаёт транспортные команды и не запускает отдельный watcher.
 
 ## Порядок работы
@@ -55,6 +55,12 @@ MR, комментарий, retry, approval и merge должны входить
 ручной job используй `POST projects/$job_project_id/jobs/$job_id/play`.
 Сверь ID из ответа с последующим чтением pipeline или job.
 [API pipelines MR](https://docs.gitlab.com/api/merge_requests/#create-merge-request-pipeline) · [API ручных jobs](https://docs.gitlab.com/api/jobs/#run-a-job)
+
+Для назначения участников на существующем MR передай JSON с `assignee_ids`
+и `reviewer_ids` в `PUT projects/$target_project_id/merge_requests/$mr_iid`
+через `glab api --input`. Укажи только обновляемые поля и сохрани действующие
+назначения. Сверь итоговые `assignees` и `reviewers` последующим GET.
+[API назначения участников](https://docs.gitlab.com/api/merge_requests/#update-a-merge-request)
 
 ```bash
 glab mr create --draft --push --title "$title" --description "$description"
@@ -99,6 +105,7 @@ glab api "projects/:id/issues/$issueIid/notes" -F "body=@$notePath"
 
 Перед разрешёнными approve и merge дождись пересчёта готовности и одобрений.
 В каждую операцию передай полный проверенный source SHA параметром `sha`.
+Для одобрения выполни `glab api --method POST "projects/$target_project_id/merge_requests/$mr_iid/approve" --raw-field "sha=$source_sha"`.
 Между записями перечитай состояние MR, approvals и CI. При несовпадении SHA
 проверь новую ревизию. Если проект требует merge train, проследи pipeline
 поезда до фактической интеграции. [API одобрений](https://docs.gitlab.com/api/merge_request_approvals/),
