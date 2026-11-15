@@ -17,6 +17,24 @@ class ClientError(RuntimeError):
     pass
 
 
+DELEGATION_TYPES = {"collabAgentToolCall", "subAgentActivity"}
+
+
+def delegations(result: dict) -> list[dict]:
+    activities = []
+    for entry in result.get("items", []):
+        item = entry["item"]
+        if item.get("type") not in DELEGATION_TYPES:
+            continue
+        configured = result.get("agent_threads", {}).get(item.get("agentThreadId"))
+        activities.append({**item, **({"configured": configured} if configured else {})})
+    return activities
+
+
+def agent_settings(thread: dict) -> dict:
+    return {key: thread[key] for key in ("id", "model", "reasoningEffort") if key in thread}
+
+
 def environment(home: Path) -> dict[str, str]:
     # Не передавать исполняемому решению ключи сервисов из окружения разработчика.
     keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
@@ -180,8 +198,12 @@ def observe(result: dict, message: dict) -> None:
         result["reroutes"].append(params)
     elif method == "item/completed":
         item = params.get("item", {})
-        if item.get("type") in {"agentMessage", "commandExecution", "fileChange", "collabAgentToolCall"}:
+        if item.get("type") in {"agentMessage", "commandExecution", "fileChange"} | DELEGATION_TYPES:
             result["items"].append({"threadId": params.get("threadId"), "item": item})
+    elif method == "thread/started":
+        thread = params.get("thread", {})
+        if thread.get("id") and thread["id"] != result.get("thread_id"):
+            result.setdefault("agent_threads", {})[thread["id"]] = agent_settings(thread)
     elif method == "error":
         result["errors"].append(params)
 
@@ -234,6 +256,16 @@ def run(executable: str, home: Path, workspace: Path, prompt: str, instructions:
         finals = [m for m in messages if m.get("phase") == "final_answer"]
         finals = finals or [m for m in messages if m.get("phase") is None]
         result["final"] = finals[-1]["text"] if finals else ""
+        agent_ids = {x["item"]["agentThreadId"] for x in result["items"]
+                     if x["item"]["type"] == "subAgentActivity" and x["item"].get("kind") == "started"}
+        for agent_id in sorted(agent_ids):
+            if result.get("agent_threads", {}).get(agent_id, {}).get("model"):
+                continue
+            try:
+                child = server.request("thread/read", {"threadId": agent_id, "includeTurns": False}, deadline)
+                result.setdefault("agent_threads", {})[agent_id] = agent_settings(child["thread"])
+            except (ClientError, TimeoutError, KeyError) as exc:
+                result.setdefault("agent_metadata_errors", {})[agent_id] = str(exc)
     except TimeoutError as exc:
         result.update(status="timeout", error=str(exc))
         if thread_id and turn_id:

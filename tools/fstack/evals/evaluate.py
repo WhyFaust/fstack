@@ -477,8 +477,7 @@ def report(args):
                      "incomplete": sum(r["status"] != "completed" or r.get("check", {}).get("status") == "unavailable" for r in runs),
                      "seconds": round(sum(r.get("elapsed_seconds", 0) for r in runs), 3),
                      "observed_usage": [r.get("usage") for r in runs if r.get("usage")],
-                     "delegations": [x["item"] for r in runs for x in r.get("items", [])
-                                     if x["item"].get("type") == "collabAgentToolCall"]})
+                     "delegations": [item for r in runs for item in app_server.delegations(r)]})
     judgments = [read(p) for p in sorted((root / "judgments").glob("*.json"))]
     by_id = {(r["case"], r["repeat"], r["variant"]): r for r in results}
     calibration_path = root / "calibration.json"

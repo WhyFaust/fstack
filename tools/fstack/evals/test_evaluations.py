@@ -18,6 +18,28 @@ import verdicts
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_v2_agent_activity_preserves_configured_routing_in_report(self):
+        result = {"thread_id": "root", "items": [], "reroutes": []}
+        activity = {"type": "subAgentActivity", "id": "spawn-1", "kind": "started",
+                    "agentThreadId": "child", "agentPath": "/root/facts"}
+        app_server.observe(result, {"method": "thread/started", "params": {"thread": {
+            "id": "child", "model": "gpt-6-luna", "reasoningEffort": "low"}}})
+        for method in ("item/started", "item/completed"):
+            app_server.observe(result, {"method": method, "params": {
+                "threadId": "root", "turnId": "turn-1", "item": activity}})
+        self.assertEqual(len(result["items"]), 1)
+        delegation = app_server.delegations(result)[0]
+        self.assertEqual(delegation["agentThreadId"], "child")
+        self.assertEqual(delegation["configured"]["model"], "gpt-6-luna")
+        self.assertEqual(delegation["configured"]["reasoningEffort"], "low")
+        reroute = {"threadId": "child", "turnId": "child-turn", "fromModel": "gpt-6-luna",
+                   "toModel": "gpt-6-sol", "reason": "capacity"}
+        app_server.observe(result, {"method": "model/rerouted", "params": reroute})
+        self.assertEqual(result["reroutes"], [reroute])
+        old = {"type": "collabAgentToolCall", "model": "gpt-6-sol", "reasoningEffort": "high"}
+        app_server.observe(result, {"method": "item/completed", "params": {"threadId": "root", "item": old}})
+        self.assertEqual(app_server.delegations(result)[1], old)
+
     def test_repetitions_have_one_attempt_per_variant_in_randomized_order(self):
         plan = {"cases": ["one", "two"], "repetitions": 3, "seed": 17,
                 "variants": [{"id": "a"}, {"id": "b"}]}
