@@ -18,6 +18,18 @@ import verdicts
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_corpus_rejects_failure_from_an_unrelated_missing_helper(self):
+        case = {"id": "large-library", "split": "development",
+                "before_failure": ["StoreError: Memory file is too large"]}
+        unrelated = {"status": "fail", "output": "AttributeError: module has no attribute ensure_library"}
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(corpus, "cases", return_value=[case]), \
+                patch.object(corpus, "materialize"), \
+                patch.object(corpus, "grade", side_effect=[unrelated, {"status": "pass"}]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            root = Path(directory)
+            self.assertFalse(corpus.validate(root, root / "bank.json", root / "check"))
+
     def test_v2_agent_activity_preserves_configured_routing_in_report(self):
         result = {"thread_id": "root", "items": [], "reroutes": []}
         activity = {"type": "subAgentActivity", "id": "spawn-1", "kind": "started",
@@ -148,7 +160,8 @@ class EvaluationTests(unittest.TestCase):
 
     def test_grade_uses_saved_source_instead_of_solver_bytecode(self):
         case = {"id": "cache", "prompt": "Исправь реализацию", "oracle_file": "scripts/tests/test_memory_store.py",
-                "reference": "ref", "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_one"}
+                "reference": "ref", "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_one",
+                "split": "control", "before_failure": []}
         oracle = b'''import unittest, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))

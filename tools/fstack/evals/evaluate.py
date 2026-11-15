@@ -232,8 +232,14 @@ def execute(args):
                 app_server.profile(reference_home, reference, executable=args.codex, editable=False)
                 result["oracle_preflight"] = corpus.grade(args.repo, case, reference,
                     sandbox_prefix(args.codex, reference_home, reference), home=reference_home)
-                if result["oracle_preflight"]["status"] != "pass":
-                    result.update(status="environment_error", error="Исправленный эталон не прошёл проверку в этой среде; модель не запускалась")
+                base_check = temp / "base-check"
+                shutil.copytree(before, base_check)
+                base_home = temp / "base-home"
+                app_server.profile(base_home, base_check, executable=args.codex, editable=False)
+                result["base_preflight"] = corpus.grade(args.repo, case, base_check,
+                    sandbox_prefix(args.codex, base_home, base_check), home=base_home)
+                if not corpus.valid_pair(case, result["base_preflight"], result["oracle_preflight"]):
+                    result.update(status="environment_error", error="Оракул или исходный отказ не совпадает с контрактом случая; модель не запускалась")
                     write(target / "result.json", result)
                     break
                 try:
@@ -343,9 +349,10 @@ def calibrate(args):
             corpus.materialize(args.repo, case, source[name], name == "reference")
             checked = temp / (name + "-checked")
             shutil.copytree(source[name], checked)
-            checks[name] = corpus.grade(args.repo, case, checked)["status"]
-        if checks != {"base": "fail", "reference": "pass"}:
-            raise ValueError("Калибровочный оракул не различает дефект и исправление")
+            checks[name] = corpus.grade(args.repo, case, checked)
+        if not corpus.valid_pair(case, checks["base"], checks["reference"]):
+            raise ValueError("Калибровочный оракул не подтверждает заявленный исходный отказ и исправление")
+        checks = {name: value["status"] for name, value in checks.items()}
         patch = diff(source["base"], source["reference"])
         for left, right, expected in [("base", "reference", "B"), ("reference", "base", "A"), ("reference", "reference", "tie")][:args.max_attempts]:
             evidence = {"prompt": case["prompt"], "criteria": case["criteria"]}

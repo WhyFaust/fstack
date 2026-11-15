@@ -87,6 +87,10 @@ def cases(bank: Path = BANK) -> list[dict]:
                 raise ValueError("Корпус требует полные SHA коммитов")
         if case["split"] not in {"development", "holdout", "control"}:
             raise ValueError("Неизвестная группа задач")
+        failure = case.get("before_failure")
+        if (not isinstance(failure, list) or any(not isinstance(x, str) or not x.strip() for x in failure)
+                or bool(failure) != (case["split"] != "control")):
+            raise ValueError("Для изменяемого поведения нужен известный исходный отказ; для контроля список пуст")
         if case["oracle_file"] not in {"scripts/tests/test_memory_store.py", "scripts/tests/test_memory_hooks.py"}:
             raise ValueError("Неизвестный проверяющий модуль")
         if not re.fullmatch(r"scripts\.tests\.test_memory_(store|hooks)\.Memory(Store|Hook)Tests\.test_[a-z0-9_]+", case["test"]):
@@ -137,6 +141,15 @@ def grade(repo: Path, case: dict, workspace: Path, command_prefix: list[str] = (
         return {"status": "unavailable", "error": "Превышено время проверки"}
 
 
+def valid_pair(case: dict, base: dict, reference: dict) -> bool:
+    if reference["status"] != "pass":
+        return False
+    if case["split"] == "control":
+        return base["status"] == "pass"
+    return (base["status"] == "fail" and bool(case["before_failure"])
+            and all(fragment in base.get("output", "") for fragment in case["before_failure"]))
+
+
 def validate(repo: Path, bank: Path, output: Path):
     output.mkdir(parents=True, exist_ok=False)
     check_storage(output)
@@ -147,8 +160,7 @@ def validate(repo: Path, bank: Path, output: Path):
             workspace = output / case["id"] / version
             materialize(repo, case, workspace, version == "reference")
             item[version] = grade(repo, case, workspace)
-        item["valid"] = item["reference"]["status"] == "pass" and item["base"]["status"] == (
-            "pass" if case["split"] == "control" else "fail")
+        item["valid"] = valid_pair(case, item["base"], item["reference"])
         results.append(item)
         print(f'{case["id"]}: {item["base"]["status"]} -> {item["reference"]["status"]}', flush=True)
     (output / "validation.json").write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
