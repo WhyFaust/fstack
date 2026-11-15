@@ -1,6 +1,7 @@
-mod version;
-
-use version::{change_level, check_series, series_version, version};
+use crate::{
+    package::{self, PACKAGE_SERIES, PACKAGE_VERSION},
+    version::{change_level, parse as version, series_version},
+};
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -15,8 +16,6 @@ use std::{
 };
 type Result<T> = std::result::Result<T, String>;
 const MANIFEST: &str = ".codex-plugin/plugin.json";
-const PACKAGE_VERSION: &str = "launchers/package-version";
-const PACKAGE_SERIES: &str = "launchers/package-series";
 const RUNTIME_ID: &str = "launchers/runtime-id";
 const BUILD_INPUTS: &[&str] = &[
     ".cargo",
@@ -53,66 +52,16 @@ fn updated_manifest(mut data: Value, number: &str) -> Result<Option<Vec<u8>>> {
         (serde_json::to_string_pretty(&data).map_err(|e| e.to_string())? + "\n").into_bytes(),
     ))
 }
-pub(super) fn check_package_version(root: &Path, number: &str) -> Result<()> {
-    let path = crate::package::contained(root, root, PACKAGE_VERSION, false)?;
-    if fs::read(path).map_err(|e| e.to_string())? != format!("{number}\n").as_bytes() {
-        return Err(format!(
-            "Версия запускателя {PACKAGE_VERSION}: ожидается {number}; выполните release prepare"
-        ));
-    }
-    let series = root.join(PACKAGE_SERIES);
-    if series.exists() {
-        let series = crate::package::contained(root, root, PACKAGE_SERIES, false)?;
-        let first = fs::read_to_string(series).map_err(|e| e.to_string())?;
-        check_series(first.trim(), number)?;
-    }
-    Ok(())
-}
 fn check_versions(root: &Path) -> Result<String> {
     let data = manifest(root)?;
-    let current = data["version"].as_str().ok_or("Нет версии")?;
-    version(current)?;
-    check_package_version(root, current)?;
-    let mut count = 0;
-    for folder in fs::read_dir(root.join("skills")).map_err(|e| e.to_string())? {
-        let folder = folder.map_err(|e| e.to_string())?.path();
-        if !folder.is_dir() {
-            continue;
-        }
-        let mut previous: Option<String> = None;
-        for entry in fs::read_dir(folder).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            if !path
-                .file_name()
-                .and_then(|v| v.to_str())
-                .is_some_and(|v| v.starts_with("SKILL") && v.ends_with(".md"))
-            {
-                continue;
-            }
-            let (data, _) = parse_skill(&fs::read_to_string(&path).map_err(|e| e.to_string())?)?;
-            let number = data["metadata"]["version"]
-                .as_str()
-                .ok_or("Некорректная версия навыка")?;
-            version(number)?;
-            if previous.as_deref().is_some_and(|v| v != number) {
-                return Err(format!(
-                    "Версии локализаций навыка различаются: {}",
-                    path.display()
-                ));
-            }
-            previous = Some(number.into());
-            count += 1;
-        }
-    }
-    if count == 0 {
-        return Err("Не найдены навыки".into());
-    }
-    Ok(current.into())
+    let number = data["version"].as_str().ok_or("Нет версии")?;
+    package::check_versions(root, number)?;
+    Ok(number.into())
 }
 trait Runner {
     fn run(&self, root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>>;
     fn check(&self, root: &Path) -> Result<()> {
-        crate::package::check(root).map(|_| ())
+        package::check(root).map(|_| ())
     }
 }
 struct System;
@@ -227,7 +176,7 @@ impl Release<'_> {
         let Some(previous) = data["metadata"]["previous-name"].as_str() else {
             return Ok(None);
         };
-        if !crate::package::valid_skill_name(previous) {
+        if !package::valid_skill_name(previous) {
             return Err(format!("{entry}: некорректное прежнее имя навыка"));
         }
         let path = format!("skills/{previous}/SKILL.md");
@@ -506,7 +455,7 @@ impl Release<'_> {
                 .map_err(|e| e.to_string())?;
         } else {
             self.check_runtime_id("HEAD")?;
-            check_package_version(self.root, &expected)?;
+            package::check_launcher_version(self.root, &expected)?;
         }
         if let Some(bytes) = self.version_contents(&expected)? {
             if !write {

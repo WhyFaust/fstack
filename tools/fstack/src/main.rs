@@ -7,6 +7,7 @@ mod memory;
 mod package;
 mod profile_migration;
 mod release;
+mod version;
 
 type Result<T> = std::result::Result<T, String>;
 

@@ -58,7 +58,7 @@ MR, комментарий, retry, approval и merge должны входить
 
 Для назначения участников на существующем MR передай JSON с `assignee_ids`
 и `reviewer_ids` в `PUT projects/$target_project_id/merge_requests/$mr_iid`
-через `glab api --input`. Укажи только обновляемые поля и сохрани действующие
+через `glab api --hostname "$gitlab_host" --input`. Укажи только обновляемые поля и сохрани действующие
 назначения. Сверь итоговые `assignees` и `reviewers` последующим GET.
 [API назначения участников](https://docs.gitlab.com/api/merge_requests/#update-a-merge-request)
 
@@ -105,7 +105,13 @@ glab api "projects/:id/issues/$issueIid/notes" -F "body=@$notePath"
 
 Перед разрешёнными approve и merge дождись пересчёта готовности и одобрений.
 В каждую операцию передай полный проверенный source SHA параметром `sha`.
-Для одобрения выполни `glab api --method POST "projects/$target_project_id/merge_requests/$mr_iid/approve" --raw-field "sha=$source_sha"`.
+Для одобрения выполни следующую команду.
+
+```bash
+glab api --hostname "$gitlab_host" --method POST \
+  "projects/$target_project_id/merge_requests/$mr_iid/approve" --raw-field "sha=$source_sha"
+```
+
 Между записями перечитай состояние MR, approvals и CI. При несовпадении SHA
 проверь новую ревизию. Если проект требует merge train, проследи pipeline
 поезда до фактической интеграции. [API одобрений](https://docs.gitlab.com/api/merge_request_approvals/),

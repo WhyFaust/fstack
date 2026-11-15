@@ -5,7 +5,10 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
-use crate::{release, Result};
+use crate::{version, Result};
+
+pub(crate) const PACKAGE_VERSION: &str = "launchers/package-version";
+pub(crate) const PACKAGE_SERIES: &str = "launchers/package-series";
 
 macro_rules! rx {
     ($pattern:expr) => {{
@@ -566,13 +569,25 @@ pub(crate) fn resources(folder: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn versions(root: &Path, manifest: &Value) -> Result<()> {
-    let pattern = rx!(r"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z");
-    require(
-        pattern.is_match(string(manifest, "version")?),
-        "Некорректная версия пакета",
-    )?;
-    release::check_package_version(root, string(manifest, "version")?)?;
+pub(crate) fn check_launcher_version(root: &Path, number: &str) -> Result<()> {
+    let path = contained(root, root, PACKAGE_VERSION, false)?;
+    if fs::read(path).map_err(|e| e.to_string())? != format!("{number}\n").as_bytes() {
+        return Err(format!(
+            "Версия запускателя {PACKAGE_VERSION}: ожидается {number}; выполните release prepare"
+        ));
+    }
+    let series = root.join(PACKAGE_SERIES);
+    if series.exists() {
+        let series = contained(root, root, PACKAGE_SERIES, false)?;
+        let first = fs::read_to_string(series).map_err(|e| e.to_string())?;
+        version::check_series(first.trim(), number)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn check_versions(root: &Path, number: &str) -> Result<()> {
+    version::parse(number)?;
+    check_launcher_version(root, number)?;
     let mut count = 0;
     for folder in entries(&root.join("skills"))? {
         if !folder.is_dir() {
@@ -588,7 +603,7 @@ fn versions(root: &Path, manifest: &Value) -> Result<()> {
                 )?;
                 let data = frontmatter(&path)?;
                 let version = string(&data["metadata"], "version")?;
-                require(pattern.is_match(version), "Некорректная версия навыка")?;
+                version::parse(version)?;
                 require(
                     previous.as_deref().is_none_or(|v| v == version),
                     "Версии локализаций навыка различаются",
@@ -703,7 +718,7 @@ pub(crate) fn check(root: &Path) -> Result<String> {
     native_notices(root)?;
     let manifest = json_file(&root.join(".codex-plugin/plugin.json"))?;
     require(manifest["name"] == "fstack", "Некорректное имя плагина")?;
-    versions(root, &manifest)?;
+    check_versions(root, string(&manifest, "version")?)?;
     require(
         manifest["skills"] == "./skills/",
         "Некорректный каталог навыков",
