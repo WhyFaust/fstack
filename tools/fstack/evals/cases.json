@@ -13,7 +13,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_large_project_pages_keep_their_links_and_content",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Сохранение и подтверждение заметок работают с большой страницей проекта под текущим именем и Project.md: текст страницы не меняется, ссылки ведут на выбранную страницу.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -28,7 +28,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_project_marker_in_body_keeps_legacy_page_selected",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Маркер в теле пользовательской страницы не делает её служебной: для связей памяти выбирается служебная Project.md.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -43,7 +43,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_forget_can_remove_a_damaged_record_by_id",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Повреждённая запись удаляется по известному ID и не возвращается в поиск из устаревшей синхронизированной копии.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -58,7 +58,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_unrelated_draft_metadata_does_not_block_other_entries",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Изменённые метаданные постороннего черновика не блокируют чтение остальных решений; правила подтверждения и скрытия заменённых записей сохраняются.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -73,7 +73,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_large_library_does_not_block_memory_operations",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Большая пользовательская Library.base не блокирует операции памяти и сохраняет своё содержимое.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -88,7 +88,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_graph_links_allow_valid_slugs_that_resemble_secrets",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Проект sk-platform-integration получает связи памяти; похожие на секреты значения в содержимом заметок по-прежнему отклоняются.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -103,7 +103,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_named_project_migration_preserves_edits_and_waits_for_records_before_pruning",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Переход к именованной странице сохраняет ручные правки и не удаляет Project.md до получения зависимых записей.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -118,7 +118,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_named_project_collision_and_divergent_copies_are_preserved",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Миграция не перезаписывает пользовательский файл на целевом пути или расходящиеся копии и сообщает о пропущенном конфликте.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -133,7 +133,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_prune_retains_legacy_project_page_while_approved_record_is_missing",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Очистка сохраняет Project.md, пока подтверждённая запись ещё не синхронизирована.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -148,7 +148,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_inbox_promotion_preserves_manual_edit_and_deduplicates_across_profiles",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Подтверждение черновика из другого профиля сохраняет ручные правки и не создаёт дубликат.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -163,7 +163,7 @@
       "oracle_file": "scripts/tests/test_memory_store.py",
       "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_supersedes_and_tombstone_hide_stale_sync_copy",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Заменённая или забытая запись не возвращается в поиск из устаревшей копии; действующее решение остаётся доступным.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
@@ -178,7 +178,7 @@
       "oracle_file": "scripts/tests/test_memory_hooks.py",
       "test": "scripts.tests.test_memory_hooks.MemoryHookTests.test_stage_respects_inbox_mode_approval_and_forgetting",
       "criteria": [
-        "Решена заявленная проблема без ослабления контракта.",
+        "Повторное подключение перемещённого vault сохраняет выбранный inbox; явная смена режима, подтверждение и забывание продолжают работать.",
         "Не потеряны пользовательские данные и действующие ограничения.",
         "Изменение относится к причине, без дублирующих механизмов и необоснованного расширения."
       ]
