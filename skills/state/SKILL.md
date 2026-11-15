@@ -4,8 +4,7 @@ description: "Определяет гарантии записи и восста
 license: MIT
 metadata:
   short-description: Владение состоянием и конкурентными записями
-  version: 2.0.1
-  previous-name: manage-state
+  version: 2.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -41,5 +40,5 @@ metadata:
 
 Проверь опасный порядок событий: конкурентную запись, прерывание между шагами,
 повтор и отказ восстановления. Ошибка очистки не должна скрывать первичный сбой.
-Ресурсную часть разбери через fstack:resources, доказательства — через
-fstack:verify. Передай гарантии выбранного механизма и оставшиеся пределы.
+Ресурсную часть разбери через [$fstack:resources](../resources/SKILL.md), доказательства — через
+[$fstack:verify](../verify/SKILL.md). Передай гарантии выбранного механизма и оставшиеся пределы.

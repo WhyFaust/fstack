@@ -190,12 +190,7 @@ pub fn run(arguments: &[OsString], package: &Path) -> Result<()> {
     let result = if command == "hook" {
         let event = args
             .get(1)
-            .filter(|s| {
-                matches!(
-                    s.as_str(),
-                    "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop"
-                )
-            })
+            .filter(|s| matches!(s.as_str(), "UserPromptSubmit" | "PostToolUse" | "Stop"))
             .ok_or("Invalid memory hook event")?;
         if args.len() != 2 {
             return Err("Invalid memory hook arguments".into());
@@ -306,8 +301,6 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
         ("inbox", []) => store.inbox(&b),
         ("approve", [id]) => store.approve(&b, id),
         ("forget", [id]) => store.forget(&b, id),
-        ("migrate", []) => store.migrate(&b, false),
-        ("migrate", [flag]) if flag == "--prune-legacy" => store.migrate(&b, true),
         ("remember", []) => store.save(
             &b,
             &read_json(std::io::stdin().lock(), 32768)?,

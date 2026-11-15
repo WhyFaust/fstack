@@ -522,7 +522,7 @@ def report(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=corpus.ROOT)
-    parser.add_argument("--bank", type=Path, default=corpus.BANK)
+    parser.add_argument("--bank", type=Path, help="Корпус выбранного эксперимента")
     commands = parser.add_subparsers(dest="command", required=True)
     validate = commands.add_parser("validate-corpus")
     validate.add_argument("--output", type=Path, required=True)
@@ -549,13 +549,15 @@ def main():
             sub.add_argument("--model", required=True)
             sub.add_argument("--effort", choices=["low", "medium", "high", "xhigh"], default="high")
         if name == "calibrate":
-            sub.add_argument("--case", default="large-project")
+            sub.add_argument("--case", required=True)
     preflight = commands.add_parser("doctor")
     preflight.add_argument("--codex", required=True)
     preflight.add_argument("--auth-home", type=Path, required=True)
     preflight.add_argument("--output", type=Path, required=True)
     preflight.add_argument("--probe-model")
     args = parser.parse_args()
+    if args.command != "doctor" and args.bank is None:
+        parser.error("Для эксперимента укажи --bank PATH")
     if hasattr(args, "max_attempts") and args.max_attempts < 1:
         raise ValueError("max-attempts должен быть положительным")
     if args.command == "validate-corpus":

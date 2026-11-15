@@ -120,7 +120,6 @@ fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
         assert!(context.contains("stage --turn"));
         assert!(!context.contains("включён faust-mode"));
     }
-    assert_eq!(f.hook("SessionStart", "plain", json!({})), json!({}));
     assert!(!f.store.state.join("faust-mode-sessions").exists());
     assert!(!f.store.state.join("memory-sessions").exists());
 }
@@ -272,23 +271,17 @@ fn validation_and_stable_identity() {
     assert!(decode("e30=").is_err());
 }
 #[test]
-fn library_upgrade_only_replaces_the_exact_previous_template() {
+fn existing_library_is_preserved() {
     let f = Fixture::new("auto", "pilot");
     let path = f.binding.root.join("Library.base");
-    let old = include_str!("../../tests/fixtures/library-10.1.base");
-    fs::write(&path, old).unwrap();
-    views::ensure_library(&f.binding.root, &f.store.package).unwrap();
-    let updated = fs::read_to_string(&path).unwrap();
-    assert!(updated.contains("displayName: Основание"));
-    assert!(updated.contains("direction: DESC"));
-    let custom = format!("{old}\n# Личная настройка таблицы\n");
-    fs::write(&path, &custom).unwrap();
+    let custom = "views: []\n# Personal table settings\n";
+    fs::write(&path, custom).unwrap();
     views::ensure_library(&f.binding.root, &f.store.package).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), custom);
 }
 
 #[test]
-fn obsidian_properties_survive_read_approval_and_migration() {
+fn obsidian_properties_survive_read_and_approval() {
     let f = Fixture::new("inbox", "pilot");
     for properties in [
         "tags: [manual, project/rules]\naliases: [\"Порог чтения\"]\ncssclasses: compact\n",
@@ -302,7 +295,6 @@ fn obsidian_properties_survive_read_approval_and_migration() {
         assert_eq!(f.store.inbox(&f.binding).unwrap().as_array().unwrap().len(), 1);
         let approved = f.store.approve(&f.binding, id(&entry)).unwrap();
         assert_eq!(approved["body"], entry["body"]);
-        f.store.migrate(&f.binding, false).unwrap();
         assert!(fs::read_to_string(&path).unwrap().contains(properties));
         assert_eq!(f.store.get(&f.binding, id(&entry)).unwrap(), approved);
         assert!(!f.store.search(&f.binding, "tags", 5).unwrap().as_array().unwrap().is_empty());
@@ -552,36 +544,6 @@ fn draft_noise_and_large_views_do_not_block_approved_status() {
     assert_eq!(fs::read_to_string(&page).unwrap(), text);
 }
 #[test]
-fn migration_preserves_legacy_orders_conflicts_and_prune() {
-    for marker_first in [false, true] {
-        let f = Fixture::new("inbox", "pilot");
-        let v = f.save("Legacy heliotrope", false);
-        let p = store::record(&f.root(), id(&v));
-        let raw = fs::read_to_string(&p).unwrap();
-        if marker_first {
-            fs::remove_file(&p).unwrap();
-        }
-        let marker = f.legacy("Approved", id(&v), None);
-        if marker_first {
-            assert_eq!(f.store.migrate(&f.binding, false).unwrap()["skipped"], 1);
-            assert_eq!(f.store.migrate(&f.binding, true).unwrap()["skipped"], 1);
-            fs::write(&p, &raw).unwrap();
-        }
-        assert_eq!(f.store.get(&f.binding, id(&v)).unwrap()["status"], "memory");
-        f.store.migrate(&f.binding, false).unwrap();
-        assert_eq!(f.store.migrate(&f.binding, false).unwrap()["updated"], 0);
-        assert_eq!(f.store.migrate(&f.binding, true).unwrap()["pruned"], 1);
-        assert!(!marker.exists());
-        assert_eq!(f.store.get(&f.binding, id(&v)).unwrap()["status"], "memory");
-        let old = f.legacy("Forgotten", id(&v), None);
-        f.store.migrate(&f.binding, false).unwrap();
-        assert!(f.store.get(&f.binding, id(&v)).is_err());
-        assert_eq!(f.store.migrate(&f.binding, true).unwrap()["pruned"], 1);
-        assert!(!old.exists());
-        assert!(p.exists());
-    }
-}
-#[test]
 fn legacy_tombstone_and_stale_approval_never_override_confirmed_predecessor() {
     let f = Fixture::new("auto", "pilot");
     let a = f.save("Alpha heliotrope", true);
@@ -592,15 +554,12 @@ fn legacy_tombstone_and_stale_approval_never_override_confirmed_predecessor() {
     f.store.forget(&f.binding, id(&current)).unwrap();
     let old = f.legacy("Approved", id(&current), Some(id(&b)));
     let forgot = f.legacy("Forgotten", id(&current), Some(id(&b)));
-    f.store.migrate(&f.binding, false).unwrap();
     assert!(f.store.get(&f.binding, id(&a)).is_err());
     assert!(f.store.get(&f.binding, id(&b)).is_ok());
-    let result = f.store.migrate(&f.binding, true).unwrap();
-    assert_eq!(result["skipped"], 2);
     assert!(old.exists() && forgot.exists());
 }
 #[test]
-fn project_page_migration_preserves_edits_and_collisions() {
+fn project_page_selection_preserves_user_notes() {
     let f = Fixture::new("auto", "pilot");
     let named = views::project_page(&f.root());
     let old = f.root().join("Project.md");
@@ -615,21 +574,8 @@ fn project_page_migration_preserves_edits_and_collisions() {
     assert!(fs::read_to_string(&record)
         .unwrap()
         .contains("/Project|pilot]]"));
-    f.store.migrate(&f.binding, false).unwrap();
-    assert!(fs::read_to_string(&named)
-        .unwrap()
-        .ends_with("My own notes\n"));
-    assert!(fs::read_to_string(&record)
-        .unwrap()
-        .contains("/pilot|pilot]]"));
-    f.store.migrate(&f.binding, true).unwrap();
-    assert!(!old.exists());
-    fs::write(&old, &raw).unwrap();
-    fs::write(&named, "Occupied user note").unwrap();
-    assert_eq!(f.store.migrate(&f.binding, false).unwrap()["skipped"], 1);
-    assert_eq!(fs::read_to_string(&named).unwrap(), "Occupied user note");
-    assert_eq!(f.store.migrate(&f.binding, true).unwrap()["skipped"], 1);
-    assert!(old.exists());
+    assert_eq!(fs::read_to_string(&old).unwrap(), raw);
+    assert!(!named.exists());
     fs::write(
         &named,
         "---\ntitle: mine\n---\n\nfstack_memory_project: pilot\n",
@@ -649,9 +595,7 @@ fn missing_pages_and_unmanaged_hub_fail_without_losing_records() {
         .save(&f.binding, &candidate("New heliotrope"), true, None, None)
         .is_err());
     assert!(f.store.approve(&f.binding, id(&v)).is_err());
-    assert_eq!(f.store.migrate(&f.binding, false).unwrap()["skipped"], 1);
     fs::write(f.binding.root.join("Projects.md"), "my hub").unwrap();
-    assert!(f.store.migrate(&f.binding, false).is_err());
     assert!(f.store.setup(&f.vault, &f.repo, "other", None).is_err());
     assert!(f.store.get(&f.binding, id(&v)).is_ok());
 }
@@ -1062,7 +1006,7 @@ fn promotion_rejects_oversize_without_losing_editable_inbox() {
     assert!(!p.exists());
 }
 #[test]
-fn confirmed_legacy_tombstones_upgrade_without_overriding_new_confirmation() {
+fn legacy_tombstones_respect_new_confirmation_without_rewriting() {
     let f = Fixture::new("auto", "pilot");
     let first = f.save("First heliotrope", true);
     let second = f.save("Second heliotrope", true);
@@ -1070,65 +1014,17 @@ fn confirmed_legacy_tombstones_upgrade_without_overriding_new_confirmation() {
         .with_file_name(format!("{}-forgotten.json", id(&second)));
     fs::write(&tomb, json!({"id":id(&second)}).to_string()).unwrap();
     f.legacy("Forgotten", id(&second), Some(id(&first)));
-    f.store.migrate(&f.binding, false).unwrap();
-    let v: Value = serde_json::from_str(&fs::read_to_string(&tomb).unwrap()).unwrap();
-    assert_eq!(v["supersedes"], first["id"]);
     assert!(f.store.get(&f.binding, id(&first)).is_err());
+    let v: Value = serde_json::from_str(&fs::read_to_string(&tomb).unwrap()).unwrap();
+    assert!(v.get("supersedes").is_none());
     fs::write(
         &tomb,
         json!({"id":id(&second),"supersedes":null}).to_string(),
     )
     .unwrap();
-    f.store.migrate(&f.binding, false).unwrap();
     let v: Value = serde_json::from_str(&fs::read_to_string(&tomb).unwrap()).unwrap();
     assert!(v["supersedes"].is_null());
     assert!(f.store.get(&f.binding, id(&first)).is_ok());
-}
-#[test]
-fn forgotten_records_relink_and_missing_approval_records_retain_legacy_page() {
-    let f = Fixture::new("inbox", "pilot");
-    let named = views::project_page(&f.root());
-    let old = f.root().join("Project.md");
-    fs::rename(&named, &old).unwrap();
-    let v = f.save("Late heliotrope", false);
-    let p = store::record(&f.root(), id(&v));
-    let raw = fs::read_to_string(&p).unwrap();
-    f.store.forget(&f.binding, id(&v)).unwrap();
-    fs::write(&p, &raw).unwrap();
-    f.store.migrate(&f.binding, false).unwrap();
-    assert!(fs::read_to_string(&p).unwrap().contains("/pilot|pilot]]"));
-    assert!(f.store.get(&f.binding, id(&v)).is_err());
-    let missing = "e".repeat(64);
-    let marker = f.legacy("Approved", &missing, None);
-    let r = f.store.migrate(&f.binding, true).unwrap();
-    assert!(r["skipped"].as_u64().unwrap() >= 2);
-    assert!(marker.exists() && old.exists());
-}
-#[test]
-fn legacy_project_slug_updates_in_place_and_keeps_unmanaged_hub() {
-    let f = Fixture::new("auto", "project");
-    assert_eq!(views::project_page(&f.root()), f.root().join("Project.md"));
-    let page = views::project_page(&f.root());
-    let raw = fs::read_to_string(&page).unwrap().replace(
-        "[[Codex Memory/Projects|Все проекты]]",
-        "[[Codex Memory/Home|Все проекты]]",
-    );
-    fs::write(&page, raw).unwrap();
-    f.store.migrate(&f.binding, false).unwrap();
-    assert!(page.exists());
-    let project_pages = fs::read_dir(f.root())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name())
-        .filter(|name| name.to_string_lossy().eq_ignore_ascii_case("project.md"))
-        .collect::<Vec<_>>();
-    assert_eq!(project_pages, vec![OsString::from("Project.md")]);
-    assert_eq!(f.store.migrate(&f.binding, true).unwrap()["pruned"], 0);
-    let g = Fixture::new("auto", "pilot");
-    let old = g.root().join("Project.md");
-    fs::copy(views::project_page(&g.root()), &old).unwrap();
-    fs::write(g.binding.root.join("Projects.md"), "User-owned hub").unwrap();
-    assert_eq!(g.store.migrate(&g.binding, true).unwrap()["skipped"], 1);
-    assert!(old.exists());
 }
 #[test]
 fn project_lock_does_not_hold_pending_database_during_stop() {
@@ -1351,24 +1247,9 @@ fn prompt_search_failure_warns_without_exposing_notes_or_blocking_the_turn() {
     }
 }
 #[test]
-fn migration_does_not_modify_another_project_and_cross_profile_locking_hides_forget() {
+fn cross_profile_locking_hides_forgotten_records() {
     let f = Fixture::new("inbox", "pilot");
     let v = f.save("Current heliotrope", false);
-    let marker = f.legacy("Approved", id(&v), None);
-    let other = f
-        .store
-        .setup(&f.vault, &f.repo, "other", Some("inbox"))
-        .unwrap();
-    let other_entry = f
-        .store
-        .save(&other, &candidate("Other heliotrope"), false, None, None)
-        .unwrap();
-    let p = store::record(&f.store.root(&other).unwrap(), id(&other_entry));
-    let before = fs::read(&p).unwrap();
-    f.store.migrate(&f.binding, false).unwrap();
-    f.store.migrate(&f.binding, true).unwrap();
-    assert!(!marker.exists());
-    assert_eq!(fs::read(&p).unwrap(), before);
     let other_store = Store::new(Some(f.base.join("second-profile")), &f.store.package).unwrap();
     let b = other_store
         .setup(&f.vault, &f.repo, "pilot", Some("auto"))

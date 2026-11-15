@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 use crate::{version, Result};
 
 pub(crate) const PACKAGE_VERSION: &str = "launchers/package-version";
-pub(crate) const PACKAGE_SERIES: &str = "launchers/package-series";
+const PACKAGE_MAJOR: &str = "launchers/package-major";
 
 macro_rules! rx {
     ($pattern:expr) => {{
@@ -212,12 +212,6 @@ pub(crate) fn metadata(path: &Path) -> Result<Value> {
         fields.values().all(Value::is_string),
         "metadata должен быть строковым словарём",
     )?;
-    if let Some(previous) = fields.get("previous-name").and_then(Value::as_str) {
-        require(
-            previous != name && valid_skill_name(previous),
-            "Некорректное прежнее имя навыка",
-        )?;
-    }
     require(
         data["metadata"]["author"] == "WhyFaust"
             && data["metadata"]["source"] == "https://github.com/WhyFaust/fstack",
@@ -576,13 +570,16 @@ pub(crate) fn check_launcher_version(root: &Path, number: &str) -> Result<()> {
             "Версия запускателя {PACKAGE_VERSION}: ожидается {number}; выполните release prepare"
         ));
     }
-    let series = root.join(PACKAGE_SERIES);
-    if series.exists() {
-        let series = contained(root, root, PACKAGE_SERIES, false)?;
-        let first = fs::read_to_string(series).map_err(|e| e.to_string())?;
-        version::check_series(first.trim(), number)?;
-    }
-    Ok(())
+    check_package_major(root, number)
+}
+
+pub(crate) fn check_package_major(root: &Path, number: &str) -> Result<()> {
+    let major = version::parse(number)?[0];
+    let policy = read(&contained(root, root, PACKAGE_MAJOR, false)?)?;
+    require(
+        policy.lines().eq([major.to_string()]),
+        format!("Версия требует явного изменения {PACKAGE_MAJOR}"),
+    )
 }
 
 pub(crate) fn check_versions(root: &Path, number: &str) -> Result<()> {
@@ -639,35 +636,31 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
         let groups = groups.as_array().ok_or("Ожидался массив обработчиков")?;
         require(groups.len() == 1, "Ожидалась одна группа хуков")?;
         let handlers = groups[0]["hooks"].as_array().ok_or("Нет команд хуков")?;
-        require(
-            handlers.len() == if event == "SessionStart" { 2 } else { 1 },
-            "Неверное число команд хуков",
-        )?;
+        require(handlers.len() == 1, "Неверное число команд хуков")?;
         if event == "PostToolUse" {
             require(groups[0]["matcher"] == "^Bash$", "Ожидался фильтр оболочки")?;
         }
-        for (index, handler) in handlers.iter().enumerate() {
-            let bootstrap = index == 1;
-            let event = if bootstrap { "Bootstrap" } else { event };
-            require(
-                handler["async"].as_bool().unwrap_or(false) == bootstrap
-                    && handler["timeout"] == if bootstrap { 420 } else { 5 },
-                format!("{event}: неверный режим запуска хука"),
-            )?;
-            require(handler["type"] == "command", "Ожидался командный хук")?;
-            let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
-            let windows = format!(
-                r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
-            );
-            require(
-                string(handler, "command")? == posix,
-                format!("{event}: неверная команда command"),
-            )?;
-            require(
-                string(handler, "commandWindows")? == windows,
-                format!("{event}: неверная команда commandWindows"),
-            )?;
-        }
+        let handler = &handlers[0];
+        let bootstrap = event == "SessionStart";
+        let event = if bootstrap { "Bootstrap" } else { event };
+        require(
+            handler["async"].as_bool().unwrap_or(false) == bootstrap
+                && handler["timeout"] == if bootstrap { 420 } else { 5 },
+            format!("{event}: неверный режим запуска хука"),
+        )?;
+        require(handler["type"] == "command", "Ожидался командный хук")?;
+        let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
+        let windows = format!(
+            r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
+        );
+        require(
+            string(handler, "command")? == posix,
+            format!("{event}: неверная команда command"),
+        )?;
+        require(
+            string(handler, "commandWindows")? == windows,
+            format!("{event}: неверная команда commandWindows"),
+        )?;
         contained(root, root, "hooks/memory.sh", false)?;
         contained(root, root, "hooks/memory.ps1", false)?;
     }

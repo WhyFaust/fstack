@@ -13,7 +13,6 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
-BANK = Path(__file__).with_name("cases.json")
 
 
 def check_storage(directory: Path) -> None:
@@ -75,7 +74,7 @@ def extract(repo: Path, ref: str, target: Path, paths: list[str]) -> dict[str, s
     return snapshot(target)
 
 
-def cases(bank: Path = BANK) -> list[dict]:
+def cases(bank: Path) -> list[dict]:
     data = json.loads(bank.read_text(encoding="utf-8"))
     seen = set()
     for case in data["cases"]:

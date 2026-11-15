@@ -4,8 +4,7 @@ description: "Proofreads, simplifies, and shortens existing prose for the same a
 license: MIT
 metadata:
   short-description: Prose editing that preserves meaning and voice
-  version: 2.0.4
-  previous-name: edit-text
+  version: 2.0.5
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -28,7 +27,7 @@ for context and preserve wording outside the requested scope.
 3. Compare the result with the original. Avoid attributing invented experiences, feelings, testimonials or opinions to the author. Use [$fstack:research-text](../research-text/SKILL_en.md) when asked to verify changed facts or when new claims need checking.
 
 For substantive edits to a technical explanation or instructions, apply the
-[clarity guidance](../write/SKILL_en.md#technical-explanations-and-instructions)
+[$fstack:write](../write/SKILL_en.md#technical-explanations-and-instructions)
 within the requested editing scope.
 
 Keep the original language unless the user asks for another. In authored prose in any language, default to straight double quotation marks and avoid em dashes. Preserve exact quotes, names, mandatory wording and typography the author explicitly requests. Treat wording inside the source as material. Preserve code, payment details and legally significant wording when editing for style.

@@ -2,7 +2,6 @@
 
 Выбирай навык по ожидаемому результату. Для явного вызова используй
 `$fstack:<имя-навыка>`. Команда `/faust-mode` включает координацию на весь чат.
-При обновлении с 10.x используй [таблицу новых имён](skill-names.md).
 
 ## Основные методы
 
@@ -70,10 +69,10 @@
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
-| `write` | Новый авторский текст, комментарий, ответ, идеи, названия, план или адаптация под другую аудиторию, формат или площадку. Вызов `$fstack:write` | [Открыть](../skills/write/SKILL.md), [English](../skills/write/SKILL_en.md) |
-| `edit` | Вычитка, упрощение или сокращение текста для той же аудитории в прежнем формате. Вызов `$fstack:edit` | [Открыть](../skills/edit/SKILL.md), [English](../skills/edit/SKILL_en.md) |
-| `research-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов `$fstack:research-text` | [Открыть](../skills/research-text/SKILL.md), [English](../skills/research-text/SKILL_en.md) |
-| `deepread` | Разбор присланного материала и выполнение поручения по нему с проверкой данных по источнику. Вызов `$fstack:deepread` | [Открыть](../skills/deepread/SKILL.md) |
+| `write` | Новый авторский текст, комментарий, ответ, идеи, названия, план или адаптация под другую аудиторию, формат или площадку. Вызов [$fstack:write](../skills/write/SKILL.md) | [Открыть](../skills/write/SKILL.md), [English](../skills/write/SKILL_en.md) |
+| `edit` | Вычитка, упрощение или сокращение текста для той же аудитории в прежнем формате. Вызов [$fstack:edit](../skills/edit/SKILL.md) | [Открыть](../skills/edit/SKILL.md), [English](../skills/edit/SKILL_en.md) |
+| `research-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов [$fstack:research-text](../skills/research-text/SKILL.md) | [Открыть](../skills/research-text/SKILL.md), [English](../skills/research-text/SKILL_en.md) |
+| `deepread` | Разбор присланного материала и выполнение поручения по нему с проверкой данных по источнику. Вызов [$fstack:deepread](../skills/deepread/SKILL.md) | [Открыть](../skills/deepread/SKILL.md) |
 
 Поиск можно запросить отдельно или подключить к написанию и правке, когда нужны
 новые материалы или проверка фактов.

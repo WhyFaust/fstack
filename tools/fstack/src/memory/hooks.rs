@@ -108,8 +108,13 @@ fn chat_mode(
         None => io::read(&marker),
     }
 }
-fn activation(package: &Path) -> String {
-    format!("В этом чате включён faust-mode до команды /faust-mode-off. Используй инструкции fstack:faust-mode из файла {}. Если они уже загружены, повторно не читай.", package.join("skills/faust-mode/SKILL.md").display())
+fn activation(package: &Path, plan: bool) -> String {
+    let native_plan = if plan {
+        " Клиент в нативном Plan Mode: подготовь план в формате клиента."
+    } else {
+        ""
+    };
+    format!("В этом чате включён faust-mode до команды /faust-mode-off. Используй инструкции fstack:faust-mode из файла {}. Если они уже загружены, повторно не читай.{native_plan}", package.join("skills/faust-mode/SKILL.md").display())
 }
 enum Posted {
     Ensure(String),
@@ -232,9 +237,6 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     else {
         return Ok(json!({}));
     };
-    if event == "SessionStart" {
-        return Ok(json!({}));
-    }
     let Some(session) = payload["session_id"]
         .as_str()
         .filter(|s| format::matches(r"\A[a-zA-Z0-9_-]{1,128}\z", s))
@@ -301,7 +303,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             } else {
                 previous_mode.is_some()
             };
-            enabled.then(|| activation(&store.package))
+            enabled.then(|| activation(&store.package, plan))
         }
     } else {
         None

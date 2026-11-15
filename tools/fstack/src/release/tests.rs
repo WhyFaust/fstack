@@ -1,5 +1,4 @@
 use super::*;
-use crate::version::increment;
 use std::cell::{Cell, RefCell};
 struct Stub {
     records: RefCell<Vec<Value>>,
@@ -78,6 +77,7 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
         b"{\"name\": \"fstack\", \"version\": \"0.2.0\"}",
     );
     save(&root, PACKAGE_VERSION, "0.2.0\n");
+    save(&root, "launchers/package-major", "0\n");
     save(&root, ".gitignore", b"dist/\n");
     for name in ["alpha", "beta"] {
         save(
@@ -165,139 +165,6 @@ fn event(sha: &str) -> BTreeMap<String, String> {
     .collect()
 }
 #[test]
-fn stable_versions_and_conventional_commits() {
-    for invalid in ["01.2.0", "1.02.0", "1.2.03", "1.2", "1.2.3-alpha", "1.2.1١"] {
-        assert!(version(invalid).is_err());
-    }
-    assert_eq!(
-        (0..=3)
-            .map(|level| increment("1.2.3", level).unwrap())
-            .collect::<Vec<_>>(),
-        ["1.2.3", "1.2.4", "1.3.0", "2.0.0"]
-    );
-    for (message, expected) in [
-        ("docs: text", 0),
-        ("fix(profile): text", 1),
-        ("perf: text", 1),
-        ("fix: text\0feat: text", 2),
-        ("refactor!: text", 3),
-        ("chore: text\n\nBREAKING CHANGE: contract", 3),
-    ] {
-        assert_eq!(change_level(message), expected);
-    }
-}
-#[test]
-fn independent_localizations_and_final_tree_versions() {
-    let (_temp, root) = fixture();
-    let stub = stub();
-    let release = Release {
-        root: &root,
-        runner: &stub,
-        artifacts: None,
-    };
-    let path = root.join("skills/alpha/SKILL.md");
-    let original = fs::read_to_string(&path).unwrap();
-    let updated = original.replace("version: 0.2.0", "version: \"9.0.0\" # spelling");
-    fs::write(&path, &updated).unwrap();
-    commit(&root, "chore: version only");
-    assert_eq!(
-        release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
-        Vec::<String>::new()
-    );
-    save(&root, "skills/alpha/SKILL.en.md", &updated);
-    assert_eq!(check_versions(&root).unwrap(), "0.2.0");
-    save(&root, "skills/alpha/SKILL.en.md", &original);
-    assert!(check_versions(&root).is_err());
-    fs::remove_file(root.join("skills/alpha/SKILL.en.md")).unwrap();
-    save(&root, "skills/alpha/references/run.md", b"New reference");
-    save(&root, "skills/beta/assets/icon.bin", b"\x00\x01\xff");
-    save(
-        &root,
-        "skills/gamma/SKILL.md",
-        b"---\nname: gamma\nmetadata:\n  version: 1.0.0\n---\nNew skill\n",
-    );
-    let beta = root.join("skills/beta/SKILL.md");
-    fs::write(
-        &beta,
-        fs::read_to_string(&beta).unwrap().replace("0.2.0", "0.2.1"),
-    )
-    .unwrap();
-    commit(&root, "feat: resources");
-    assert_eq!(
-        release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
-        ["alpha", "beta", "gamma"]
-    );
-    fs::remove_file(root.join("skills/alpha/references/run.md")).unwrap();
-    commit(&root, "refactor: undo resource");
-    assert_eq!(
-        release.changed_skills("v0.2.0", "HEAD", None).unwrap(),
-        ["beta", "gamma"]
-    );
-    let skill_before = fs::read(&path).unwrap();
-    assert!(release.prepare_manifest("v0.2.0", "", false).is_err());
-    assert_eq!(
-        release.prepare_manifest("v0.2.0", "", true).unwrap(),
-        "0.3.0"
-    );
-    assert_eq!(fs::read(&path).unwrap(), skill_before);
-    assert!(release.version_contents("0.3.0").unwrap().is_none());
-    assert_eq!(
-        release.prepare_manifest("v0.2.0", "", false).unwrap(),
-        "0.3.0"
-    );
-}
-#[test]
-fn skill_changes_require_both_a_skill_version_and_a_release() {
-    let (_temp, root) = fixture();
-    let stub = stub();
-    let release = Release {
-        root: &root,
-        runner: &stub,
-        artifacts: None,
-    };
-    let base = git(&root, &["rev-parse", "HEAD"]);
-    let path = root.join("skills/alpha/SKILL.md");
-    let original = fs::read_to_string(&path).unwrap();
-    let formatted = original
-        .replace("version: 0.2.0", "version: '0.2.0' # stable")
-        .replace("---\n# Original", "---\n\n# Original")
-        + "\n";
-    fs::write(&path, formatted).unwrap();
-    commit(&root, "docs: format skill metadata");
-    assert_eq!(release.prepare_manifest(&base, "", false).unwrap(), "0.2.0");
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["level"],
-        0
-    );
-    let changed = original.replace("# Original body alpha", "# Changed procedure");
-    fs::write(&path, &changed).unwrap();
-    commit(&root, "docs: clarify procedure");
-    assert!(release
-        .prepare_manifest(&base, "", false)
-        .unwrap_err()
-        .contains("повышение версии"));
-    assert!(release
-        .plan(stub.records.borrow().clone())
-        .unwrap_err()
-        .contains("повышение версии"));
-    fs::write(&path, changed.replace("0.2.0", "0.2.1")).unwrap();
-    git(&root, &["add", "skills"]);
-    assert!(release
-        .prepare_manifest(&base, "", true)
-        .unwrap_err()
-        .contains("выпуска пакета"));
-    commit(&root, "fix: correct procedure");
-    release.prepare_manifest(&base, "", true).unwrap();
-    commit(&root, "chore: prepare release");
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["version"],
-        "0.2.1"
-    );
-    save(&root, PACKAGE_VERSION, "0.2.0\n");
-    assert!(check_versions(&root).is_err());
-    assert!(release.prepare_manifest(&base, "", false).is_err());
-}
-#[test]
 fn event_and_live_main_reject_unvalidated_commits() {
     let (_temp, root) = fixture();
     let base = git(&root, &["rev-parse", "HEAD"]);
@@ -334,11 +201,7 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
         runner: &stub,
         artifacts: None,
     };
-    save(
-        &root,
-        MANIFEST,
-        release.version_contents("0.2.1").unwrap().unwrap(),
-    );
+    release.prepare(Some("0.2.1")).unwrap();
     commit(&root, "chore(release): v0.2.1");
     let sha = git(&root, &["rev-parse", "HEAD"]);
     let artifacts = artifacts(&root, &sha);
@@ -349,14 +212,14 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
     origin(&root);
     let mut record = json!({"tag_name":"v0.2.1","draft":true,"body":format!("<!-- release-source:{sha} -->"),"author":{"login":"human"}});
     assert!(release
-        .finish("fixture/fstack", "0.2.1", &[record.clone()], &sha, &sha)
+        .finish("fixture/fstack", "0.2.1", &[record.clone()], &sha)
         .unwrap_err()
         .contains("не принадлежит"));
     assert!(stub.calls.borrow().is_empty());
     assert!(!root.join("dist").exists());
     record["author"]["login"] = json!("github-actions[bot]");
     release
-        .finish("fixture/fstack", "0.2.1", &[record], &sha, &sha)
+        .finish("fixture/fstack", "0.2.1", &[record], &sha)
         .unwrap();
     assert_eq!(
         stub.calls
@@ -388,7 +251,7 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
     commit(&root, "chore: other");
     git(&root, &["tag", "v0.2.1"]);
     assert!(release
-        .finish("fixture/fstack", "0.2.1", &[], &sha, &sha)
+        .finish("fixture/fstack", "0.2.1", &[], &sha)
         .unwrap_err()
         .contains("другую ревизию"));
     assert!(stub.calls.borrow().is_empty());
@@ -578,15 +441,16 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
     };
     let count = stub.calls.borrow().len();
     assert!(old
-        .finish("fixture/fstack", "0.3.0", &[], &sha, &head)
+        .finish("fixture/fstack", "0.3.0", &[], &head)
         .unwrap_err()
         .contains("Исходная ревизия"));
     assert_eq!(stub.calls.borrow().len(), count);
     fs::remove_dir_all(other.join(TARGETS[0])).unwrap();
     assert!(old.artifacts(&later).unwrap_err().contains("полный набор"));
 }
+
 #[test]
-fn independent_runtime_fixes_with_same_version_conflict_on_release_identity() {
+fn explicit_version_checks_package_and_skill_changes_against_the_pr_base() {
     let (_temp, root) = fixture();
     let release = Release {
         root: &root,
@@ -594,249 +458,89 @@ fn independent_runtime_fixes_with_same_version_conflict_on_release_identity() {
         artifacts: None,
     };
     let base = git(&root, &["rev-parse", "HEAD"]);
-    for (branch, path) in [
-        ("first", "tools/fstack/src/one.rs"),
-        ("second", ".cargo/config.toml"),
-    ] {
-        git(&root, &["checkout", "-b", branch, &base]);
-        save(&root, path, b"input");
-        commit(&root, "fix: revise build input");
-        save(&root, path, b"final input");
-        git(&root, &["add", path]);
-        assert_eq!(
-            release
-                .prepare_manifest(&base, "fix: revise build input", true)
-                .unwrap(),
-            "0.2.1"
-        );
-        commit(&root, "chore: prepare release");
-        assert_eq!(
-            release.check_runtime_id("HEAD").unwrap(),
-            fs::read_to_string(root.join(RUNTIME_ID))
-                .unwrap()
-                .trim_end()
-        );
-    }
-    let first = release.check_runtime_id("first").unwrap();
-    let second = release.check_runtime_id("second").unwrap();
-    assert_ne!(first, second);
-    assert!(release.cmd(&["git", "merge", "first"]).is_err());
-    assert_eq!(
-        git(&root, &["diff", "--name-only", "--diff-filter=U"]),
-        RUNTIME_ID
-    );
-    save(&root, RUNTIME_ID, format!("{second}\n"));
-    commit(&root, "fix: incorrectly resolve release identity");
-    assert!(release.check_runtime_id("HEAD").is_err());
-    assert!(release.plan(stub().records.into_inner()).is_err());
-}
-#[test]
-fn preview_merge_squash_and_rebase_accept_the_same_finished_change() {
-    let (_temp, root) = fixture();
-    let base = git(&root, &["rev-parse", "HEAD"]);
-    let stub = stub();
-    let release = Release {
-        root: &root,
-        runner: &stub,
-        artifacts: None,
-    };
-    git(&root, &["checkout", "-b", "feature"]);
-    save(&root, "tools/fstack/src/main.rs", b"new runtime");
-    commit(&root, "feat!: new runtime protocol");
-    assert!(release
-        .prepare_manifest(&base, "fix: too small", false)
-        .is_err());
-    assert_eq!(
-        release
-            .prepare_manifest(&base, "feat!: new runtime protocol", true)
-            .unwrap(),
-        "1.0.0"
-    );
-    commit(&root, "chore: reserve package version");
-    save(&root, "tools/fstack/src/main.rs", b"final runtime");
-    git(&root, &["add", "tools/fstack/src/main.rs"]);
-    release
-        .prepare_manifest(&base, "feat!: new runtime protocol", true)
-        .unwrap();
-    commit(&root, "fix: address review");
-    let feature_tree = git(&root, &["rev-parse", "HEAD^{tree}"]);
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["version"],
-        "1.0.0"
-    );
-    let feature = git(&root, &["rev-parse", "HEAD^"]);
-    assert!(release
-        .prepare_manifest(&feature, "feat: misleading title", false)
-        .is_err());
-    git(&root, &["checkout", "main"]);
-    git(
-        &root,
-        &["merge", "--no-ff", "feature", "-m", "Merge pull request #1"],
-    );
-    assert_eq!(
-        release
-            .prepare_manifest(&base, "feat!: new runtime protocol", false)
-            .unwrap(),
-        "1.0.0"
-    );
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["version"],
-        "1.0.0"
-    );
-    git(&root, &["reset", "--hard", &base]);
-    git(&root, &["merge", "--squash", "feature"]);
-    git(&root, &["commit", "-m", "feat!: new runtime protocol"]);
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["version"],
-        "1.0.0"
-    );
-    git(&root, &["reset", "--hard", &base]);
-    git(&root, &["cherry-pick", &format!("{base}..feature")]);
-    assert_eq!(git(&root, &["rev-parse", "HEAD^{tree}"]), feature_tree);
-    origin(&root);
-    let sha = git(&root, &["rev-parse", "HEAD"]);
-    let artifacts = artifacts(&root, &sha);
-    let release = Release {
-        artifacts: Some(&artifacts),
-        ..release
-    };
-    release.publish("fixture/fstack", &event(&sha)).unwrap();
-    assert_eq!(stub.calls.borrow().last().unwrap()[2], "edit");
-}
-#[test]
-fn consecutive_unpublished_changes_require_distinct_runtime_versions() {
-    let (_temp, root) = fixture();
-    let stub = stub();
-    let release = Release {
-        root: &root,
-        runner: &stub,
-        artifacts: None,
-    };
-    let original = git(&root, &["rev-parse", "HEAD"]);
-    save(&root, "tools/fstack/src/main.rs", b"first");
-    commit(&root, "feat!: initial implementation");
-    assert!(release
-        .prepare_manifest(&original, "fix: too small", false)
-        .is_err());
-    assert_eq!(
-        release
-            .prepare_manifest(&original, "feat!: breaking rollout", true)
-            .unwrap(),
-        "1.0.0"
-    );
-    git(&root, &["reset", "--soft", &original]);
-    commit(&root, "feat!: breaking rollout");
-    let first = git(&root, &["rev-parse", "HEAD"]);
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["version"],
-        "1.0.0"
-    );
-    let draft = json!({"tag_name":"v1.0.0","draft":true,"prerelease":false,
-        "author":{"login":"github-actions[bot]"},"body":format!("<!-- release-source:{first} -->")});
-    stub.records.borrow_mut().push(draft);
-    save(&root, "tools/fstack/src/main.rs", b"second");
-    commit(&root, "fix: runtime correction");
-    assert!(release.prepare_manifest(&first, "", false).is_err());
-    assert!(release.plan(stub.records.borrow().clone()).is_err());
-    assert_eq!(release.prepare_manifest(&first, "", true).unwrap(), "1.0.1");
-    git(&root, &["reset", "--soft", &first]);
-    commit(&root, "fix: runtime correction");
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["version"],
-        "1.0.1"
-    );
-    let second = git(&root, &["rev-parse", "HEAD"]);
-    save(&root, "docs/usage.md", b"details");
-    commit(&root, "docs: clarify usage");
-    assert_eq!(
-        release.prepare_manifest(&second, "", false).unwrap(),
-        "1.0.1"
-    );
-    assert_eq!(
-        release.plan(stub.records.borrow().clone()).unwrap()["version"],
-        "1.0.1"
-    );
-    save(&root, "hooks/hook.sh", b"new runtime input");
-    commit(&root, "docs: wrong classification");
-    assert!(release.prepare_manifest(&second, "", false).is_err());
-    assert!(release.plan(stub.records.borrow().clone()).is_err());
-}
+    assert_eq!(release.check_next(&base).unwrap(), "0.2.0");
+    assert!(release.prepare(Some("1.0.0")).is_err());
 
-#[test]
-fn reserved_series_returns_to_zero_without_reusing_published_tags() {
-    let (_temp, root) = fixture();
-    save(&root, MANIFEST, br#"{"name":"fstack","version":"10.2.0"}"#);
-    save(&root, PACKAGE_VERSION, "10.2.0\n");
-    commit(&root, "feat!: legacy release");
-    git(&root, &["tag", "v10.2.0"]);
-    let release = Release {
-        root: &root,
-        runner: &System,
-        artifacts: None,
-    };
-    let mut records = stub().records.into_inner();
-    records.push(json!({"tag_name":"v10.2.0","draft":false,"prerelease":false}));
-
-    save(&root, PACKAGE_SERIES, "0.2.0\n");
-    commit(&root, "feat!: prepare initial series");
+    let entry = "skills/alpha/SKILL.md";
+    let original = fs::read_to_string(root.join(entry)).unwrap();
+    save(&root, entry, format!("{original}\nNew instruction\n"));
+    commit(&root, "feat: add skill instruction");
     assert!(release
-        .prepare_manifest("v10.2.0", "", true)
-        .unwrap_err()
-        .contains("уже занята"));
-    save(&root, PACKAGE_SERIES, "0.3.0\n");
-    git(&root, &["add", PACKAGE_SERIES]);
-    assert_eq!(
-        release.prepare_manifest("v10.2.0", "", true).unwrap(),
-        "0.3.0"
-    );
-    commit(&root, "chore: reserve release");
-    let plan = release.plan(records.clone()).unwrap();
-    assert_eq!(plan["base"], "v10.2.0");
-    assert_eq!(plan["version"], "0.3.0");
-
-    git(&root, &["tag", "v0.3.0"]);
-    records.push(json!({"tag_name":"v0.3.0","draft":false,"prerelease":false}));
-    let plan = release.plan(records).unwrap();
-    assert_eq!(plan["base"], "v0.3.0");
-    assert_eq!(plan["level"], 0);
-
-    save(&root, "tools/fstack/src/example.rs", "new code");
-    commit(&root, "feat!: new public contract");
-    assert_eq!(
-        release.prepare_manifest("v0.3.0", "", true).unwrap(),
-        "0.4.0"
-    );
-    git(&root, &["rm", PACKAGE_SERIES]);
-    assert!(release.prepare_manifest("v0.3.0", "", true).is_err());
-    save(&root, PACKAGE_SERIES, "1.1.0\n");
-    git(&root, &["add", PACKAGE_SERIES]);
-    assert_eq!(
-        release.prepare_manifest("v0.3.0", "", true).unwrap(),
-        "1.1.0"
-    );
-}
-
-#[test]
-fn a_renamed_skill_increases_its_previous_version() {
-    let (_temp, root) = fixture();
-    let base = git(&root, &["rev-parse", "HEAD"]);
-    let release = Release {
-        root: &root,
-        runner: &System,
-        artifacts: None,
-    };
-    let name = "skills/gamma/SKILL.md";
-    git(&root, &["rm", "skills/alpha/SKILL.md"]);
-    let skill = |version: &str| {
-        format!("---\nname: gamma\nmetadata:\n  version: '{version}'\n  previous-name: alpha\n---\n# Original body alpha\n")
-    };
-    save(&root, name, skill("0.2.0"));
-    commit(&root, "feat!: rename alpha");
-    assert!(release
-        .prepare_manifest(&base, "", true)
+        .check_next(&base)
         .unwrap_err()
         .contains("повышение версии"));
-    save(&root, name, skill("0.2.1"));
-    git(&root, &["add", name]);
-    assert_eq!(release.prepare_manifest(&base, "", true).unwrap(), "1.0.0");
+
+    save(
+        &root,
+        entry,
+        format!("{}\nNew instruction\n", original.replace("0.2.0", "0.2.1")),
+    );
+    commit(&root, "fix: update skill version");
+    assert!(release.check_next(&base).unwrap_err().contains("нова"));
+    release.prepare(Some("0.2.1")).unwrap();
+    commit(&root, "chore: prepare package");
+    assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
+    git(&root, &["tag", "v0.2.1"]);
+    assert!(release.check_next(&base).unwrap_err().contains("занята"));
+}
+
+#[test]
+fn publishing_depends_on_the_current_version_only() {
+    let (_temp, root) = fixture();
+    let release = Release {
+        root: &root,
+        runner: &System,
+        artifacts: None,
+    };
+    let base = git(&root, &["rev-parse", "HEAD"]);
+    let same = json!({"tag_name":"v0.2.0","draft":false,"prerelease":false});
+    let unrelated = json!({"tag_name":"v20.0.0","draft":false,"prerelease":false});
+    assert_eq!(release.plan(&[unrelated.clone()]).unwrap()["publish"], true);
+    assert_eq!(release.plan(&[]).unwrap()["publish"], true);
+    assert_eq!(
+        release.plan(&[same.clone(), unrelated]).unwrap()["publish"],
+        false
+    );
+    save(&root, "skills/alpha/explanation.md", "new resource\n");
+    commit(&root, "fix: changed shipped skill");
+    assert!(release.plan(&[same]).is_err());
+    assert_eq!(git(&root, &["rev-parse", "HEAD^"]), base);
+}
+
+#[test]
+fn release_preparation_binds_the_staged_build_inputs() {
+    let (_temp, root) = fixture();
+    let release = Release {
+        root: &root,
+        runner: &System,
+        artifacts: None,
+    };
+    let base = git(&root, &["rev-parse", "HEAD"]);
+    let input = "tools/fstack/build.rs";
+    save(&root, input, "first");
+    git(&root, &["add", input]);
+    release.prepare(Some("0.2.1")).unwrap();
+    save(&root, input, "second");
+    commit(&root, "fix: change build after preparation");
+    assert!(release
+        .check_next(&base)
+        .unwrap_err()
+        .contains("не соответствует исходникам"));
+    release.prepare(None).unwrap();
+    commit(&root, "chore: refresh package");
+    assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
+}
+
+#[test]
+fn each_localization_uses_the_same_stable_version() {
+    let (_temp, root) = fixture();
+    for name in ["1.2", "01.2.3", "1.2.3-rc1", "1.2.3+build"] {
+        assert!(version(name).is_err());
+    }
+    let localized = "skills/alpha/SKILL_en.md";
+    let raw = fs::read_to_string(root.join("skills/alpha/SKILL.md")).unwrap();
+    save(&root, localized, raw.replace("0.2.0", "0.2.1"));
+    assert!(check_versions(&root).is_err());
+    save(&root, localized, raw);
+    assert_eq!(check_versions(&root).unwrap(), "0.2.0");
 }

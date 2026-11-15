@@ -1,4 +1,4 @@
-use super::{format, io, store, Result};
+use super::{format, io, Result};
 use std::path::{Path, PathBuf};
 pub const VAULT_FILES: &[&str] = &[
     "Home.md",
@@ -9,9 +9,6 @@ pub const VAULT_FILES: &[&str] = &[
     "Templates/Preference.md",
     "Templates/Review.md",
 ];
-const LINK: &str = "[[Codex Memory/Projects|Все проекты]]";
-const OLD_LINK: &str = "[[Codex Memory/Home|Все проекты]]";
-const OLD_BASE:&str="```base\nfilters:\n  and:\n    - 'file.inFolder(\"Codex Memory/Projects\")'\n    - 'file.path.endsWith(\"/Project.md\")'\n    - 'note.fstack_memory_project != null'\nformulas:\n  project: 'link(file.path, note.fstack_memory_project)'\nviews:\n  - type: list\n    name: Проекты\n    order: [formula.project]\n```";
 pub fn asset(package: &Path, name: &str) -> Result<String> {
     std::fs::read_to_string(package.join("skills/memory/assets/vault").join(name)).map_err(io::err)
 }
@@ -101,152 +98,12 @@ pub fn ensure_hub(root: &Path, package: &Path) -> Result<()> {
     if !marker(io::read(&p)?.as_deref(), "fstack_memory_projects: 1") {
         return Err("Memory projects hub is occupied".into());
     }
-    let p = root.join("Home.md");
-    let raw = io::read(&p)?.ok_or("Memory home is unavailable")?;
-    if io::hash(&raw) == "729b696f2bf702273534e08d2b566f12d3df1d4b478ee7fcd62d151b14a281bc" {
-        io::write(&p, &asset(package, "Home.md")?, true, Some(&raw))?;
-        return Ok(());
-    }
-    let updated = if raw.contains(OLD_BASE) {
-        raw.replacen(OLD_BASE, LINK, 1)
-    } else if !raw.contains(LINK) {
-        format!("{raw}\n\n{LINK}\n")
-    } else {
-        return Ok(());
-    };
-    io::write(&p, &updated, true, Some(&raw))?;
     Ok(())
 }
 pub fn ensure_library(root: &Path, package: &Path) -> Result<()> {
-    let p = root.join("Library.base");
-    if io::read(&p)?.is_none() {
-        io::write(&p, &asset(package, "Library.base")?, false, None)?;
-    }
-    let raw = io::read(&p)?.ok_or("Cannot initialize memory library")?;
-    // Обновлять оформление только у точного прежнего штатного шаблона.
-    // Пользовательские views и существующие имена embeds сохраняются.
-    if io::hash(&raw) == "f057f0c4569fe43d735f494ccf22e38c72dea33534c670675ac9723b614461b4" {
-        io::write(&p, &asset(package, "Library.base")?, true, Some(&raw))?;
-        return Ok(());
-    }
-    let approval = "file(file.path.replace(\"/Records/\", \"/Approved/\"))";
-    let old = "file(file.path.replace(\"/Records/\", \"/Forgotten/\"))";
-    let new = "file(file.folder + \"/\" + file.basename + \"-forgotten.json\")";
-    let changes=[(r#"file.inFolder("Codex Memory/Projects")"#.into(), r#"(file.inFolder("Codex Memory/Projects") || file.folder == "Codex Memory/Shared/Records")"#.into()),(r#"file.folder.split("/")[2]"#.into(),r#"if(file.folder == "Codex Memory/Shared/Records", "Общие", file.folder.split("/")[2])"#.into()),(format!("{approval} != null"),format!("(note.fstack_status == \"approved\" || {approval} != null)")),(format!("{approval} == null"),format!("(note.fstack_status != \"approved\" && {approval} == null)")),(format!("{old} == null"),format!("({new} == null && {old} == null)")),("!this.file.path.endsWith(\"/Project.md\") || file.inFolder(this.file.folder)".into(),"this.file.properties.fstack_memory_project == null || file.folder == \"Codex Memory/Projects/\" + this.file.properties.fstack_memory_project + \"/Records\"".into())];
-    let mut updated = raw.clone();
-    for (old, new) in changes {
-        let r = regex::Regex::new(&format!(
-            r"(?m)^([ \t]*(?:filters:|project:|-)[ \t]+)('?){}('?)([ \t]*(?:#[^\n]*)?)$",
-            regex::escape(&old)
-        ))
-        .unwrap();
-        updated = r
-            .replace_all(&updated, |c: &regex::Captures| {
-                if c[2] != c[3] {
-                    c[0].into()
-                } else {
-                    format!("{}{}{new}{}{}", &c[1], &c[2], &c[3], &c[4])
-                }
-            })
-            .into_owned();
-    }
-    if updated != raw {
-        io::write(&p, &updated, true, Some(&raw))?;
+    let destination = root.join("Library.base");
+    if io::read(&destination)?.is_none() {
+        io::write(&destination, &asset(package, "Library.base")?, false, None)?;
     }
     Ok(())
-}
-fn named(raw: &str) -> Result<String> {
-    let (meta, body) = raw
-        .strip_prefix("---\n")
-        .and_then(|s| s.split_once("\n---\n"))
-        .ok_or("Invalid project page")?;
-    let navigation = format!("{OLD_LINK} · [[Codex Memory/Templates/Review|Шаблон обзора]]");
-    let r = regex::Regex::new(&format!("(?m)^{}$", regex::escape(&navigation))).unwrap();
-    let body = if r.is_match(body) {
-        r.replacen(body, 1, navigation.replace(OLD_LINK, LINK))
-            .into_owned()
-    } else if !body.contains(LINK) {
-        format!("\n{LINK}\n{body}")
-    } else {
-        body.into()
-    };
-    Ok(format!("---\n{meta}\n---\n{body}"))
-}
-pub fn migrate_project(root: &Path) -> Result<(usize, usize)> {
-    let old = root.join("Project.md");
-    let page = project_page(root);
-    let Some(raw) = io::read(&old)? else {
-        return Ok((
-            0,
-            usize::from(!has_marker(
-                &page,
-                &root.file_name().unwrap().to_string_lossy(),
-            )?),
-        ));
-    };
-    if !project_marker(&raw, &root.file_name().unwrap().to_string_lossy()) {
-        return Ok((0, 1));
-    }
-    let desired = named(&raw)?;
-    if desired.len() > 32768 {
-        return Err("Updated memory project page is too large".into());
-    }
-    if old == page {
-        return Ok((
-            usize::from(desired != raw && io::write(&page, &desired, true, Some(&raw))?),
-            0,
-        ));
-    }
-    if io::write(&page, &desired, false, None)? {
-        Ok((1, 0))
-    } else {
-        Ok((
-            0,
-            usize::from(io::read(&page)?.as_deref() != Some(&desired)),
-        ))
-    }
-}
-pub fn prune_project(root: &Path) -> Result<(usize, usize)> {
-    let old = root.join("Project.md");
-    let page = project_page(root);
-    if old == page {
-        return Ok((0, 0));
-    }
-    let Some(raw) = io::read(&old)? else {
-        return Ok((0, 0));
-    };
-    if !project_marker(&raw, &root.file_name().unwrap().to_string_lossy())
-        || !marker(
-            io::read(&root.parent().unwrap().parent().unwrap().join("Projects.md"))?.as_deref(),
-            "fstack_memory_projects: 1",
-        )
-    {
-        return Ok((0, 1));
-    }
-    let desired = named(&raw)?;
-    if io::read(&page)?.as_deref() != Some(&desired)
-        || !store::files(&root.join("Approved"), false)?.is_empty()
-    {
-        return Ok((0, 1));
-    }
-    let expected = project_link(&page);
-    let short = format!("{}]]", expected.split('|').next().unwrap());
-    for p in store::files(&root.join("Records"), false)? {
-        match store::note(
-            &p,
-            &p.file_stem().unwrap().to_string_lossy(),
-            format::MEMORY,
-            true,
-        ) {
-            Ok(Some(f))
-                if f.get("project_link")
-                    .is_some_and(|s| s == &expected || s == &short) => {}
-            Ok(None) => {}
-            _ => return Ok((0, 1)),
-        }
-    }
-    if io::read(&old)?.as_deref() != Some(&raw) || io::read(&page)?.as_deref() != Some(&desired) {
-        return Ok((0, 1));
-    }
-    Ok((usize::from(io::delete(&old)?), 0))
 }

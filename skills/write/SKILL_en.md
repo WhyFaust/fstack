@@ -4,8 +4,7 @@ description: 'Drafts posts, articles, emails, scripts, technical explanations an
 license: MIT
 metadata:
   short-description: Original prose, replies and format adaptation
-  version: 2.0.4
-  previous-name: write-text
+  version: 2.0.5
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---

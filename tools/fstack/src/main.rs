@@ -5,7 +5,6 @@ mod gitlab_ci;
 mod installation;
 mod memory;
 mod package;
-mod profile_migration;
 mod release;
 mod version;
 
@@ -18,14 +17,13 @@ fn main_result() -> Result<()> {
     match (command, arguments.len()) {
         ("gitlab-ci-action", 1) => return gitlab_ci::run(std::io::stdin().lock()),
         ("memory", _) => return memory::run(&arguments[1..], &root),
-        ("migrate-profile", _) => return profile_migration::run(&arguments[1..]),
         ("release", _) => return release::run(&arguments[1..], &root),
         ("check-installation", _) => return installation::run(&arguments[1..], &root),
         ("check-package", 2) => println!("{}", package::check(Path::new(&arguments[1]))?),
         ("resources", 3) => package::resources(Path::new(&arguments[2]), Path::new(&arguments[1]))?,
         ("metadata", 2) => println!("{}", package::metadata(Path::new(&arguments[1]))?),
         ("structure", 2) => package::skill_structure(Path::new(&arguments[1]))?,
-        _ => return Err("Использование: fstack [--package ROOT] memory | migrate-profile | gitlab-ci-action | release | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH".into()),
+        _ => return Err("Использование: fstack [--package ROOT] memory | gitlab-ci-action | release | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH".into()),
     }
     Ok(())
 }

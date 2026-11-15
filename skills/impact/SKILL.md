@@ -4,8 +4,7 @@ description: "Определяет косвенных потребителей, 
 license: MIT
 metadata:
   short-description: Последствия изменения и затронутые потребители
-  version: 2.0.1
-  previous-name: assess-impact
+  version: 2.0.2
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -16,7 +15,7 @@ metadata:
 
 Зафиксируй ревизию или снимок diff и меняющийся контракт. Оставайся в режиме
 исследования: этот метод не поручает исправления, миграцию или публикацию.
-Для оценки доказательств используй fstack:verify.
+Для оценки доказательств используй [$fstack:verify](../verify/SKILL.md).
 
 ## Порядок работы
 
@@ -48,5 +47,5 @@ metadata:
 риска — доказательство. Отдельно назови неизвестных внешних потребителей и пределы
 проверки, если они влияют на решение.
 
-Используй вывод в fstack:review или fstack:design. При необходимости
-перехода всех потребителей примени fstack:migrate в рамках поручения.
+Используй вывод в [$fstack:review](../review/SKILL.md) или [$fstack:design](../design/SKILL.md). При необходимости
+перехода всех потребителей примени [$fstack:migrate](../migrate/SKILL.md) в рамках поручения.

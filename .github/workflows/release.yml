@@ -1,122 +1,99 @@
-name: Пакет и релиз
+name: fstack
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: fstack-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 defaults:
   run:
     shell: bash
 
-concurrency:
-  group: release-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  CARGO_MANIFEST: tools/fstack/Cargo.toml
+  TOOLCHAIN: 1.90.0
 
 jobs:
   package:
+    name: Пакет (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            binary: fstack
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            binary: fstack.exe
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            binary: fstack
-          - os: macos-15
-            target: aarch64-apple-darwin
-            binary: fstack
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, binary: fstack }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, binary: fstack.exe }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, binary: fstack }
+          - { os: macos-15, target: aarch64-apple-darwin, binary: fstack }
     runs-on: ${{ matrix.os }}
     env:
+      TARGET: ${{ matrix.target }}
+      BINARY: tools/fstack/target/${{ matrix.target }}/release/${{ matrix.binary }}
       RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
-      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
-      - run: cargo +1.90.0 build --release --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml
-      - name: Check reserved marketplace version
-        if: github.event_name == 'pull_request' && runner.os == 'Linux'
+      - name: Rust, сборка и тесты
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          cargo "+$TOOLCHAIN" fmt --manifest-path "$CARGO_MANIFEST" -- --check
+          cargo "+$TOOLCHAIN" clippy --all-targets --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST" -- -D warnings
+          cargo "+$TOOLCHAIN" test --release --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST"
+          cargo "+$TOOLCHAIN" build --release --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST"
+      - name: Проверить пакет и версию
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: 'tools/fstack/target/${{ matrix.target }}/release/fstack --package . release check-next "$PR_BASE" "$PR_TITLE"'
-      - run: cargo +1.90.0 fmt --manifest-path tools/fstack/Cargo.toml -- --check
-      - run: cargo +1.90.0 clippy --all-targets --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml -- -D warnings
-      - run: cargo +1.90.0 test --release --locked --target '${{ matrix.target }}' --manifest-path tools/fstack/Cargo.toml
+        run: |
+          "$BINARY" --package . check-package .
+          "$BINARY" --package . release check
+          if [[ -n "$PR_BASE" && "$RUNNER_OS" == "Linux" ]]; then
+            "$BINARY" --package . release check-next "$PR_BASE"
+          fi
       - uses: actions/setup-python@v7
         if: runner.os == 'Linux'
         with:
           python-version: '3.12'
-      - name: Проверка экспериментов без моделей
+      - name: Тесты измерителя и экспериментов
         if: runner.os == 'Linux'
         run: |
-          python -m unittest discover -s tools/fstack/evals -p 'test_*.py' -v
-          if test "$(git rev-parse --is-shallow-repository)" = true; then git fetch --unshallow origin; fi
-          python tools/fstack/evals/evaluate.py validate-corpus --output "$RUNNER_TEMP/evaluation-corpus"
-      - uses: actions/upload-artifact@v7.0.2
-        if: always() && runner.os == 'Linux'
-        with:
-          name: evaluation-corpus
-          path: ${{ runner.temp }}/evaluation-corpus/validation.json
-          if-no-files-found: warn
-          retention-days: 30
-      - name: Проверка бенчмарков и опубликованной таблицы
+          python -m unittest discover -s tools/fstack/benchmarks -v
+          python -m unittest discover -s tools/fstack/evals -v
+      - name: Проверить зависимости Linux
         if: runner.os == 'Linux'
         run: |
-          python -m unittest discover -s tools/fstack/benchmarks -p 'test_*.py' -v
-          python tools/fstack/benchmarks/benchmark.py report --check
-          python tools/fstack/benchmarks/benchmark.py run --target '${{ matrix.target }}' --output "$RUNNER_TEMP/runtime-benchmark.json"
-      - uses: actions/upload-artifact@v7.0.2
-        if: runner.os == 'Linux'
-        with:
-          name: runtime-benchmark
-          path: ${{ runner.temp }}/runtime-benchmark.json
-          if-no-files-found: error
-          retention-days: 30
-      - run: |
-          mkdir -p bin
-          cp 'tools/fstack/target/${{ matrix.target }}/release/${{ matrix.binary }}' 'bin/${{ matrix.binary }}'
-          'bin/${{ matrix.binary }}' --package . check-package .
-          'bin/${{ matrix.binary }}' --package . release check
-          'bin/${{ matrix.binary }}' --package . release artifact --target '${{ matrix.target }}' --binary 'bin/${{ matrix.binary }}' --output "$RUNNER_TEMP/fstack-artifacts"
-      - name: Verify Windows runtime dependencies
+          ldd "$BINARY"
+          readelf --version-info "$BINARY" > "$RUNNER_TEMP/fstack-needed-versions"
+          highest=$(grep -o 'GLIBC_[0-9.]*' "$RUNNER_TEMP/fstack-needed-versions" | cut -d _ -f 2 | sort -Vu | tail -1)
+          test "$(printf '%s\n2.35\n' "$highest" | sort -Vu | tail -1)" = 2.35
+      - name: Проверить зависимости Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           $tools = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          $dumpbin = Join-Path $tools.FullName 'bin\Hostx64\x64\dumpbin.exe'
-          $imports = & $dumpbin /dependents bin/fstack.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect runtime dependencies' }
-          $imports
-          if ($imports -match '(?i)(VCRUNTIME|MSVCP|sqlite3)[^\s]*\.dll') { throw 'Unexpected external runtime dependency' }
-      - name: Verify Linux runtime dependencies
-        if: runner.os == 'Linux'
-        run: |
-          ldd bin/fstack
-          versions=$(readelf --version-info bin/fstack | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu)
-          printf '%s\n' "$versions"
-          highest=$(printf '%s\n2.35\n' "$versions" | sort -Vu | tail -1)
-          test "$highest" = 2.35
+          $imports = & "$($tools.FullName)\bin\Hostx64\x64\dumpbin.exe" /dependents $env:BINARY
+          if ($LASTEXITCODE -ne 0 -or $imports -match '(?i)(VCRUNTIME|MSVCP|sqlite3)[^\s]*\.dll') {
+            throw 'Неверные зависимости runtime'
+          }
+      - name: Собрать артефакт
+        run: '"$BINARY" --package . release artifact --target "$TARGET" --binary "$BINARY" --output "$RUNNER_TEMP/native"'
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: native-${{ matrix.target }}
-          path: ${{ runner.temp }}/fstack-artifacts
+          path: ${{ runner.temp }}/native
           if-no-files-found: error
           retention-days: 7
 
   release:
+    name: Выпустить пакет
     needs: package
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
@@ -125,16 +102,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
       - uses: actions/download-artifact@v8.0.2
         with:
           pattern: native-*
           merge-multiple: true
-          path: ${{ runner.temp }}/fstack-artifacts
-      - run: rustup toolchain install 1.90.0 --profile minimal
-      - run: cargo +1.90.0 build --release --locked --manifest-path tools/fstack/Cargo.toml
-      - run: tools/fstack/target/release/fstack --package . release publish --artifacts "$RUNNER_TEMP/fstack-artifacts"
+          path: ${{ runner.temp }}/native
+      - name: Сверить сборку и опубликовать
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        run: |
+          publisher="$RUNNER_TEMP/native/x86_64-unknown-linux-gnu"
+          test "$(jq -er .source_sha "$publisher/artifact.json")" = "$GITHUB_SHA"
+          test "$(jq -er .sha256 "$publisher/artifact.json")" = "$(sha256sum "$publisher/fstack" | cut -d ' ' -f 1)"
+          chmod +x "$publisher/fstack"
+          "$publisher/fstack" --package . release publish --artifacts "$RUNNER_TEMP/native"
