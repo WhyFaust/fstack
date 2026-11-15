@@ -2,8 +2,9 @@
 set -eu
 [ -n "${PLUGIN_ROOT:-}" ] || exit 0
 if [ "$1" = Bootstrap ]; then
-    binary=$(/bin/sh "$PLUGIN_ROOT/launchers/fstack.sh" --install-runtime)
-    exec "$binary" --package "$PLUGIN_ROOT" migrate-profile --hook
+    /bin/sh "$PLUGIN_ROOT/launchers/fstack.sh" --install-runtime >/dev/null
+    printf '%s\n' '{}'
+    exit 0
 fi
 if ! binary=$(/bin/sh "$PLUGIN_ROOT/launchers/fstack.sh" --runtime-path 2>/dev/null); then
     if [ "$1" = UserPromptSubmit ]; then

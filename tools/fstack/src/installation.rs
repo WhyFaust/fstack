@@ -1,4 +1,5 @@
-use super::{json, json_file, require, resources, Result};
+use crate::{json, package, Result};
+use package::{json_file, require, resources};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::fs;
@@ -130,7 +131,7 @@ fn command(
 }
 
 fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
-    for installed_file in super::descendants(&installed.join("skills"), &[])? {
+    for installed_file in package::descendants(&installed.join("skills"), &[])? {
         if installed_file.is_file() {
             let relative = installed_file
                 .strip_prefix(installed)
@@ -142,10 +143,10 @@ fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
         }
     }
     let mut files = vec![source.join("docs/skills.md")];
-    files.extend(super::descendants(&source.join("skills"), &[])?);
+    files.extend(package::descendants(&source.join("skills"), &[])?);
     for file in files.into_iter().filter(|path| path.is_file()) {
         let relative = file.strip_prefix(source).map_err(|e| e.to_string())?;
-        let target = super::contained(installed, installed, relative, false)?;
+        let target = package::contained(installed, installed, relative, false)?;
         require(
             fs::read(&file).map_err(|e| e.to_string())?
                 == fs::read(&target).map_err(|e| e.to_string())?,
@@ -161,9 +162,9 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         [flag, path] if flag == "--codex" => path.clone(),
         _ => return Err("check-installation [--codex PATH]".into()),
     };
-    super::check(root)?;
+    package::check(root)?;
     let version = json_file(&root.join(".codex-plugin/plugin.json"))?["version"].clone();
-    let expected: std::collections::BTreeSet<_> = super::skill_names(root)?
+    let expected: std::collections::BTreeSet<_> = package::skill_names(root)?
         .into_iter()
         .map(|n| format!("fstack:{n}"))
         .collect();
@@ -217,7 +218,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         "Нет включённого плагина",
     )?;
     check_installed_methods(root, &installed_path)?;
-    for path in super::entries(&installed_path.join("skills"))? {
+    for path in package::entries(&installed_path.join("skills"))? {
         if path.is_dir() {
             resources(&path, &installed_path)?;
         }
@@ -231,21 +232,11 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         native_path.is_file(),
         "Для проверки клиента подготовьте полный локальный пакет с бинарником",
     )?;
-    let config = fs::read(home.join("config.toml")).map_err(|error| error.to_string())?;
-    let migration = command(
-        &native_path.into_os_string(),
-        &["migrate-profile".into(), "--apply".into()],
-        &home,
-        directory,
-    )?;
-    let migration: Value = serde_json::from_str(&migration).map_err(|error| error.to_string())?;
     require(
-        migration["status"] == "unchanged"
-            && fs::read(home.join("config.toml")).map_err(|error| error.to_string())? == config
-            && ["AGENTS.md", "agents", "fstack/profile.json"]
-                .iter()
-                .all(|path| !home.join(path).exists()),
-        "Новый профиль содержит файлы ролей или настройки fstack",
+        ["AGENTS.md", "agents"]
+            .iter()
+            .all(|path| !home.join(path).exists()),
+        "Пакет создал пользовательские инструкции или агентов",
     )?;
     let mut client = Client::start(&executable, &home, directory)?;
     client.request(1, "initialize", json!({"clientInfo":{"name":"fstack-installation-check","version":"1.0"},"capabilities":{"experimentalApi":true,"explicitGatewayOauth":true}}))?;
@@ -300,13 +291,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         .filter_map(|v| v["eventName"].as_str())
         .collect();
     require(
-        hooks.len() == events.len() + 1
-            && hooks
-                .iter()
-                .filter(|v| v["eventName"] == "sessionStart")
-                .count()
-                == 2
-            && actual == events,
+        hooks.len() == events.len() && actual == events,
         "Обнаруженные события не совпадают с пакетом",
     )?;
     for hook in hooks {
@@ -323,7 +308,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     }
     println!(
         "{}",
-        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"skill_files_and_catalog":"matched_source","hooks_discovered":events,"fresh_profile_migration":"unchanged","global_roles_installed":false,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
+        json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"skill_files_and_catalog":"matched_source","hooks_discovered":events,"profile_instructions_created":false,"global_roles_installed":false,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
     );
     Ok(())
 }

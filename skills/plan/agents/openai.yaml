@@ -1,0 +1,6 @@
+interface:
+  display_name: План работы
+  short_description: План проверяемых этапов и зависимостей
+  default_prompt: Используй $fstack:plan, чтобы разбить задачу на законченные этапы с зависимостями и проверками.
+policy:
+  allow_implicit_invocation: false

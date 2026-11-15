@@ -14,10 +14,6 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[3]
-REPORT = ROOT / "docs/benchmarks.md"
-RESULT = ROOT / "docs/benchmarks/runtime-windows.json"
-START = "<!-- benchmark:runtime:start -->"
-END = "<!-- benchmark:runtime:end -->"
 LABELS = {
     "show": "Прочитать известное решение",
     "search_hit": "Найти известное решение",
@@ -37,7 +33,7 @@ def fingerprint(paths, root=ROOT):
 
 def inputs():
     runtime = ROOT / "tools/fstack"
-    templates = ROOT / "skills/use-memory/assets/vault"
+    templates = ROOT / "skills/memory/assets/vault"
     if not (templates / "Home.md").is_file():
         raise ValueError("Нет обязательного шаблона памяти Home.md")
     return {
@@ -193,30 +189,9 @@ def read_result(path):
     return data
 
 
-def render(data):
-    current = data["inputs"] == inputs()
-    state = "соответствуют текущим измеряемым файлам" if current else "устарели: изменились измеряемые файлы, нужен новый запуск"
-    lines = [START, "", f"Замер {data['created_at'][:10]} · {data['environment']['system']} {data['environment']['machine']} · данные {state}.", "",
-             f"{data['settings']['samples']} повторов после одного прогрева; {data['settings']['records']} записей памяти.", "",
-             "| Сценарий | Медиана, мс | p95, мс | Проверка результата |",
-             "| --- | ---: | ---: | --- |"]
-    for name, result in data["results"].items():
-        lines.append(f"| {LABELS[name]} | {result['median_ms']:.3f} | {result['p95_ms']:.3f} | Пройдена |")
-    lines += ["", "[Все замеры и параметры](benchmarks/runtime-windows.json).", "", END]
-    return "\n".join(lines)
-
-
 def report(args):
-    data = read_result(RESULT)
-    text = REPORT.read_text(encoding="utf-8")
-    start, end = text.index(START), text.index(END) + len(END)
-    expected = text[:start] + render(data) + text[end:]
-    if args.check:
-        if text != expected:
-            raise ValueError("Обновите таблицу и статус: python tools/fstack/benchmarks/benchmark.py report")
-        print("Таблица, сырые замеры и статус актуальности согласованы")
-    else:
-        REPORT.write_text(expected, encoding="utf-8", newline="\n")
+    data = read_result(args.input)
+    print(json.dumps({name: summary(result["samples_ms"]) for name, result in data["results"].items()}, ensure_ascii=False))
 
 
 def main():
@@ -228,7 +203,7 @@ def main():
     runner.add_argument("--samples", type=int, default=11)
     runner.add_argument("--records", type=int, default=256)
     reporter = sub.add_parser("report")
-    reporter.add_argument("--check", action="store_true")
+    reporter.add_argument("input", type=Path)
     args = parser.parse_args()
     if args.command == "run":
         if args.samples < 5 or args.records < 2:

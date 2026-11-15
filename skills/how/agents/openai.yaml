@@ -1,0 +1,7 @@
+interface:
+  display_name: Как работает код
+  short_description: Исследование кода по исходным данным
+  default_prompt: Используй $fstack:how, чтобы объяснить указанный путь кода по первичным данным без
+    изменений.
+policy:
+  allow_implicit_invocation: false

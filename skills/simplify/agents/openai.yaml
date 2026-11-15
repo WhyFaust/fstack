@@ -1,0 +1,6 @@
+interface:
+  display_name: Упрощение изменения
+  short_description: Упрощение готового изменения без расширения задачи
+  default_prompt: Используй $fstack:simplify для текущего diff; убери необоснованную сложность и подтверди сохранение результата.
+policy:
+  allow_implicit_invocation: false

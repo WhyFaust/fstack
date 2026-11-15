@@ -267,10 +267,6 @@ fn windows_shells_preserve_hook_directory_and_utf8() {
 fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
     let runtime = Runtime::new();
     runtime.call(&["check-package", runtime.root.to_str().unwrap()], None);
-    assert_eq!(
-        runtime.json(&["migrate-profile", "--apply"], None)["status"],
-        "unchanged"
-    );
     assert!(!runtime.codex_home.exists());
     let vault = runtime.root.parent().unwrap().join("vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
@@ -436,7 +432,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         .unwrap();
     assert!(context.contains(" show ID"));
     let installed_skill = regex::Regex::new(
-        r#"((?:[A-Za-z]:[\\/]|\\\\|/)[^"\n]*?[\\/]skills[\\/]use-memory[\\/]SKILL\.md)"#,
+        r#"((?:[A-Za-z]:[\\/]|\\\\|/)[^"\n]*?[\\/]skills[\\/]memory[\\/]SKILL\.md)"#,
     )
     .unwrap()
     .captures(context)
@@ -447,7 +443,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         Path::new(installed_skill).canonicalize().unwrap(),
         runtime
             .root
-            .join("skills/use-memory/SKILL.md")
+            .join("skills/memory/SKILL.md")
             .canonicalize()
             .unwrap()
     );
@@ -616,9 +612,7 @@ fn platform_target() -> &'static str {
 }
 
 #[test]
-fn startup_from_main_uses_the_cached_runtime_and_retires_only_owned_roles() {
-    use sha2::{Digest, Sha256};
-
+fn startup_uses_the_cached_runtime_without_editing_personal_instructions() {
     let runtime = Runtime::new();
     let cache = runtime.runtime_cache();
     fs::create_dir_all(&cache).unwrap();
@@ -627,44 +621,25 @@ fn startup_from_main_uses_the_cached_runtime_and_retires_only_owned_roles() {
 
     let hooks: Value =
         serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
-    let bootstrap = &hooks["hooks"]["SessionStart"][0]["hooks"][1];
+    let bootstrap = &hooks["hooks"]["SessionStart"][0]["hooks"][0];
     assert_eq!(bootstrap["async"], true);
-    let invoke = || runtime.hook(bootstrap, None);
 
-    assert_eq!(invoke(), json!({}));
-    assert!(!runtime.codex_home.join("agents").exists());
-    assert!(!runtime.codex_home.join("fstack/profile.json").exists());
-    assert!(!runtime.codex_home.join("fstack/backups").exists());
-
+    assert_eq!(runtime.hook(bootstrap, None), json!({}));
+    let instructions = runtime.codex_home.join("AGENTS.md");
     let agents = runtime.codex_home.join("agents");
+    assert!(!instructions.exists());
+    assert!(!agents.exists());
+    fs::write(&instructions, b"# User instructions\n").unwrap();
+    let config = runtime.codex_home.join("config.toml");
+    fs::write(&config, b"model = \"user-choice\"\n").unwrap();
     fs::create_dir(&agents).unwrap();
-    let owned = b"name = \"auditor\"\n";
-    fs::write(agents.join("auditor.toml"), owned).unwrap();
-    let edited = b"name = \"coder\"\nmodel = \"my-model\"\n";
-    fs::write(agents.join("coder.toml"), edited).unwrap();
-    let state_path = runtime.codex_home.join("fstack/profile.json");
-    fs::write(
-        &state_path,
-        json!({
-            "schema": 2,
-            "version": "9.0.0",
-            "files": {
-                "agents/auditor.toml": format!("{:x}", Sha256::digest(owned)),
-                "agents/coder.toml": format!("{:x}", Sha256::digest(b"old coder")),
-            }
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let response = invoke();
-    assert!(response["systemMessage"]
-        .as_str()
-        .unwrap()
-        .contains("agents/coder.toml"));
-    assert!(!agents.join("auditor.toml").exists());
-    assert_eq!(fs::read(agents.join("coder.toml")).unwrap(), edited);
-    assert!(!state_path.exists());
-    assert_eq!(invoke(), json!({}));
+    let agent = agents.join("custom.toml");
+    fs::write(&agent, b"name = \"custom\"\n").unwrap();
+
+    assert_eq!(runtime.hook(bootstrap, None), json!({}));
+    assert_eq!(fs::read(instructions).unwrap(), b"# User instructions\n");
+    assert_eq!(fs::read(config).unwrap(), b"model = \"user-choice\"\n");
+    assert_eq!(fs::read(agent).unwrap(), b"name = \"custom\"\n");
 }
 
 #[test]
