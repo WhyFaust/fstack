@@ -73,11 +73,6 @@ obsidian vault="Проверочный vault" backlinks path="Codex Memory/Proje
 не проверяет фильтр встроенного представления. Перед удалением старой Project.md
 проверь пользовательские обратные ссылки на неё: runtime не сканирует весь личный vault.
 
-Подход адаптирован из [obsidian-skills, ревизия 3981277](https://github.com/obsidianmd/obsidian-skills/tree/398127736bd4ba42d767b1419fee1a927508370b):
-свойства Markdown, Wikilinks, сортировка и колонки Bases, проверка штатным CLI.
-Сохранена [лицензия MIT](../licenses/obsidian-skills-MIT.txt). Синхронизация Headless,
-внешние рендереры и отдельное хранилище для памяти не требуются.
-
 ## Несколько устройств и отключение
 
 Синхронизируй папку `Codex Memory` в Obsidian, включая Markdown, JSON, Bases и
