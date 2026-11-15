@@ -1,55 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-labelledby="title desc">
-  <title id="title">Состав fstack и подключение к Codex</title>
-  <desc id="desc">Команда /faust-mode включает процесс в чате до /faust-mode-off. Codex загружает навыки из установленного плагина. Координатор передаёт задания и методы доступным агентам Codex. Фоновый хук подбирает готовую сборку. Одобренные хуки находят рабочий vault и создают область проекта, нативный бинарник обслуживает память: заметки в Obsidian, привязки и очередь в профиле Codex.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="550" viewBox="0 0 1000 550" role="img" aria-labelledby="title desc">
+  <title id="title">Области ответственности fstack</title>
+  <desc id="desc">Навыки fstack задают метод. Codex предоставляет модели, инструменты и разрешения. Результат проверяется в проекте. Одобренные хуки и runtime обслуживают память в Obsidian.</desc>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#865843" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </marker>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fffaf4"/><stop offset="1" stop-color="#f3e8e0"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#9c7562" stroke-width="1.5" stroke-linecap="round"/></marker>
   </defs>
-  <rect x="1" y="1" width="998" height="638" rx="24" fill="#fffaf3" stroke="#e5d7c9" stroke-width="2"/>
-  <g font-family="DejaVu Sans, sans-serif">
-    <text x="40" y="42" fill="#9b4d31" font-size="13" font-weight="700" letter-spacing="2">УСТРОЙСТВО ПАКЕТА</text>
-    <text x="40" y="82" fill="#322921" font-size="30" font-weight="700">Координатор включается через /faust-mode</text>
-    <text x="40" y="127" fill="#6e6259" font-size="16">В пакете fstack</text>
-    <text x="630" y="127" fill="#6e6259" font-size="16">В рабочем окружении</text>
-
-    <rect x="40" y="148" width="330" height="112" rx="15" fill="#ffffff" stroke="#d9ccbf"/>
-    <rect x="40" y="148" width="6" height="112" rx="3" fill="#cf7048"/>
-    <text x="65" y="184" fill="#9b4d31" font-size="15" font-weight="700">skills/</text>
-    <text x="65" y="216" fill="#322921" font-size="23" font-weight="700">Навыки fstack</text>
-    <text x="65" y="242" fill="#6e6259" font-size="16">Код, тексты, проверка результата</text>
-    <path d="M 390 214 H 608" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="500" y="197" fill="#6e6259" font-size="15" text-anchor="middle">Codex загружает</text>
-    <rect x="630" y="148" width="330" height="112" rx="15" fill="#f9e5d8" stroke="#dfb59d"/>
-    <text x="655" y="190" fill="#322921" font-size="23" font-weight="700">Методы в чате</text>
-    <text x="655" y="221" fill="#644a3d" font-size="16">По смыслу задачи или явно</text>
-    <text x="655" y="245" fill="#644a3d" font-size="16">через $fstack:имя</text>
-
-    <rect x="40" y="294" width="330" height="112" rx="15" fill="#ffffff" stroke="#d9ccbf"/>
-    <rect x="40" y="294" width="6" height="112" rx="3" fill="#69889a"/>
-    <text x="65" y="330" fill="#426578" font-size="15" font-weight="700">delegate-work</text>
-    <text x="65" y="362" fill="#322921" font-size="23" font-weight="700">Порядок поручений</text>
-    <text x="65" y="388" fill="#6e6259" font-size="16">Область, метод и критерии</text>
-    <path d="M 390 360 H 608" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="500" y="343" fill="#6e6259" font-size="15" text-anchor="middle">В faust-mode</text>
-    <rect x="630" y="294" width="330" height="112" rx="15" fill="#e7eff3" stroke="#b6cbd5"/>
-    <text x="655" y="336" fill="#322921" font-size="23" font-weight="700">Подагенты Codex</text>
-    <text x="655" y="367" fill="#435e6c" font-size="16">Доступны в сессии</text>
-    <text x="655" y="391" fill="#435e6c" font-size="16">Навык по задаче</text>
-
-    <rect x="40" y="440" width="330" height="112" rx="15" fill="#ffffff" stroke="#d9ccbf"/>
-    <rect x="40" y="440" width="6" height="112" rx="3" fill="#718569"/>
-    <text x="65" y="476" fill="#526b48" font-size="15" font-weight="700">hooks/ + launchers/</text>
-    <text x="65" y="508" fill="#322921" font-size="23" font-weight="700">Память на Rust</text>
-    <text x="65" y="534" fill="#6e6259" font-size="16">Готовый бинарник и хуки Codex</text>
-    <path d="M 390 506 H 608" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="500" y="489" fill="#6e6259" font-size="15" text-anchor="middle">В обычном чате</text>
-    <rect x="630" y="440" width="330" height="112" rx="15" fill="#eaf0e4" stroke="#becdb2"/>
-    <text x="655" y="482" fill="#322921" font-size="23" font-weight="700">Память проекта</text>
-    <text x="655" y="513" fill="#526547" font-size="16">Markdown в Obsidian</text>
-    <text x="655" y="537" fill="#526547" font-size="16">Привязки и очередь в Codex</text>
-
-    <path d="M 40 579 H 960" stroke="#e5d7c9"/>
-    <text x="40" y="608" fill="#6e6259" font-size="15">Одобренный фоновый хук подготавливает сборку. Хуки памяти подключают проект к рабочему vault.</text>
+  <rect x="1" y="1" width="998" height="548" rx="24" fill="url(#paper)" stroke="#e0d0c4"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+  <text x="40" y="44" font-size="13" fill="#986047" font-weight="700">ОБЛАСТИ ОТВЕТСТВЕННОСТИ</text>
+  <text x="40" y="88" font-size="32" fill="#362b25" font-weight="700">Метод, исполнение и память</text>
+  <text x="40" y="121" font-size="18" fill="#67564d" font-weight="400">fstack описывает работу. Клиент предоставляет возможности и права.</text>
+  <rect x="40" y="160" width="280" height="210" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
+  <text x="62" y="202" font-size="27" fill="#362b25" font-weight="700">fstack</text>
+  <text x="62" y="241" font-size="17" fill="#67564d" font-weight="400">Навыки и каталог</text>
+  <text x="62" y="270" font-size="17" fill="#67564d" font-weight="400">Выбор метода и решения</text>
+  <text x="62" y="299" font-size="17" fill="#67564d" font-weight="400">Критерии результата</text>
+  <text x="62" y="347" font-size="14" fill="#986047" font-weight="600">Читаемые инструкции</text>
+  <rect x="360" y="160" width="280" height="210" rx="18" fill="#f7e0d0" stroke="#dfd2c8"/>
+  <text x="382" y="202" font-size="27" fill="#362b25" font-weight="700">Codex</text>
+  <text x="382" y="241" font-size="17" fill="#67564d" font-weight="400">Модели и reasoning</text>
+  <text x="382" y="270" font-size="17" fill="#67564d" font-weight="400">Агенты и инструменты</text>
+  <text x="382" y="299" font-size="17" fill="#67564d" font-weight="400">Контекст и разрешения</text>
+  <text x="382" y="347" font-size="14" fill="#986047" font-weight="600">Фактическое исполнение</text>
+  <rect x="680" y="160" width="280" height="210" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
+  <text x="702" y="202" font-size="27" fill="#362b25" font-weight="700">Проект</text>
+  <text x="702" y="241" font-size="17" fill="#67564d" font-weight="400">Исходники и зависимости</text>
+  <text x="702" y="270" font-size="17" fill="#67564d" font-weight="400">Стенд, тесты и CI</text>
+  <text x="702" y="299" font-size="17" fill="#67564d" font-weight="400">Политики и потребители</text>
+  <text x="702" y="347" font-size="14" fill="#986047" font-weight="600">Наблюдаемый результат</text>
+  <path d="M 323 266 H 350" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 643 266 H 670" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="40" y="407" width="920" height="110" rx="18" fill="#44332c" stroke="#44332c"/>
+  <text x="64" y="442" font-size="23" fill="#fff7ef" font-weight="700">Одобренные хуки → нативный runtime → Obsidian</text>
+  <text x="64" y="479" font-size="18" fill="#e6c9b6" font-weight="400">Решения и поправки в заметках · привязки и очередь в профиле Codex</text>
   </g>
 </svg>

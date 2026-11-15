@@ -1,48 +1,51 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="740" viewBox="0 0 1000 740" role="img" aria-labelledby="title desc">
-  <title id="title">Как fstack выбирает путь от задачи к результату</title>
-  <desc id="desc">Координатор отвечает по имеющимся данным или выбирает доступного агента с нужными инструментами и полномочиями. Для приёмки достаточно независимого прогона CI, проверившего критерий на актуальной ревизии. При нехватке доказательств координатор назначает проверку. Замечания получает автор. Исполнители возвращают сведения для памяти, координатор сверяет их и решает, что сохранить.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="610" viewBox="0 0 1000 610" role="img" aria-labelledby="title desc">
+  <title id="title">От запроса к результату</title>
+  <desc id="desc">Наблюдение, причина, решение и проверка. Связную работу может выполнить один владелец. Делегирование нужно для полезного самостоятельного результата.</desc>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#865843" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </marker>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fffaf4"/><stop offset="1" stop-color="#f3e8e0"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#9c7562" stroke-width="1.5" stroke-linecap="round"/></marker>
   </defs>
-  <rect x="1" y="1" width="998" height="738" rx="24" fill="#fffaf3" stroke="#e5d7c9" stroke-width="2"/>
-  <g font-family="DejaVu Sans, sans-serif">
-    <text x="40" y="42" fill="#9b4d31" font-size="13" font-weight="700" letter-spacing="2">РАБОЧИЙ ПРОЦЕСС</text>
-    <text x="40" y="82" fill="#322921" font-size="30" font-weight="700">/faust-mode: путь к результату</text>
-    <text x="40" y="113" fill="#6e6259" font-size="17">Координатор выбирает исполнителя по задаче, полномочиям и доступным инструментам.</text>
-
-    <rect x="40" y="145" width="920" height="86" rx="16" fill="#f9e5d8" stroke="#dfb59d"/>
-    <text x="65" y="181" fill="#322921" font-size="23" font-weight="700">Цель · полномочия · критерии</text>
-    <text x="65" y="210" fill="#644a3d" font-size="17">Координатор определяет ожидаемый результат и границы действий.</text>
-
-    <path d="M 175 231 V 277" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M 660 231 V 277" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-
-    <rect x="40" y="290" width="270" height="142" rx="16" fill="#ffffff" stroke="#d9ccbf"/>
-    <text x="65" y="326" fill="#6e6259" font-size="15" font-weight="700">ДАННЫХ ДОСТАТОЧНО</text>
-    <text x="65" y="363" fill="#322921" font-size="23" font-weight="700">Прямой ответ</text>
-    <text x="65" y="394" fill="#6e6259" font-size="17">Без отдельных поручений</text>
-    <text x="65" y="418" fill="#6e6259" font-size="17">и лишних этапов</text>
-
-    <rect x="410" y="290" width="550" height="142" rx="16" fill="#e7eff3" stroke="#b6cbd5"/>
-    <text x="435" y="326" fill="#426578" font-size="15" font-weight="700">НУЖНА РАБОТА</text>
-    <text x="435" y="363" fill="#322921" font-size="23" font-weight="700">Исполнитель и метод</text>
-    <text x="435" y="394" fill="#435e6c" font-size="17">Доступный агент с подходящим навыком</text>
-    <text x="435" y="418" fill="#435e6c" font-size="17">В отчёте — результат, источник и вывод для памяти</text>
-
-    <path d="M 660 432 V 479" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-    <rect x="410" y="492" width="550" height="120" rx="16" fill="#eaf0e4" stroke="#becdb2"/>
-    <text x="435" y="529" fill="#322921" font-size="23" font-weight="700">Проверка по критериям</text>
-    <text x="435" y="562" fill="#526547" font-size="17">Независимая проверка на текущей ревизии</text>
-    <text x="435" y="590" fill="#526547" font-size="17">Ревью — по требованию или вопросу о коде</text>
-
-    <path d="M 410 551 H 365 V 363 H 398" fill="none" stroke="#865843" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
-    <text x="350" y="559" transform="rotate(-90 350 559)" fill="#6e6259" font-size="14">Замечания автору</text>
-    <path d="M 175 432 V 645" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M 660 612 V 645" fill="none" stroke="#865843" stroke-width="2" marker-end="url(#arrow)"/>
-
-    <rect x="40" y="658" width="920" height="54" rx="14" fill="#43342d"/>
-    <text x="500" y="692" fill="#fffaf3" font-size="20" font-weight="700" text-anchor="middle">Результат и ограничения · для изменения: проверенная ревизия</text>
+  <rect x="1" y="1" width="998" height="608" rx="24" fill="url(#paper)" stroke="#e0d0c4"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+  <text x="40" y="44" font-size="13" fill="#986047" font-weight="700">МЕТОД РАБОТЫ</text>
+  <text x="40" y="88" font-size="32" fill="#362b25" font-weight="700">От симптома к проверенному решению</text>
+  <text x="40" y="121" font-size="18" fill="#67564d" font-weight="400">Каждый следующий шаг опирается на доказательства предыдущего.</text>
+  <rect x="40" y="160" width="212" height="236" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
+  <text x="58" y="193" font-size="14" fill="#a96e50" font-weight="700">01</text>
+  <text x="58" y="229" font-size="24" fill="#362b25" font-weight="700">Наблюдение</text>
+  <text x="58" y="265" font-size="16" fill="#67564d" font-weight="400">Что случилось?</text>
+  <text x="58" y="291" font-size="16" fill="#67564d" font-weight="400">Как повторить?</text>
+  <text x="58" y="317" font-size="16" fill="#67564d" font-weight="400">Где теряется время?</text>
+  <text x="58" y="370" font-size="13" fill="#986047" font-weight="600">Логи · исходники</text>
+  <path d="M 255 270 H 271" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="276" y="160" width="212" height="236" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
+  <text x="294" y="193" font-size="14" fill="#a96e50" font-weight="700">02</text>
+  <text x="294" y="229" font-size="24" fill="#362b25" font-weight="700">Причина</text>
+  <text x="294" y="265" font-size="16" fill="#67564d" font-weight="400">Какое условие</text>
+  <text x="294" y="291" font-size="16" fill="#67564d" font-weight="400">порождает отказ?</text>
+  <text x="294" y="317" font-size="16" fill="#67564d" font-weight="400">Кто им управляет?</text>
+  <text x="294" y="370" font-size="13" fill="#986047" font-weight="600">Механизм · владелец</text>
+  <path d="M 491 270 H 507" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="512" y="160" width="212" height="236" rx="18" fill="#f7e0d0" stroke="#dfd2c8"/>
+  <text x="530" y="193" font-size="14" fill="#a96e50" font-weight="700">03</text>
+  <text x="530" y="229" font-size="24" fill="#362b25" font-weight="700">Решение</text>
+  <text x="530" y="265" font-size="16" fill="#67564d" font-weight="400">Что убирает причину?</text>
+  <text x="530" y="291" font-size="16" fill="#67564d" font-weight="400">Какие состояния</text>
+  <text x="530" y="317" font-size="16" fill="#67564d" font-weight="400">и зависимости остаются?</text>
+  <text x="530" y="370" font-size="13" fill="#986047" font-weight="600">Контракт · совместимость</text>
+  <path d="M 727 270 H 743" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="748" y="160" width="212" height="236" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
+  <text x="766" y="193" font-size="14" fill="#a96e50" font-weight="700">04</text>
+  <text x="766" y="229" font-size="24" fill="#362b25" font-weight="700">Проверка</text>
+  <text x="766" y="265" font-size="16" fill="#67564d" font-weight="400">Изменился ли исход?</text>
+  <text x="766" y="291" font-size="16" fill="#67564d" font-weight="400">Сохранены ли</text>
+  <text x="766" y="317" font-size="16" fill="#67564d" font-weight="400">нужные свойства?</text>
+  <text x="766" y="370" font-size="13" fill="#986047" font-weight="600">Поведение · ревизия</text>
+  <rect x="40" y="428" width="920" height="148" rx="18" fill="#44332c" stroke="#44332c"/>
+  <text x="64" y="462" font-size="22" fill="#fff7ef" font-weight="700">Кто выполняет работу</text>
+  <text x="64" y="499" font-size="17" fill="#e6c9b6" font-weight="400">Связная цепочка по одним данным</text>
+  <text x="64" y="536" font-size="18" fill="#fff7ef" font-weight="600">Один владелец может пройти весь путь</text>
+  <text x="530" y="499" font-size="17" fill="#e6c9b6" font-weight="400">Самостоятельный полезный результат</text>
+  <text x="530" y="536" font-size="18" fill="#fff7ef" font-weight="600">Отдельный контекст + модель под поручение</text>
   </g>
 </svg>

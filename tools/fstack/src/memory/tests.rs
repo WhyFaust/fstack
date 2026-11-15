@@ -272,6 +272,64 @@ fn validation_and_stable_identity() {
     assert!(decode("e30=").is_err());
 }
 #[test]
+fn library_upgrade_only_replaces_the_exact_previous_template() {
+    let f = Fixture::new("auto", "pilot");
+    let path = f.binding.root.join("Library.base");
+    let old = include_str!("../../tests/fixtures/library-10.1.base");
+    fs::write(&path, old).unwrap();
+    views::ensure_library(&f.binding.root, &f.store.package).unwrap();
+    let updated = fs::read_to_string(&path).unwrap();
+    assert!(updated.contains("displayName: Основание"));
+    assert!(updated.contains("direction: DESC"));
+    let custom = format!("{old}\n# Личная настройка таблицы\n");
+    fs::write(&path, &custom).unwrap();
+    views::ensure_library(&f.binding.root, &f.store.package).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), custom);
+}
+
+#[test]
+fn obsidian_properties_survive_read_approval_and_migration() {
+    let f = Fixture::new("inbox", "pilot");
+    for properties in [
+        "tags: [manual, project/rules]\naliases: [\"Порог чтения\"]\ncssclasses: compact\n",
+        "tags:\n  - manual\n  - project/rules\naliases:\n- \"Порог чтения\"\ncssclasses:\n  - compact\n",
+    ] {
+        let entry = f.save(properties.lines().next().unwrap(), false);
+        let path = store::record(&f.root(), id(&entry));
+        let raw = fs::read_to_string(&path).unwrap();
+        let decorated = raw.replacen("---\n", &format!("---\n{properties}"), 1);
+        fs::write(&path, &decorated).unwrap();
+        assert_eq!(f.store.inbox(&f.binding).unwrap().as_array().unwrap().len(), 1);
+        let approved = f.store.approve(&f.binding, id(&entry)).unwrap();
+        assert_eq!(approved["body"], entry["body"]);
+        f.store.migrate(&f.binding, false).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains(properties));
+        assert_eq!(f.store.get(&f.binding, id(&entry)).unwrap(), approved);
+        assert!(!f.store.search(&f.binding, "tags", 5).unwrap().as_array().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn obsidian_properties_cannot_hide_reserved_metadata_or_duplicate_keys() {
+    let fields = BTreeMap::from([
+        ("id".into(), "a".repeat(64)),
+        ("kind".into(), "decision".into()),
+        ("title".into(), "Правило".into()),
+    ]);
+    let raw = format::markdown(format::MEMORY, &fields, "Проверенное правило.");
+    for invalid in [
+        "tags: [one]\ntags: [two]\n",
+        "tags:\n  id: invalid\n",
+        "aliases:\n  - fstack_status: approved\n",
+        "cssclasses: {id: invalid}\n",
+        "aliases: []\nid: invalid\n",
+    ] {
+        let value = raw.replacen("---\n", &format!("---\n{invalid}"), 1);
+        assert!(format::parse(&value, &"a".repeat(64), format::MEMORY, true).is_err());
+    }
+}
+
+#[test]
 fn inbox_manual_edits_dedup_and_scope() {
     let f = Fixture::new("inbox", "pilot");
     let v = f.save("Keep heliotrope", true);

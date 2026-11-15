@@ -18,12 +18,26 @@ properties:
     displayName: Тип
   note.created:
     displayName: Дата
+  note.source:
+    displayName: Основание
+  note.supersedes_link:
+    displayName: Заменяет
 views:
   - type: table
     name: Сохранённые
     filters: '(note.fstack_status == "approved" || file(file.path.replace("/Records/", "/Approved/")) != null)'
-    order: [formula.record, formula.project, note.kind, note.created]
+    order: [formula.record, formula.project, note.kind, note.created, note.source, note.supersedes_link]
+    sort:
+      - property: note.created
+        direction: DESC
+      - property: file.path
+        direction: ASC
   - type: table
     name: Inbox
     filters: '(note.fstack_status != "approved" && file(file.path.replace("/Records/", "/Approved/")) == null)'
-    order: [formula.record, formula.project, note.kind, note.created]
+    order: [formula.record, formula.project, note.kind, note.created, note.source, note.supersedes_link]
+    sort:
+      - property: note.created
+        direction: ASC
+      - property: file.path
+        direction: ASC

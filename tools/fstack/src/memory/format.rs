@@ -113,7 +113,9 @@ pub fn parse(raw: &str, entry: &str, marker: &str, include_body: bool) -> Result
         return Err("Invalid memory file marker".into());
     }
     let mut fields = Fields::new();
-    for line in meta.lines() {
+    let mut decorations = std::collections::BTreeSet::new();
+    let mut lines = meta.lines().peekable();
+    while let Some(line) = lines.next() {
         if line == marker {
             continue;
         }
@@ -125,6 +127,33 @@ pub fn parse(raw: &str, entry: &str, marker: &str, include_body: bool) -> Result
             )
         {
             continue;
+        }
+        if marker == MEMORY {
+            if let Some((key @ ("tags" | "aliases" | "cssclasses"), _)) = line.split_once(':') {
+                if !decorations.insert(key) {
+                    return Err("Duplicate Obsidian property".into());
+                }
+                let mut property = String::from(line);
+                while lines.peek().is_some_and(|next| {
+                    next.starts_with([' ', '\t'])
+                        || next.starts_with("- ")
+                        || next.trim().is_empty()
+                }) {
+                    property.push('\n');
+                    property.push_str(lines.next().unwrap());
+                }
+                let values: BTreeMap<String, serde_yaml::Value> =
+                    serde_yaml::from_str(&property).map_err(io::err)?;
+                let valid = match values.get(key) {
+                    Some(serde_yaml::Value::Null | serde_yaml::Value::String(_)) => true,
+                    Some(serde_yaml::Value::Sequence(items)) => items.iter().all(|v| v.is_string()),
+                    _ => false,
+                };
+                if values.len() != 1 || !valid {
+                    return Err("Invalid Obsidian property".into());
+                }
+                continue;
+            }
         }
         let (k, v) = line.split_once(": ").ok_or("Invalid memory metadata")?;
         let allowed = if marker == MEMORY {

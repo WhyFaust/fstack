@@ -22,6 +22,30 @@ Silicon. Список платформ, флаги сборки и провер�
 в [workflow](../.github/workflows/release.yml). Для тестов памяти используй
 временные vault и профиль вне Git-дерева.
 
+Для изменений измерительного скрипта и опубликованных результатов нужны Python 3.11+
+и проверки без дополнительных зависимостей:
+
+```bash
+python -m unittest discover -s tools/fstack/benchmarks -p 'test_*.py' -v
+python tools/fstack/benchmarks/benchmark.py report --check
+```
+
+[Методика бенчмарков](benchmarks.md) описывает повтор запуска и обновление таблицы.
+CI выполняет свежий замер runtime и сохраняет JSON артефактом. Модели в этом
+workflow не запускаются. Изменения поведения оценивай по
+[протоколу экспериментов](evaluations.md) при наличии отдельного поручения.
+
+Для runner и корпуса нужны Python 3.12+ и полная история Git. Без моделей:
+
+```bash
+python -m unittest discover -s tools/fstack/evals -p 'test_*.py' -v
+python tools/fstack/evals/evaluate.py validate-corpus --output /absolute/path/new-corpus-check
+```
+
+Каталог проверки новый для каждого запуска; он содержит результаты исходной и
+исправленной ревизий каждого случая. Прогоны с моделями выполняются отдельными
+командами с явными лимитами и сохраняются вне репозитория.
+
 ## Проверка фактическим клиентом
 
 ```bash
@@ -40,6 +64,11 @@ bin/fstack check-installation --codex /absolute/path/to/codex
 согласованно во всех локализациях. Новый навык начинает с `1.0.0`.
 
 ## Версии и публикация
+
+Используй [шаблон PR](../.github/PULL_REQUEST_TEMPLATE.md). Причина, выбор
+решения и фактическая проверка должны быть понятны без истории чата.
+Порядок заполнения и запасной шаблон для других проектов описаны в
+[implement-change](../skills/implement-change/SKILL.md#подготовить-pr-или-mr).
 
 Ветка PR должна учитывать актуальную `main`. Используй Conventional Commits:
 `fix:` и `perf:` повышают PATCH, `feat:` — MINOR, несовместимый публичный
