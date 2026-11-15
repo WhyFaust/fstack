@@ -195,7 +195,8 @@ fn explicit_mode_activates_without_binding_and_in_plan_without_memory() {
     );
     assert!(plan["hookSpecificOutput"]["additionalContext"]
         .as_str()
-        .is_some());
+        .unwrap()
+        .contains("нативном Plan Mode"));
     assert!(!f.store.state.join("pending.sqlite3").exists());
     let store = Store::new(Some(f.base.join("unbound-state")), &f.store.package).unwrap();
     let payload = json!({"hook_event_name":"UserPromptSubmit", "session_id":"new", "turn_id":"new", "cwd":f.repo,"prompt":"/faust-mode task"});

@@ -476,7 +476,10 @@ fn explicit_version_checks_package_and_skill_changes_against_the_pr_base() {
         format!("{}\nNew instruction\n", original.replace("0.2.0", "0.2.1")),
     );
     commit(&root, "fix: update skill version");
-    assert!(release.check_next(&base).unwrap_err().contains("нова"));
+    assert!(release
+        .check_next(&base)
+        .unwrap_err()
+        .contains("новой версии"));
     release.prepare(Some("0.2.1")).unwrap();
     commit(&root, "chore: prepare package");
     assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
@@ -495,7 +498,10 @@ fn publishing_depends_on_the_current_version_only() {
     let base = git(&root, &["rev-parse", "HEAD"]);
     let same = json!({"tag_name":"v0.2.0","draft":false,"prerelease":false});
     let unrelated = json!({"tag_name":"v20.0.0","draft":false,"prerelease":false});
-    assert_eq!(release.plan(&[unrelated.clone()]).unwrap()["publish"], true);
+    assert_eq!(
+        release.plan(std::slice::from_ref(&unrelated)).unwrap()["publish"],
+        true
+    );
     assert_eq!(release.plan(&[]).unwrap()["publish"], true);
     assert_eq!(
         release.plan(&[same.clone(), unrelated]).unwrap()["publish"],
