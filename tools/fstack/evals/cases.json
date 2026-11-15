@@ -23,7 +23,7 @@
     },
     {
       "id": "body-marker",
-      "split": "holdout",
+      "split": "development",
       "family": "ownership",
       "base": "481e249fe8852d9f09e79ab5bd7aef68d62fde3c",
       "reference": "9613877394c9200cf8933c6b48ba75fa96adbc49",
