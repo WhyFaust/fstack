@@ -4,7 +4,7 @@ description: 'Читает статус GitHub PR или GitLab MR по теку
 license: MIT
 metadata:
   short-description: Состояние и сопровождение PR или MR
-  version: 2.3.0
+  version: 2.3.1
   author: WhyFaust
   source: https://github.com/WhyFaust/fstack
 ---
@@ -38,6 +38,8 @@ faust-mode задача на реализацию в GitLab-проекте с р
 
 1. Найди открытый MR по паре проектов и веток, учитывая fork. Если MR ещё нет,
    опубликуй первый содержательный коммит и создай Draft с явными source и target.
+   Заполни описание по [implement-change](../implement-change/SKILL.md#подготовить-pr-или-mr)
+   с учётом шаблона проекта.
    Сверь проект, IID и URL. Следующие изменения публикуй в ту же ветку. После
    неопределённого результата push или создания прочитай удалённый ref и список MR.
 2. Когда согласованная реализация и локальные проверки завершены, опубликуй

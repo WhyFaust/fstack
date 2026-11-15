@@ -65,6 +65,11 @@ bin/fstack check-installation --codex /absolute/path/to/codex
 
 ## Версии и публикация
 
+Используй [шаблон PR](../.github/PULL_REQUEST_TEMPLATE.md). Причина, выбор
+решения и фактическая проверка должны быть понятны без истории чата.
+Порядок заполнения и запасной шаблон для других проектов описаны в
+[implement-change](../skills/implement-change/SKILL.md#подготовить-pr-или-mr).
+
 Ветка PR должна учитывать актуальную `main`. Используй Conventional Commits:
 `fix:` и `perf:` повышают PATCH, `feat:` — MINOR, несовместимый публичный
 контракт с `!` или `BREAKING CHANGE:` — MAJOR. Изменение инструкций,

@@ -60,7 +60,7 @@
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
 | `python` | Python-код, окружение, типы и ресурсы | [Открыть](../skills/python/SKILL.md) |
-| `no-comments` | Понятный код без поясняющих комментариев и закомментированных фрагментов | [Открыть](../skills/no-comments/SKILL.md) |
+| `no-comments` | Понятный код без лишних комментариев, с сохранением внешних ограничений | [Открыть](../skills/no-comments/SKILL.md) |
 | `find-docs` | Проверка API по документации нужной версии | [Открыть](../skills/find-docs/SKILL.md) |
 | `glab` | GitLab CLI для операций, недоступных через MCP | [Открыть](../skills/glab/SKILL.md) |
 | `playwright-cli` | Работа с веб-интерфейсом через Playwright CLI | [Открыть](../skills/playwright-cli/SKILL.md) |

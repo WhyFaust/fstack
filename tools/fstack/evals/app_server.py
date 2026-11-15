@@ -48,6 +48,7 @@ cli_auth_credentials_store = "file"
 apps = false
 memory_tool = false
 multi_agent = true
+multi_agent_v2 = true
 
 [shell_environment_policy]
 inherit = "core"
