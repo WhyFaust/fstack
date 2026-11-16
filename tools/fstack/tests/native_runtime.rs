@@ -486,25 +486,14 @@ fn codex_task_records_a_verified_project_decision_without_user_input() {
     let runtime = Runtime::new();
     let vault = runtime.root.parent().unwrap().join("vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    runtime.json(
-        &[
-            "memory",
-            "init",
-            "--vault",
-            vault.to_str().unwrap(),
-            "--repo",
-            runtime.project.to_str().unwrap(),
-            "--project",
-            "native",
-        ],
-        None,
-    );
+    runtime.json(&["memory", "vault", "--set", vault.to_str().unwrap()], None);
     let session = "00000000-0000-7000-8000-000000000001";
     let turn = "00000000-0000-7000-8000-000000000002";
     let parent = "00000000-0000-7000-8000-000000000003";
     let follow_up = "00000000-0000-7000-8000-000000000004";
     let plan = "00000000-0000-7000-8000-000000000005";
     let switch_to_plan = "00000000-0000-7000-8000-000000000006";
+    let inter_agent = "00000000-0000-7000-8000-000000000007";
     let dir = runtime.codex_home.join("sessions/2026/01/01");
     fs::create_dir_all(&dir).unwrap();
     let transcript = dir.join(format!("rollout-2026-01-01T00-00-00-{session}.jsonl"));
@@ -539,6 +528,15 @@ fn codex_task_records_a_verified_project_decision_without_user_input() {
     let mut untrusted = stop(false);
     untrusted["transcript_path"] = json!(project_copy);
     assert_eq!(event("Stop", turn, untrusted), json!({}));
+    assert_eq!(
+        runtime.json(&["memory", "status"], None),
+        json!({"enabled":false})
+    );
+    let startup = event("SessionStart", turn, json!({"source":"startup"}));
+    assert!(startup["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("memory search"));
     let initial = event("Stop", turn, stop(false));
     assert_eq!(initial["decision"], "block");
     let reason = initial["reason"].as_str().unwrap();
@@ -568,8 +566,11 @@ fn codex_task_records_a_verified_project_decision_without_user_input() {
     assert_eq!(records[0]["turn_id"], turn);
     assert_eq!(records[0]["session_id"], session);
     assert_eq!(records[0]["status"], "memory");
+    let binding = runtime.json(&["memory", "status"], None);
     let path = vault
-        .join("Codex Memory/Projects/native/Records")
+        .join("Codex Memory/Projects")
+        .join(binding["project"].as_str().unwrap())
+        .join("Records")
         .join(format!("{}.md", records[0]["id"].as_str().unwrap()));
     assert!(fs::read_to_string(path)
         .unwrap()
@@ -588,6 +589,17 @@ fn codex_task_records_a_verified_project_decision_without_user_input() {
         runtime.json(&["memory", "diagnostics"], None)["phase"],
         "skipped"
     );
+    assert_eq!(search(), records);
+
+    write_turn(&mut rollout, inter_agent, "remote_ios", "default");
+    let wake =
+        json!({"type":"inter_agent_communication_metadata","payload":{"trigger_turn":false}});
+    let message = json!({"type":"response_item","payload":{"type":"agent_message",
+        "author":"/root/worker","recipient":"/root","content":[]}});
+    writeln!(rollout, "{wake}\n{message}").unwrap();
+    assert_eq!(event("Stop", inter_agent, stop(false))["decision"], "block");
+    assert_eq!(event("PostToolUse", inter_agent, skip.clone()), json!({}));
+    assert_eq!(event("Stop", inter_agent, stop(true)), json!({}));
     assert_eq!(search(), records);
 
     write_turn(&mut rollout, plan, "app_tool_send_message", "plan");
@@ -613,6 +625,164 @@ fn codex_task_records_a_verified_project_decision_without_user_input() {
         "cancelled"
     );
     assert_eq!(search(), records);
+}
+
+#[test]
+fn desktop_hooks_use_recorded_plan_mode_and_capture_native_agent_decisions() {
+    let runtime = Runtime::new();
+    let vault = runtime.root.parent().unwrap().join("vault");
+    fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    runtime.json(
+        &[
+            "memory",
+            "init",
+            "--vault",
+            vault.to_str().unwrap(),
+            "--repo",
+            runtime.project.to_str().unwrap(),
+            "--project",
+            "native",
+        ],
+        None,
+    );
+    let parent = "00000000-0000-7000-8000-000000000011";
+    let child = "00000000-0000-7000-8000-000000000012";
+    let parent_turn = "00000000-0000-7000-8000-000000000013";
+    let child_turn = "00000000-0000-7000-8000-000000000014";
+    let plan_turn = "00000000-0000-7000-8000-000000000015";
+    let aborted_turn = "00000000-0000-7000-8000-000000000016";
+    let next_turn = "00000000-0000-7000-8000-000000000017";
+    let dir = runtime.codex_home.join("sessions/2026/01/01");
+    fs::create_dir_all(&dir).unwrap();
+    let transcript = |session| dir.join(format!("rollout-2026-01-01T00-00-00-{session}.jsonl"));
+    let write_header = |session, source: Value| {
+        let mut file = fs::File::create(transcript(session)).unwrap();
+        let meta = json!({"type":"session_meta","payload":{"id":session,"source":source,"originator":"Codex Desktop"}});
+        writeln!(file, "{meta}").unwrap();
+        file
+    };
+    let write_turn = |file: &mut fs::File, turn: &str, mode: &str| {
+        let start = json!({"type":"event_msg","payload":{"type":"task_started","turn_id":turn,"collaboration_mode_kind":mode}});
+        let context = json!({"type":"turn_context","payload":{"turn_id":turn,"cwd":runtime.project,
+            "collaboration_mode":{"mode":mode}}});
+        writeln!(file, "{start}\n{context}").unwrap();
+    };
+    let run_hook = |name: &str, session, turn, fields: Value| {
+        let mut payload = json!({"hook_event_name":name,"session_id":session,"turn_id":turn,
+             "cwd":runtime.project,"permission_mode":"default","transcript_path":transcript(session)});
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        runtime.json(&["memory", "hook", name], Some(payload))
+    };
+    let mut root = write_header(parent, json!("vscode"));
+    write_turn(&mut root, plan_turn, "plan");
+    let plan = run_hook(
+        "UserPromptSubmit",
+        parent,
+        plan_turn,
+        json!({"prompt":"Нужен план"}),
+    );
+    assert!(!plan.to_string().contains("stage --turn"));
+
+    let mut agent = write_header(
+        child,
+        json!({"subagent":{"thread_spawn":{"parent_thread_id":parent,"depth":1,"agent_path":"/root/worker"}}}),
+    );
+    write_turn(&mut agent, child_turn, "default");
+    let agent_start = run_hook(
+        "SubagentStart",
+        child,
+        child_turn,
+        json!({"agent_id":child,"agent_type":"worker"}),
+    );
+    assert!(agent_start["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("memory search"));
+    let agent_stop = |continued| {
+        json!({"agent_id":child,"agent_type":"worker",
+        "transcript_path":transcript(parent),"agent_transcript_path":transcript(child),
+        "last_assistant_message":"Проверено","stop_hook_active":continued})
+    };
+    assert_eq!(
+        run_hook("SubagentStop", child, child_turn, agent_stop(false)),
+        json!({})
+    );
+    write_turn(&mut root, parent_turn, "default");
+    let request = run_hook("SubagentStop", child, child_turn, agent_stop(false));
+    assert_eq!(request["decision"], "block");
+    let prefix =
+        regex::Regex::new(r#"((?:& )?"[^"\n]+"(?: --package "[^"\n]+")? memory report) --payload"#)
+            .unwrap()
+            .captures(request["reason"].as_str().unwrap())
+            .unwrap()[1]
+            .to_owned();
+    let action = json!({"action":"remember","candidate":{"kind":"decision","title":"Гранатовая проверка",
+        "body":"Проверяй гранатовый режим при сборке.","source":"Результат теста подагента"}});
+    let encoded = runtime.json(&["memory", "pack"], Some(action));
+    let encoded = encoded.as_str().unwrap();
+    let receipt = runtime.call(&["memory", "report", "--payload", encoded], None);
+    let post = json!({"agent_id":child,"agent_type":"worker","tool_name":"Bash","tool_use_id":"agent-report",
+        "tool_input":{"command":format!("{prefix} --payload {encoded}")},"tool_response":receipt});
+    assert_eq!(run_hook("PostToolUse", child, child_turn, post), json!({}));
+    assert_eq!(
+        run_hook("SubagentStop", child, child_turn, agent_stop(true)),
+        json!({})
+    );
+    let records = runtime.json(&["memory", "search", "гранатовый"], None);
+    assert_eq!(records.as_array().unwrap().len(), 1);
+    assert_eq!(records[0]["session_id"], child);
+    assert_eq!(records[0]["turn_id"], child_turn);
+    assert_eq!(
+        run_hook("SubagentStop", child, child_turn, agent_stop(true)),
+        json!({})
+    );
+    assert_eq!(
+        runtime.json(&["memory", "search", "гранатовый"], None),
+        records
+    );
+
+    write_turn(&mut agent, aborted_turn, "default");
+    assert_eq!(
+        run_hook("SubagentStop", child, aborted_turn, agent_stop(false))["decision"],
+        "block"
+    );
+    let operation = json!({"action":"remember","candidate":{"kind":"decision","title":"Отменённая проверка",
+       "body":"Исход отменённой проверки.","source":"Результат подагента"}});
+    let encoded = runtime.json(&["memory", "pack"], Some(operation));
+    let encoded = encoded.as_str().unwrap();
+    let receipt = runtime.call(&["memory", "report", "--payload", encoded], None);
+    let interrupted_post = json!({"agent_id":child,"agent_type":"worker","tool_name":"Bash",
+        "tool_use_id":"aborted-report","tool_input":{"command":format!("{prefix} --payload {encoded}")},
+        "tool_response":receipt});
+    run_hook("PostToolUse", child, aborted_turn, interrupted_post);
+    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
+    let aborted =
+        json!({"type":"event_msg","payload":{"type":"turn_aborted","turn_id":aborted_turn}});
+    writeln!(agent, "{aborted}").unwrap();
+    write_turn(&mut agent, next_turn, "default");
+    assert_eq!(
+        run_hook("SubagentStop", child, next_turn, agent_stop(false))["decision"],
+        "block"
+    );
+    let receipt = runtime.call(&["memory", "report", "--skip"], None);
+    let skip = json!({"agent_id":child,"agent_type":"worker","tool_name":"Bash","tool_use_id":"next-report",
+        "tool_input":{"command":format!("{prefix} --skip")},"tool_response":receipt});
+    run_hook("PostToolUse", child, next_turn, skip);
+    assert_eq!(
+        run_hook("SubagentStop", child, next_turn, agent_stop(true)),
+        json!({})
+    );
+    assert_eq!(
+        runtime.json(&["memory", "diagnostics"], None)["phase"],
+        "cancelled"
+    );
+    assert_eq!(
+        runtime.json(&["memory", "search", "отменённой"], None),
+        json!([])
+    );
 }
 
 #[test]

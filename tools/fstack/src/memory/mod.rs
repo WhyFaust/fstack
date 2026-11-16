@@ -212,7 +212,18 @@ pub fn run(arguments: &[OsString], package: &Path) -> Result<()> {
     let result = if command == "hook" {
         let event = args
             .get(1)
-            .filter(|s| matches!(s.as_str(), "UserPromptSubmit" | "PostToolUse" | "Stop"))
+            .filter(|s| {
+                matches!(
+                    s.as_str(),
+                    "SessionStart"
+                        | "SubagentStart"
+                        | "UserPromptSubmit"
+                        | "PostToolUse"
+                        | "Stop"
+                        | "SubagentStop"
+                        | "Interrupt"
+                )
+            })
             .ok_or("Invalid memory hook event")?;
         if args.len() != 2 {
             return Err("Invalid memory hook arguments".into());

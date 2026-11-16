@@ -8,7 +8,13 @@ if ($EventName -eq 'Bootstrap') {
     exit 0
 }
 try {
-    $binary = & ([scriptblock]::Create([IO.File]::ReadAllText($launcher))) -RuntimePath
+    $launch = [scriptblock]::Create([IO.File]::ReadAllText($launcher))
+    $wait = if ($EventName -eq 'SessionStart') { [Diagnostics.Stopwatch]::StartNew() }
+    do {
+        $binary = & $launch -RuntimePath
+        if ($binary -or !$wait -or $wait.ElapsedMilliseconds -ge 6000) { break }
+        Start-Sleep -Milliseconds 500
+    } while ($true)
 } catch { $binary = $null }
 if (!$binary) {
     if ($EventName -eq 'UserPromptSubmit') {

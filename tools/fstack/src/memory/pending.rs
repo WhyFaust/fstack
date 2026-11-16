@@ -276,6 +276,22 @@ impl Pending {
         )?;
         Ok(Some(nonce))
     }
+    pub fn cancel(&self, key: &str) -> Result<()> {
+        if self.invalidate(key)?.is_none() {
+            return Ok(());
+        }
+        let Some(conn) = self.connection(false, false)? else {
+            return Ok(());
+        };
+        let scope: Option<String> = conn.query_row(
+            "SELECT scope FROM pending WHERE turn=?1 UNION SELECT scope FROM claimed WHERE turn=?1",
+            [key], |row| row.get(0),
+        ).optional().map_err(io::err)?;
+        if let Some(scope) = scope {
+            Self::phase(&conn, &scope, "cancelled")?;
+        }
+        conn.execute_batch("COMMIT").map_err(io::err)
+    }
     pub fn lock_turn(&self, key: &str) -> Result<std::fs::File> {
         format::id(key)?;
         io::lock_key(

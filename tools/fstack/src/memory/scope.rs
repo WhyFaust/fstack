@@ -52,7 +52,7 @@ fn git(executable: &Path, cwd: &Path, args: &[&str]) -> Result<Option<Vec<u8>>> 
     }
     Ok(status.success().then_some(out))
 }
-fn legacy_identity(cwd: &Path) -> Result<String> {
+fn legacy_identity(cwd: &Path) -> Result<(String, Option<PathBuf>)> {
     let cwd = io::absolute(cwd)?;
     if !io::directory(&cwd, false, false)? {
         return Err("Working directory does not exist".into());
@@ -65,7 +65,7 @@ fn legacy_identity(cwd: &Path) -> Result<String> {
         }
     }
     let Some(marker) = marker else {
-        return Ok(format!("dir:{}", io::normalized(&cwd)));
+        return Ok((directory_identity(&cwd), None));
     };
     let paths = std::env::var_os("PATH").unwrap_or_default();
     let exe = executable(&marker, &paths)?;
@@ -104,7 +104,18 @@ fn legacy_identity(cwd: &Path) -> Result<String> {
     {
         return Err("Working directory is not a registered Git worktree".into());
     }
-    Ok(format!("git:{}", io::normalized(&common)))
+    let primary = text.split("\0\0").next().and_then(|entry| {
+        let mut fields = entry.split('\0');
+        let path = Path::new(fields.next()?.strip_prefix("worktree ")?);
+        (path.is_absolute()
+            && !fields.any(|field| field == "bare")
+            && io::same_directory(&path.join(".git"), &common))
+        .then(|| path.to_owned())
+    });
+    Ok((format!("git:{}", io::normalized(&common)), primary))
+}
+fn directory_identity(path: &Path) -> String {
+    format!("dir:{}", io::normalized(path))
 }
 fn canonical_id(legacy: &str) -> String {
     #[cfg(windows)]
@@ -150,19 +161,48 @@ fn saved_alias(state: &Path, identity: &str, legacy: &str) -> Result<Option<Path
     }
     Ok(existing)
 }
-pub(super) fn binding_location(state: &Path, cwd: &Path) -> Result<(String, PathBuf)> {
-    let legacy = legacy_identity(cwd)?;
-    let identity = canonical_id(&legacy);
-    let canonical_path = state.join(format!("{}.json", io::hash(&identity)));
+fn binding_for(state: &Path, legacy: &str, identity: &str) -> Result<PathBuf> {
     #[cfg(windows)]
-    if let Some(path) = saved_alias(state, &identity, &legacy)? {
-        return Ok((identity, path));
+    if let Some(path) = saved_alias(state, identity, legacy)? {
+        return Ok(path);
     }
-    Ok((identity, canonical_path))
+    #[cfg(not(windows))]
+    let _ = legacy;
+    Ok(state.join(format!("{}.json", io::hash(identity))))
+}
+
+pub(super) struct Location {
+    pub identity: String,
+    pub settings: PathBuf,
+    pub former_directory: Option<String>,
+}
+
+pub(super) fn binding_location(state: &Path, cwd: &Path) -> Result<Location> {
+    let (legacy, primary) = legacy_identity(cwd)?;
+    let identity = canonical_id(&legacy);
+    let mut settings = binding_for(state, &legacy, &identity)?;
+    let mut former_directory = None;
+    if let Some(primary) = primary {
+        let legacy_directory = directory_identity(&primary);
+        let directory = canonical_id(&legacy_directory);
+        if !io::file(&settings)? {
+            let previous = binding_for(state, &legacy_directory, &directory)?;
+            if io::file(&previous)? {
+                // All worktrees must continue using the same binding and disable marker.
+                settings = previous;
+            }
+        }
+        former_directory = Some(directory);
+    }
+    Ok(Location {
+        identity,
+        settings,
+        former_directory,
+    })
 }
 
 pub fn binding_path(state: &Path, cwd: &Path) -> Result<PathBuf> {
-    Ok(binding_location(state, cwd)?.1)
+    Ok(binding_location(state, cwd)?.settings)
 }
 
 pub fn executable(marker: &Path, paths: &std::ffi::OsStr) -> Result<PathBuf> {

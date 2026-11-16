@@ -15,6 +15,11 @@ struct Vault {
     source: &'static str,
 }
 
+pub(super) struct ProjectOwner<'a> {
+    current: &'a str,
+    previous: Option<&'a str>,
+}
+
 fn registry_path() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     let dir = std::env::var_os("APPDATA").map(PathBuf::from)?;
@@ -190,7 +195,11 @@ impl Store {
             return Ok(None);
         }
         io::state(&self.state, &cwd, false)?;
-        let (identity, settings) = scope::binding_location(&self.state, &cwd)?;
+        let scope::Location {
+            identity,
+            settings,
+            former_directory,
+        } = scope::binding_location(&self.state, &cwd)?;
         let owner = io::hash(&identity);
         if io::file(&settings)? {
             return self.read_binding(&settings);
@@ -203,13 +212,17 @@ impl Store {
             return self.read_binding(&settings);
         }
         let prefix = project_prefix(&identity);
+        let former = former_directory.map(io::hash);
         self.setup_locked(
             &vault.path,
             &prefix,
             Some("auto"),
             &settings,
             None,
-            Some(&owner),
+            Some(ProjectOwner {
+                current: &owner,
+                previous: former.as_deref(),
+            }),
         )
         .map(Some)
     }
@@ -286,7 +299,7 @@ fn previous_name(name: &str, prefix: &str, owner: &str) -> bool {
             .is_ok_and(|n| n > 1 && numbered_name(prefix, n) == name)
 }
 
-pub(super) fn claim_project(root: &Path, prefix: &str, owner: &str) -> Result<String> {
+pub(super) fn claim_project(root: &Path, prefix: &str, owner: ProjectOwner<'_>) -> Result<String> {
     let projects = root.join("Projects");
     io::directory(&projects, true, false)?;
     let mut occupied = BTreeSet::new();
@@ -295,17 +308,26 @@ pub(super) fn claim_project(root: &Path, prefix: &str, owner: &str) -> Result<St
         let entry = entry.map_err(io::err)?;
         let name = entry.file_name().to_string_lossy().into_owned();
         occupied.insert(name.to_ascii_lowercase());
-        if !previous_name(&name, prefix, owner)
+        let previous_owner = owner
+            .previous
+            .filter(|owner| previous_name(&name, prefix, owner));
+        let current_owner = previous_name(&name, prefix, owner.current).then_some(owner.current);
+        if (current_owner.is_none() && previous_owner.is_none())
             || super::format::project(&name).is_err()
             || !entry.file_type().map_err(io::err)?.is_dir()
         {
             continue;
         }
-        let marker = io::prefix(&entry.path().join(".fstack-scope"), owner.len() + 4)?;
+        let marker = io::prefix(&entry.path().join(".fstack-scope"), owner.current.len() + 4)?;
         let stored = marker
             .as_deref()
             .map(|bytes| bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes));
-        if stored == Some(owner.as_bytes()) {
+        if stored.is_some_and(|stored| {
+            current_owner
+                .into_iter()
+                .chain(previous_owner)
+                .any(|owner| stored == owner.as_bytes())
+        }) {
             if existing.is_some() {
                 return Err("Multiple memory projects have the same workspace owner".into());
             }
@@ -326,7 +348,7 @@ pub(super) fn claim_project(root: &Path, prefix: &str, owner: &str) -> Result<St
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(io::err(e)),
         }
-        if io::write(&dir.join(".fstack-scope"), owner, false, None)? {
+        if io::write(&dir.join(".fstack-scope"), owner.current, false, None)? {
             return Ok(name);
         }
         return Err("Memory project ownership changed during setup".into());
@@ -467,39 +489,35 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().canonicalize().unwrap();
         let reports = project_prefix("dir:/work/Отчёты АЯ");
+        let claim = |prefix: &str, owner: &str| {
+            claim_project(
+                &root,
+                prefix,
+                ProjectOwner {
+                    current: owner,
+                    previous: None,
+                },
+            )
+            .unwrap()
+        };
         assert_eq!(reports, "otchyoty-aya");
         assert_eq!(project_prefix("dir:/work/漢字"), "project");
         let owners = [io::hash("one"), io::hash("two"), io::hash("three")];
         for example in ["client-api", "report-worker", "portal", "fstack"] {
             let prefix = project_prefix(&format!("dir:/work/{example}"));
-            assert_eq!(
-                claim_project(&root, &prefix, &io::hash(example)).unwrap(),
-                example
-            );
+            assert_eq!(claim(&prefix, &io::hash(example)), example);
         }
-        assert_eq!(claim_project(&root, &reports, &owners[0]).unwrap(), reports);
+        assert_eq!(claim(&reports, &owners[0]), reports);
         let projects = root.join("Projects");
         fs::create_dir(projects.join("widget")).unwrap();
-        assert_eq!(
-            claim_project(&root, "widget", &owners[1]).unwrap(),
-            "widget-2"
-        );
-        assert_eq!(
-            claim_project(&root, "widget", &owners[2]).unwrap(),
-            "widget-3"
-        );
+        assert_eq!(claim("widget", &owners[1]), "widget-2");
+        assert_eq!(claim("widget", &owners[2]), "widget-3");
         fs::remove_dir(projects.join("widget")).unwrap();
-        assert_eq!(
-            claim_project(&root, "widget", &owners[2]).unwrap(),
-            "widget-3"
-        );
-        assert_eq!(
-            claim_project(&root, "con", &io::hash("reserved")).unwrap(),
-            "con-2"
-        );
+        assert_eq!(claim("widget", &owners[2]), "widget-3");
+        assert_eq!(claim("con", &io::hash("reserved")), "con-2");
         let long = project_prefix(&format!("dir:/work/{}", "a".repeat(100)));
-        assert_eq!(claim_project(&root, &long, &owners[0]).unwrap().len(), 48);
-        let other = claim_project(&root, &long, &owners[1]).unwrap();
+        assert_eq!(claim(&long, &owners[0]).len(), 48);
+        let other = claim(&long, &owners[1]);
         assert_eq!(other, format!("{}-2", "a".repeat(46)));
     }
 
@@ -513,7 +531,9 @@ mod tests {
         fs::create_dir(&repo).unwrap();
         fs::create_dir_all(vault.join(".obsidian")).unwrap();
         store.pin_vault(&vault).unwrap();
-        let (identity, settings) = scope::binding_location(&store.state, &repo).unwrap();
+        let scope::Location {
+            identity, settings, ..
+        } = scope::binding_location(&store.state, &repo).unwrap();
         let owner = io::hash(&identity);
         let legacy_name = format!("project-{}", &owner[..16]);
         let legacy = store
@@ -540,6 +560,48 @@ mod tests {
             saved
         );
         assert!(!legacy.root.join("Projects/sborka").exists());
+    }
+
+    #[test]
+    fn git_project_recovers_its_original_directory_owner_after_local_state_loss() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let store = store(&root);
+        let repo = root.join("original");
+        let vault = root.join("notes");
+        fs::create_dir(&repo).unwrap();
+        fs::create_dir_all(vault.join(".obsidian")).unwrap();
+        store.pin_vault(&vault).unwrap();
+        let original = store.auto_resolve(&repo).unwrap().unwrap();
+        let saved = store
+            .save(
+                &original,
+                &json!({"kind":"preference","title":"Build","body":"Use the offline build."}),
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+        let old_binding = scope::binding_path(&store.state, &repo).unwrap();
+        store.disable(&repo).unwrap();
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "--quiet"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(store.auto_resolve(&repo).unwrap().is_none());
+        fs::remove_file(old_binding).unwrap();
+
+        let restored = store.auto_resolve(&repo).unwrap().unwrap();
+        assert_eq!(restored.project, original.project);
+        assert_eq!(store.search(&restored, "build", 5).unwrap(), json!([saved]));
+        assert!(!original.root.join("Projects/original-2").exists());
     }
 
     #[test]

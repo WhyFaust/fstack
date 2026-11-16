@@ -618,7 +618,15 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
     let hooks = config["hooks"]
         .as_object()
         .ok_or("Неверный набор событий памяти")?;
-    let expected = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"];
+    let expected = [
+        "SessionStart",
+        "SubagentStart",
+        "UserPromptSubmit",
+        "PostToolUse",
+        "Stop",
+        "SubagentStop",
+        "Interrupt",
+    ];
     require(
         hooks.len() == expected.len() && expected.iter().all(|e| hooks.contains_key(*e)),
         "Неверный набор событий памяти",
@@ -626,6 +634,8 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
     contained(root, root, "tools/fstack/src/memory", true)?;
     contained(root, root, "launchers/fstack.sh", false)?;
     contained(root, root, "launchers/fstack.ps1", false)?;
+    contained(root, root, "hooks/memory.sh", false)?;
+    contained(root, root, "hooks/memory.ps1", false)?;
     contained(root, root, "hooks/runtime-unavailable.json", false)?;
     let runtime_id = read(&contained(root, root, "launchers/runtime-id", false)?)?;
     require(
@@ -636,35 +646,54 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
         let groups = groups.as_array().ok_or("Ожидался массив обработчиков")?;
         require(groups.len() == 1, "Ожидалась одна группа хуков")?;
         let handlers = groups[0]["hooks"].as_array().ok_or("Нет команд хуков")?;
-        require(handlers.len() == 1, "Неверное число команд хуков")?;
-        if event == "PostToolUse" {
-            require(groups[0]["matcher"] == "^Bash$", "Ожидался фильтр оболочки")?;
+        let session_start = event == "SessionStart";
+        require(
+            handlers.len() == 1 + usize::from(session_start),
+            format!("{event}: неверное число команд хуков"),
+        )?;
+        require(
+            if event == "PostToolUse" {
+                groups[0]["matcher"] == "^Bash$"
+            } else {
+                groups[0].get("matcher").is_none()
+            },
+            format!("{event}: неверный фильтр хука"),
+        )?;
+        for (index, handler) in handlers.iter().enumerate() {
+            let bootstrap = session_start && index == 0;
+            let event = if bootstrap { "Bootstrap" } else { event };
+            check_hook_command(event, handler)?;
         }
-        let handler = &handlers[0];
-        let bootstrap = event == "SessionStart";
-        let event = if bootstrap { "Bootstrap" } else { event };
-        require(
-            handler["async"].as_bool().unwrap_or(false) == bootstrap
-                && handler["timeout"] == if bootstrap { 420 } else { 5 },
-            format!("{event}: неверный режим запуска хука"),
-        )?;
-        require(handler["type"] == "command", "Ожидался командный хук")?;
-        let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
-        let windows = format!(
-            r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
-        );
-        require(
-            string(handler, "command")? == posix,
-            format!("{event}: неверная команда command"),
-        )?;
-        require(
-            string(handler, "commandWindows")? == windows,
-            format!("{event}: неверная команда commandWindows"),
-        )?;
-        contained(root, root, "hooks/memory.sh", false)?;
-        contained(root, root, "hooks/memory.ps1", false)?;
     }
     Ok(())
+}
+
+fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
+    let timeout = match event {
+        "Bootstrap" => 420,
+        "SessionStart" => 10,
+        "Stop" | "SubagentStop" => 90,
+        "Interrupt" => 3,
+        _ => 5,
+    };
+    require(
+        handler["async"].as_bool().unwrap_or(false) == (event == "Bootstrap")
+            && handler["timeout"] == timeout,
+        format!("{event}: неверный режим запуска хука"),
+    )?;
+    require(handler["type"] == "command", "Ожидался командный хук")?;
+    let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
+    let windows = format!(
+        r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
+    );
+    require(
+        string(handler, "command")? == posix,
+        format!("{event}: неверная команда command"),
+    )?;
+    require(
+        string(handler, "commandWindows")? == windows,
+        format!("{event}: неверная команда commandWindows"),
+    )
 }
 
 pub(crate) fn skill_names(root: &Path) -> Result<BTreeSet<String>> {
