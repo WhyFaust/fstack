@@ -6,7 +6,7 @@ use super::{
     Result,
 };
 use serde_json::{json, Value};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn scope_id(b: &Binding, cwd: &Path) -> String {
     let cwd = io::directory_key(cwd);
@@ -17,20 +17,25 @@ pub fn scope_id(b: &Binding, cwd: &Path) -> String {
     }
     pending::digest(&parts)
 }
-fn prefix(package: &Path) -> Result<String> {
-    let p = std::env::current_exe()
+fn command_paths(package: &Path) -> Result<(PathBuf, Option<&Path>)> {
+    let binary = std::env::current_exe()
         .map_err(io::err)?
         .canonicalize()
         .map_err(io::err)?;
-    let package_argument = if crate::enclosing_package(&p) == Some(package) || cfg!(test) {
-        String::new()
-    } else {
-        format!(" --package {}", shell_path(package)?)
-    };
+    let explicit_package = !cfg!(test) && crate::enclosing_package(&binary) != Some(package);
+    Ok((binary, explicit_package.then_some(package)))
+}
+
+fn prefix(package: &Path) -> Result<String> {
+    let (binary, package) = command_paths(package)?;
+    let package_argument = package
+        .map(|path| shell_path(path).map(|path| format!(" --package {path}")))
+        .transpose()?
+        .unwrap_or_default();
     Ok(format!(
         "{}{}{package_argument} memory",
         if cfg!(windows) { "& " } else { "" },
-        shell_path(&p)?
+        shell_path(&binary)?
     ))
 }
 
@@ -51,6 +56,45 @@ fn shell_path(path: &Path) -> Result<String> {
     quoted.push('"');
     Ok(quoted)
 }
+
+fn strip_quoted_path<'a>(command: &'a str, path: &Path) -> Result<Option<&'a str>> {
+    let rest = command.strip_prefix(&shell_path(path)?);
+    #[cfg(windows)]
+    if rest.is_none() {
+        let mut quoted = String::from("'");
+        for ch in path.to_str().ok_or("Invalid memory command path")?.chars() {
+            if matches!(ch, '\'' | '‘' | '’' | '‚' | '‛') {
+                quoted.push(ch);
+            }
+            quoted.push(ch);
+        }
+        quoted.push('\'');
+        return Ok(command.strip_prefix(&quoted));
+    }
+    Ok(rest)
+}
+
+fn strip_memory_invocation<'a>(command: &'a str, package: &Path) -> Result<Option<&'a str>> {
+    #[cfg(windows)]
+    let Some(command) = command.strip_prefix("& ") else {
+        return Ok(None);
+    };
+    let (binary, package) = command_paths(package)?;
+    let Some(mut rest) = strip_quoted_path(command, &binary)? else {
+        return Ok(None);
+    };
+    if let Some(package) = package {
+        let Some(argument) = rest.strip_prefix(" --package ") else {
+            return Ok(None);
+        };
+        let Some(after_package) = strip_quoted_path(argument, package)? else {
+            return Ok(None);
+        };
+        rest = after_package;
+    }
+    Ok(rest.strip_prefix(" memory "))
+}
+
 fn extra(event: &str, context: String) -> Value {
     json!({"hookSpecificOutput":{"hookEventName":event,"additionalContext":context}})
 }
@@ -140,24 +184,20 @@ fn posted(payload: &Value, package: &Path) -> Result<Option<Posted>> {
     let Some(command) = input.get("command").and_then(Value::as_str) else {
         return Ok(None);
     };
-    let prefix = prefix(package)?;
-    if payload["tool_response"]
-        .as_str()
-        .is_some_and(|s| s.trim() == "{\"ready\":true}")
-    {
+    let response = payload["tool_response"].as_str().map(str::trim);
+    if !matches!(response, Some("{\"ready\":true}" | "{\"staged\": true}")) {
+        return Ok(None);
+    }
+    let Some(command) = strip_memory_invocation(command, package)? else {
+        return Ok(None);
+    };
+    if response == Some("{\"ready\":true}") {
         return Ok(command
-            .strip_prefix(&format!("{prefix} ensure --turn "))
+            .strip_prefix("ensure --turn ")
             .filter(|token| pending::token_parts(token).is_some())
             .map(|token| Posted::Ensure(token.into())));
     }
-    if payload["tool_response"]
-        .as_str()
-        .is_none_or(|s| s.trim() != "{\"staged\": true}")
-    {
-        return Ok(None);
-    }
-    let start = format!("{prefix} stage --turn ");
-    let Some(rest) = command.strip_prefix(&start) else {
+    let Some(rest) = command.strip_prefix("stage --turn ") else {
         return Ok(None);
     };
     let Some((token, arguments)) = rest.split_once(' ') else {

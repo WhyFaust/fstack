@@ -343,17 +343,33 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
     fs::rename(&vault, &offline).unwrap();
     let prompt =
         json!({"prompt":"Поправка на будущее. Для проверок проекта используй uv run pytest."});
-    let stage = |turn: &str, predecessor: Option<&str>, body: &str| {
+    let stage = |turn: &str, predecessor: Option<&str>, body: &str, single_quoted_paths| {
         let issued = event("UserPromptSubmit", "one", turn, prompt.clone());
         let context = issued["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
         let pattern = regex::Regex::new(
-            r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn [0-9a-f]{64}\.[0-9a-f]{32}) --correction"#,
+            r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
         )
         .unwrap();
-        let prefix = &pattern.captures(context).unwrap()[1];
-        let mut command = format!(r#"{prefix} --correction "Запуск тестов" "{body}""#);
+        let captures = pattern.captures(context).unwrap();
+        let mut command = if cfg!(windows) && single_quoted_paths {
+            let literal_path = |path: &Path| {
+                path.canonicalize()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .replace('\'', "''")
+            };
+            format!(
+                "& '{}' --package '{}' memory stage --turn {} --correction 'Запуск тестов' '{body}'",
+                literal_path(&runtime.binary),
+                literal_path(&runtime.root),
+                &captures[2]
+            )
+        } else {
+            format!(r#"{} --correction "Запуск тестов" "{body}""#, &captures[1])
+        };
         if let Some(id) = predecessor {
             command.push_str(&format!(" --supersedes {id}"));
         }
@@ -389,7 +405,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         );
     };
     let rule = "В разделе «Проверки» запускай uv run pytest.";
-    stage("offline", None, rule);
+    stage("offline", None, rule, false);
     assert!(event("Stop", "one", "offline", stop())["systemMessage"].is_string());
     let diagnostics = || runtime.json(&["memory", "diagnostics"], None);
     assert_eq!(diagnostics()["pending"], 1);
@@ -406,12 +422,12 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
     assert_eq!(entry["session_id"], "one");
     assert_eq!(entry["turn_id"], "offline");
     assert_eq!(diagnostics()["pending"], 0);
-    stage("repeat", None, rule);
+    stage("repeat", None, rule, false);
     event("Stop", "one", "repeat", stop());
     assert_eq!(search().as_array().unwrap().len(), 1);
     let old_id = entry["id"].as_str().unwrap();
     let new_rule = "Для проверок проекта используй uv run pytest -q.";
-    stage("revised", Some(old_id), new_rule);
+    stage("revised", Some(old_id), new_rule, true);
     event("Stop", "one", "revised", stop());
     let latest = search();
     assert_eq!(latest.as_array().unwrap().len(), 1);
