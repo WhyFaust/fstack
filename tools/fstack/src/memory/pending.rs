@@ -6,6 +6,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 pub const REVIEW: &str = "{\"review_required\":true}";
+const REPORT: &str = "{\"report_requested\":true}";
 #[derive(Debug, PartialEq)]
 pub enum Stop {
     Review,
@@ -13,8 +14,12 @@ pub enum Stop {
     Claimed,
 }
 pub enum Delivery {
-    Current { review: bool },
+    Current { review: bool, first_stop: bool },
     Replay,
+}
+enum Capture {
+    Prompt(Option<String>),
+    Report,
 }
 pub struct Claim {
     pub key: String,
@@ -287,6 +292,46 @@ impl Pending {
         session: &str,
         turn: &str,
     ) -> Result<String> {
+        self.capture(
+            key,
+            scope,
+            Capture::Prompt(generation),
+            epoch,
+            session,
+            turn,
+        )
+    }
+    pub fn has_generation(&self, key: &str) -> Result<bool> {
+        Ok(self.generation(key)?.is_some())
+    }
+    pub fn request_report(
+        &self,
+        key: &str,
+        scope: &str,
+        epoch: &str,
+        session: &str,
+        turn: &str,
+    ) -> Result<bool> {
+        let _guard = self.lock_turn(key)?;
+        if self.has_generation(key)? {
+            return Ok(false);
+        }
+        self.capture(key, scope, Capture::Report, epoch, session, turn)?;
+        Ok(true)
+    }
+    fn capture(
+        &self,
+        key: &str,
+        scope: &str,
+        capture: Capture,
+        epoch: &str,
+        session: &str,
+        turn: &str,
+    ) -> Result<String> {
+        let (generation, action) = match capture {
+            Capture::Prompt(generation) => (generation, None),
+            Capture::Report => (None, Some(REPORT)),
+        };
         let nonce = match generation {
             Some(n) => n,
             None => {
@@ -331,9 +376,17 @@ impl Pending {
         }
         conn.execute("DELETE FROM ordinary_turns WHERE NOT EXISTS (SELECT 1 FROM pending p WHERE p.turn=ordinary_turns.turn AND p.nonce=ordinary_turns.nonce)", []).map_err(io::err)?;
         conn.execute("INSERT OR REPLACE INTO ordinary_turns SELECT turn,nonce FROM issued_modes WHERE turn=? AND nonce=? AND epoch='setup' AND ?<>'setup'",params![key,nonce,epoch]).map_err(io::err)?;
-        conn.execute("INSERT INTO pending (turn,nonce,scope,expires) VALUES (?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,scope=excluded.scope,expires=excluded.expires,action=NULL",params![key,nonce,scope,now()+3600]).map_err(io::err)?;
+        conn.execute("INSERT INTO pending (turn,nonce,scope,expires,action) VALUES (?,?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,scope=excluded.scope,expires=excluded.expires,action=excluded.action",params![key,nonce,scope,now()+3600,action]).map_err(io::err)?;
         conn.execute("INSERT INTO issued_modes VALUES (?,?,?,?,?) ON CONFLICT(turn) DO UPDATE SET nonce=excluded.nonce,epoch=excluded.epoch,session=excluded.session,original_turn=excluded.original_turn", params![key, nonce, epoch, session, turn]).map_err(io::err)?;
-        Self::phase(&conn, scope, "capture")?;
+        Self::phase(
+            &conn,
+            scope,
+            if action.is_some() {
+                "review"
+            } else {
+                "capture"
+            },
+        )?;
         conn.execute_batch("COMMIT").map_err(io::err)?;
         Ok(format!("{key}.{nonce}"))
     }
@@ -385,9 +438,9 @@ impl Pending {
             return Ok(false);
         };
         conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pending WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND ((action IS NOT NULL AND action<>?5) OR EXISTS(SELECT 1 FROM ordinary_turns o WHERE o.turn=pending.turn AND o.nonce=pending.nonce)))
-              OR EXISTS(SELECT 1 FROM claimed WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND epoch=?6)",
-            params![key, nonce, scope, now(), REVIEW, epoch], |row| row.get(0)
+            "SELECT EXISTS(SELECT 1 FROM pending WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND (action NOT IN (?5,?6) OR EXISTS(SELECT 1 FROM ordinary_turns o WHERE o.turn=pending.turn AND o.nonce=pending.nonce)))
+              OR EXISTS(SELECT 1 FROM claimed WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND epoch=?7)",
+            params![key, nonce, scope, now(), REVIEW, REPORT, epoch], |row| row.get(0)
         ).map_err(io::err)
     }
     pub fn stage(&self, key: &str, token: &str, scope: &str, action: &Value) -> Result<bool> {
@@ -416,6 +469,27 @@ impl Pending {
         conn.execute_batch("COMMIT").map_err(io::err)?;
         Ok(conflict)
     }
+    pub fn accept_report(&self, key: &str, scope: &str, action: &Value) -> Result<bool> {
+        let Some(nonce) = self.generation(key)? else {
+            return Ok(false);
+        };
+        let Some(conn) = self.connection(false, false)? else {
+            return Ok(false);
+        };
+        if !self.current(key, &nonce)? {
+            return Ok(false);
+        }
+        let changed = conn.execute(
+            "UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? AND expires>=? AND action=?",
+            params![json!({"report":action}).to_string(), key, nonce, scope, now(), REPORT],
+        ).map_err(io::err)?;
+        if changed == 0 {
+            return Ok(false);
+        }
+        Self::phase(&conn, scope, "stage")?;
+        conn.execute_batch("COMMIT").map_err(io::err)?;
+        Ok(true)
+    }
     pub fn claim(
         &self,
         key: &str,
@@ -439,18 +513,43 @@ impl Pending {
         if digest(&[session, turn]) != key {
             return Err("Invalid memory turn identity".into());
         }
-        let row: Option<Option<String>> = conn.query_row(
-            "SELECT p.action FROM pending p
+        let row: Option<Option<String>> = conn
+            .query_row(
+                "SELECT p.action FROM pending p
              LEFT JOIN issued_modes m ON m.turn=p.turn AND m.nonce=p.nonce
              WHERE p.turn=? AND p.nonce=? AND p.scope=? AND p.expires>=? AND COALESCE(m.epoch,'')=?
-             AND (NOT ? OR (m.session=? AND m.original_turn=? AND p.action IS NOT NULL AND p.action<>?))",
-            params![key, nonce, scope, now(), epoch, replay, session, turn, REVIEW],
-            |r| r.get(0),
-        ).optional().map_err(io::err)?;
+             AND (NOT ? OR (m.session=? AND m.original_turn=? AND p.action NOT IN (?,?)))",
+                params![
+                    key,
+                    nonce,
+                    scope,
+                    now(),
+                    epoch,
+                    replay,
+                    session,
+                    turn,
+                    REVIEW,
+                    REPORT
+                ],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(io::err)?;
         let Some(action) = row else {
             return Ok(None);
         };
-        if action.is_none() && matches!(delivery, Delivery::Current { review: true }) {
+        if action.as_deref() == Some(REPORT)
+            && matches!(
+                delivery,
+                Delivery::Current {
+                    first_stop: true,
+                    ..
+                }
+            )
+        {
+            return Ok(None);
+        }
+        if action.is_none() && matches!(delivery, Delivery::Current { review: true, .. }) {
             conn.execute(
                 "UPDATE pending SET action=? WHERE turn=?",
                 params![REVIEW, key],
@@ -460,7 +559,10 @@ impl Pending {
             conn.execute_batch("COMMIT").map_err(io::err)?;
             return Ok(Some(Stop::Review));
         }
-        let outcome = if action.as_deref().is_some_and(|s| s != REVIEW) {
+        let outcome = if action
+            .as_deref()
+            .is_some_and(|s| !matches!(s, REVIEW | REPORT))
+        {
             conn.execute(
                 "INSERT INTO claimed SELECT turn,nonce,scope,expires,action,?,?,?,0 FROM pending WHERE turn=?",
                 params![session,turn,epoch,key],
@@ -499,7 +601,7 @@ impl Pending {
              SELECT p.turn,p.nonce,m.original_turn,p.expires,0,0
              FROM pending p JOIN issued_modes m ON m.turn=p.turn AND m.nonce=p.nonce
              WHERE p.scope=? AND m.session=? AND m.epoch=? AND p.expires>=? AND p.turn<>?
-             AND m.original_turn IS NOT NULL AND p.action IS NOT NULL AND p.action<>?
+             AND m.original_turn IS NOT NULL AND p.action NOT IN (?,?)
              ORDER BY current DESC, attempted, expires, turn",
             )
             .map_err(io::err)?;
@@ -516,7 +618,8 @@ impl Pending {
                     epoch,
                     now(),
                     key,
-                    REVIEW
+                    REVIEW,
+                    REPORT
                 ],
                 |row| {
                     Ok((
@@ -634,12 +737,12 @@ impl Pending {
             .prepare(
                 "SELECT p.turn,p.nonce,0,m.session,m.epoch FROM pending p
              LEFT JOIN issued_modes m ON m.turn=p.turn AND m.nonce=p.nonce
-             WHERE p.scope=? AND p.expires>=? AND p.action IS NOT NULL AND p.action<>?
+             WHERE p.scope=? AND p.expires>=? AND p.action NOT IN (?,?)
              UNION ALL SELECT turn,nonce,1,session,epoch FROM claimed WHERE scope=? AND expires>=?",
             )
             .map_err(io::err)?;
         let rows = stmt
-            .query_map(params![scope, now(), REVIEW, scope, now()], |row| {
+            .query_map(params![scope, now(), REVIEW, REPORT, scope, now()], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,

@@ -104,6 +104,31 @@ fn candidate(body: &str) -> Value {
     json!({"kind":"decision","title":"Heliotrope convention","body":body})
 }
 #[test]
+fn a_codex_task_can_only_report_new_project_decisions_with_sources() {
+    let decide = |fields: Value| json!({"action":"remember","candidate":fields});
+    let fields = json!({"kind":"decision","title":"Convention","body":"Verified result","source":"Build output"});
+    let payload = |action: Value| report_action(&["--payload", &encode(&action).unwrap()]);
+    assert!(payload(decide(fields.clone())).is_ok());
+    let mut shared = decide(fields.clone());
+    shared["scope"] = json!("shared");
+    shared["candidate"]["kind"] = json!("preference");
+    let id = "a".repeat(64);
+    let mut superseding = fields.clone();
+    superseding["supersedes"] = json!(id);
+    let mut correction = fields.clone();
+    correction["kind"] = json!("correction");
+    for operation in [
+        shared,
+        decide(superseding),
+        decide(correction),
+        decide(candidate("Result with no source")),
+        json!({"action":"approve","id":id}),
+        json!({"action":"forget","id":id}),
+    ] {
+        assert!(payload(operation).is_err());
+    }
+}
+#[test]
 fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
     let f = Fixture::new("auto", "pilot");
     for prompt in [
@@ -808,7 +833,10 @@ fn steering_revocation_survives_locked_database_and_failed_generation_replace() 
                 "session",
                 "one",
                 "",
-                pending::Delivery::Current { review: false }
+                pending::Delivery::Current {
+                    review: false,
+                    first_stop: true,
+                }
             )
             .unwrap(),
         None
@@ -1082,7 +1110,10 @@ fn revocation_marker_survives_failed_generation_replace() {
                 "session",
                 "one",
                 "",
-                pending::Delivery::Current { review: false }
+                pending::Delivery::Current {
+                    review: false,
+                    first_stop: true,
+                }
             )
             .unwrap(),
         None
@@ -1349,7 +1380,10 @@ fn uncertain_stop_commit_is_idempotent_across_concurrent_retries() {
                 "session",
                 original,
                 &epoch,
-                pending::Delivery::Current { review: false }
+                pending::Delivery::Current {
+                    review: false,
+                    first_stop: true,
+                }
             )
             .unwrap(),
         Some(pending::Stop::Claimed)
@@ -1410,7 +1444,10 @@ fn an_accepted_action_cannot_cross_revocation_or_binding_generation() {
                         "session",
                         "original",
                         &epoch,
-                        pending::Delivery::Current { review: false }
+                        pending::Delivery::Current {
+                            review: false,
+                            first_stop: true,
+                        }
                     )
                     .unwrap(),
                 Some(pending::Stop::Claimed)
@@ -1474,7 +1511,10 @@ fn interrupted_approval_or_write_cannot_restore_forgotten_content() {
                     "session",
                     "original",
                     &epoch,
-                    pending::Delivery::Current { review: false }
+                    pending::Delivery::Current {
+                        review: false,
+                        first_stop: true,
+                    }
                 )
                 .unwrap(),
             Some(pending::Stop::Claimed)

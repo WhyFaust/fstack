@@ -39,6 +39,19 @@ bin/fstack check-installation --codex /absolute/path/to/codex
 версию и содержимое навыков, обнаружение хуков и загрузку конфигурации.
 В отчёте указывай версию клиента. Выполнение задач моделью проверяется отдельно.
 
+Для проверки записи в Codex Desktop отправь поправку из поля ввода нового
+чата проекта в обычном режиме. Убедись, что `UserPromptSubmit` выдал команду
+`memory stage`, а после завершения хода `memory search` находит заметку
+в Obsidian с `session_id` этого чата. В проверенном Codex 0.169.0-alpha.11.1
+поручения `create_thread` и `send_message_to_thread` приходят как результаты
+инструментов. `UserPromptSubmit` запускается при пользовательском вводе.
+[Обработка входа в Codex](https://github.com/openai/codex/blob/rust-v0.169.0-alpha.11/codex-rs/core/src/hook_runtime.rs#L708-L748).
+
+Для поручения Codex проверь запрос итога на первом `Stop`, приём `memory report`
+и сохранение решения на втором `Stop`. Runtime читает поля происхождения и режима
+в локальном журнале, который передал клиент. При смене формата проверь сценарий
+с журналом нового клиента. [Контракт журнала в хуках](https://learn.chatgpt.com/docs/hooks#common-input-fields).
+
 ## Изменение навыка
 
 Следуй [skill](../skills/skill/SKILL.md). Обнови

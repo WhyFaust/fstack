@@ -1,7 +1,7 @@
 use super::{
-    action, correction, decode, format, io,
+    action, codex_task, correction, decode, format, io,
     pending::{self, Delivery, Pending, Stop},
-    scope as project_scope,
+    report_action, scope as project_scope,
     store::{Binding, Store, WriteOutcome},
     Result,
 };
@@ -164,6 +164,7 @@ enum Posted {
     Ensure(String),
     RetryCorrection(String),
     Stage(String, Value),
+    Report(Value),
 }
 fn posted(payload: &Value, package: &Path) -> Result<Option<Posted>> {
     if payload["tool_name"] != "Bash"
@@ -185,7 +186,10 @@ fn posted(payload: &Value, package: &Path) -> Result<Option<Posted>> {
         return Ok(None);
     };
     let response = payload["tool_response"].as_str().map(str::trim);
-    if !matches!(response, Some("{\"ready\":true}" | "{\"staged\": true}")) {
+    if !matches!(
+        response,
+        Some("{\"ready\":true}" | "{\"staged\": true}" | "{\"reported\":true}")
+    ) {
         return Ok(None);
     }
     let Some(command) = strip_memory_invocation(command, package)? else {
@@ -196,6 +200,12 @@ fn posted(payload: &Value, package: &Path) -> Result<Option<Posted>> {
             .strip_prefix("ensure --turn ")
             .filter(|token| pending::token_parts(token).is_some())
             .map(|token| Posted::Ensure(token.into())));
+    }
+    if response == Some("{\"reported\":true}") {
+        return Ok(command.strip_prefix("report ").and_then(|arguments| {
+            let arguments: Vec<_> = arguments.split(' ').collect();
+            report_action(&arguments).ok().map(Posted::Report)
+        }));
     }
     let Some(rest) = command.strip_prefix("stage --turn ") else {
         return Ok(None);
@@ -509,6 +519,36 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         }
         return Ok(json!({}));
     }
+    if let Some(Posted::Report(value)) = staged {
+        if codex_task::ordinary(&store.state, payload, cwd, session, turn).is_some()
+            && pending.accept_report(&key, &scope, &value)?
+        {
+            return Ok(json!({}));
+        }
+        return Ok(extra(event,"Итог поручения не принят в очередь памяти. Проверь текущую область и состояние через memory diagnostics. За ход принимается одна операция.".into()));
+    }
+    let first_stop = payload["stop_hook_active"] == false;
+    if first_stop
+        && payload["last_assistant_message"]
+            .as_str()
+            .is_some_and(|s| !s.trim().is_empty())
+        && !pending.has_generation(&key)?
+        && codex_task::ordinary(&store.state, payload, cwd, session, turn).is_some()
+    {
+        let prefix = prefix(&store.package)?;
+        if pending.request_report(&key, &scope, &epoch, session, turn)? {
+            return Ok(json!({"decision":"block","reason":format!(
+                "Память fstack, проект {project}, режим {mode}. Оцени итог поручения Codex. \
+                 Если появился новый устойчивый вывод, проверь источник и дубликаты через {prefix} search. \
+                 Оставь секреты, журналы и разовые просьбы вне памяти. \
+                 Подготовь через {prefix} pack операцию remember с candidate.kind=decision и полями title, body, source. \
+                 Для вывода, требующего проверки, выбери draft. Выполни отдельную команду {prefix} report --payload BASE64URL \
+                 с результатом pack. Если нового знания нет, вызови {prefix} report --skip. \
+                 Заверши ход, чтобы Stop применил операцию. Инструкция памяти доступна в {skill}.",
+                project=b.project, mode=b.mode, skill=store.package.join("skills/memory/SKILL.md").display()
+            )}));
+        }
+    }
     let confirmed = ordinary || pending.confirmed(&key, &scope, &epoch)?;
     let outcome = pending.claim(
         &key,
@@ -517,7 +557,8 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         turn,
         &epoch,
         Delivery::Current {
-            review: confirmed && payload["stop_hook_active"] == false,
+            review: confirmed && first_stop,
+            first_stop,
         },
     )?;
     if !confirmed && outcome != Some(Stop::Claimed) {
@@ -545,7 +586,17 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             let Some(binding) = store.bound(cwd)?.filter(|b| scope_id(b, cwd) == scope) else {
                 return Ok("cancelled");
             };
-            apply(store, &binding, &claim.data, session, &claim.turn)
+            let data = if let Some(report) = claim.data.get("report") {
+                if due_key == key
+                    && codex_task::ordinary(&store.state, payload, cwd, session, turn).is_none()
+                {
+                    return Ok("cancelled");
+                }
+                report
+            } else {
+                &claim.data
+            };
+            apply(store, &binding, data, session, &claim.turn)
         })();
         if let Ok(phase) = result {
             pending.finish(&scope, &claim, phase, true)?;
