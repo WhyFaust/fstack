@@ -104,6 +104,25 @@ pub fn markdown(marker: &str, fields: &Fields, body: &str) -> String {
         .join("\n");
     format!("---\n{marker}\n{metadata}\n---\n\n{body}\n")
 }
+pub fn parse_record_header(bytes: &[u8], entry: &str) -> Option<Fields> {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let mut lines = bytes.split_inclusive(|byte| *byte == b'\n');
+    let opening = lines.next()?;
+    if !matches!(opening, b"---\n" | b"---\r\n") {
+        return None;
+    }
+    let mut end = opening.len();
+    for line in lines {
+        end += line.len();
+        if matches!(line, b"---\n" | b"---\r\n") {
+            let header = std::str::from_utf8(&bytes[..end])
+                .ok()?
+                .replace("\r\n", "\n");
+            return parse(&header, entry, MEMORY, false).ok();
+        }
+    }
+    None
+}
 pub fn parse(raw: &str, entry: &str, marker: &str, include_body: bool) -> Result<Fields> {
     let (meta, body) = raw
         .strip_prefix("---\n")

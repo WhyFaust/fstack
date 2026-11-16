@@ -104,6 +104,31 @@ fn candidate(body: &str) -> Value {
     json!({"kind":"decision","title":"Heliotrope convention","body":body})
 }
 #[test]
+fn a_codex_task_can_only_report_new_project_decisions_with_sources() {
+    let decide = |fields: Value| json!({"action":"remember","candidate":fields});
+    let fields = json!({"kind":"decision","title":"Convention","body":"Verified result","source":"Build output"});
+    let payload = |action: Value| report_action(&["--payload", &encode(&action).unwrap()]);
+    assert!(payload(decide(fields.clone())).is_ok());
+    let mut shared = decide(fields.clone());
+    shared["scope"] = json!("shared");
+    shared["candidate"]["kind"] = json!("preference");
+    let id = "a".repeat(64);
+    let mut superseding = fields.clone();
+    superseding["supersedes"] = json!(id);
+    let mut correction = fields.clone();
+    correction["kind"] = json!("correction");
+    for operation in [
+        shared,
+        decide(superseding),
+        decide(correction),
+        decide(candidate("Result with no source")),
+        json!({"action":"approve","id":id}),
+        json!({"action":"forget","id":id}),
+    ] {
+        assert!(payload(operation).is_err());
+    }
+}
+#[test]
 fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
     let f = Fixture::new("auto", "pilot");
     for prompt in [
@@ -545,6 +570,75 @@ fn draft_noise_and_large_views_do_not_block_approved_status() {
     assert_eq!(fs::read_to_string(&page).unwrap(), text);
 }
 #[test]
+fn search_and_recall_skip_invalid_record_bodies_without_reviving_predecessors() {
+    let f = Fixture::new("auto", "pilot");
+    let first = f.save("Original convention for heliotrope", true);
+    let mut correction = candidate("Correction for heliotrope");
+    correction["supersedes"] = first["id"].clone();
+    let second = f
+        .store
+        .save(&f.binding, &correction, true, None, None)
+        .unwrap();
+    let other = f.save("Independent convention for heliotrope", true);
+    let broken_draft = f.save("Draft for the first decision", false);
+    let good_draft = f.save("Draft for the second decision", false);
+    let path = store::record(&f.root(), id(&second));
+    let raw = fs::read(&path).unwrap();
+    let draft_path = store::record(&f.root(), id(&broken_draft));
+    let draft_raw = fs::read(&draft_path).unwrap();
+    for invalid_body in [vec![b'x'; 4001], vec![b'x'; 32768], vec![0xff]] {
+        let mut edited = raw.clone();
+        edited.extend(&invalid_body);
+        fs::write(&path, edited).unwrap();
+        let mut edited_draft = draft_raw.clone();
+        edited_draft.extend(invalid_body);
+        fs::write(&draft_path, edited_draft).unwrap();
+        assert_eq!(
+            f.store.search(&f.binding, "heliotrope", 5).unwrap(),
+            json!([other])
+        );
+        assert_eq!(
+            f.store.recall(&f.binding, "heliotrope", 5).unwrap(),
+            json!([other])
+        );
+        assert_eq!(f.store.get(&f.binding, id(&other)).unwrap(), other);
+        assert!(f.store.get(&f.binding, id(&first)).is_err());
+        assert!(f.store.get(&f.binding, id(&second)).is_err());
+        assert_eq!(f.store.inbox(&f.binding).unwrap(), json!([good_draft]));
+    }
+}
+#[test]
+fn hook_recall_defers_large_areas_and_cli_can_still_search_them() {
+    let f = Fixture::new("auto", "pilot");
+    let saved = f.save("Keep heliotrope", true);
+    let records = f.root().join("Records");
+    for n in 0..63 {
+        let id = format!("{n:064x}");
+        fs::write(
+            records.join(format!("{id}-forgotten.json")),
+            json!({"id":id}).to_string(),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        f.store
+            .recall_for_hook(&f.binding, "heliotrope", 3)
+            .unwrap(),
+        Some(json!([saved]))
+    );
+    f.legacy("Forgotten", &"f".repeat(64), None);
+    assert_eq!(
+        f.store
+            .recall_for_hook(&f.binding, "heliotrope", 3)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        f.store.search(&f.binding, "heliotrope", 3).unwrap(),
+        json!([saved])
+    );
+}
+#[test]
 fn legacy_tombstone_and_stale_approval_never_override_confirmed_predecessor() {
     let f = Fixture::new("auto", "pilot");
     let a = f.save("Alpha heliotrope", true);
@@ -808,7 +902,10 @@ fn steering_revocation_survives_locked_database_and_failed_generation_replace() 
                 "session",
                 "one",
                 "",
-                pending::Delivery::Current { review: false }
+                pending::Delivery::Current {
+                    review: false,
+                    first_stop: true,
+                }
             )
             .unwrap(),
         None
@@ -876,6 +973,21 @@ fn filesystem_rejects_links_and_atomic_replace_preserves_expected_content() {
 #[test]
 fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
     let f = Fixture::new("auto", "pilot");
+    let prior_path = scope::binding_path(&f.store.state, &f.repo).unwrap();
+    let prior = f
+        .store
+        .setup(&f.vault, &f.repo, "pilot", Some("inbox"))
+        .unwrap();
+    let saved = f
+        .store
+        .save(
+            &prior,
+            &candidate("A remembered convention"),
+            true,
+            None,
+            None,
+        )
+        .unwrap();
     let git = |args: &[&str]| {
         let output = std::process::Command::new("git")
             .arg("-C")
@@ -910,20 +1022,32 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
     git(&["worktree", "add", "--detach", &git_linked]);
     let nested = linked.join("nested");
     fs::create_dir(&nested).unwrap();
-    f.store
-        .setup(&f.vault, &nested, "pilot", Some("auto"))
-        .unwrap();
-    assert_eq!(f.store.resolve(&f.repo).unwrap().unwrap().project, "pilot");
+    for cwd in [&nested, &f.repo] {
+        let restored = f.store.auto_resolve(cwd).unwrap().unwrap();
+        assert_eq!(restored.project, "pilot");
+        assert_eq!(restored.mode, "inbox");
+        assert_eq!(restored.generation, prior.generation);
+        assert_eq!(f.store.inbox(&restored).unwrap(), json!([saved]));
+        assert_eq!(
+            scope::binding_path(&f.store.state, cwd).unwrap(),
+            prior_path
+        );
+    }
     assert_eq!(
-        scope::binding_location(&f.store.state, &f.repo).unwrap().0,
-        scope::binding_location(&f.store.state, &nested).unwrap().0
+        scope::binding_location(&f.store.state, &f.repo)
+            .unwrap()
+            .identity,
+        scope::binding_location(&f.store.state, &nested)
+            .unwrap()
+            .identity
     );
     let forged = f.base.join("forged");
     fs::create_dir(&forged).unwrap();
     fs::copy(linked.join(".git"), forged.join(".git")).unwrap();
     assert!(f.store.resolve(&forged).is_err());
     assert!(f.store.disable(&linked).unwrap());
-    assert!(f.store.resolve(&f.repo).unwrap().is_none());
+    assert!(f.store.auto_resolve(&f.repo).unwrap().is_none());
+    assert!(f.store.auto_resolve(&linked).unwrap().is_none());
 }
 #[test]
 fn independent_entry_limits_count_canonical_and_legacy_tombstones_once() {
@@ -1082,7 +1206,10 @@ fn revocation_marker_survives_failed_generation_replace() {
                 "session",
                 "one",
                 "",
-                pending::Delivery::Current { review: false }
+                pending::Delivery::Current {
+                    review: false,
+                    first_stop: true,
+                }
             )
             .unwrap(),
         None
@@ -1349,7 +1476,10 @@ fn uncertain_stop_commit_is_idempotent_across_concurrent_retries() {
                 "session",
                 original,
                 &epoch,
-                pending::Delivery::Current { review: false }
+                pending::Delivery::Current {
+                    review: false,
+                    first_stop: true,
+                }
             )
             .unwrap(),
         Some(pending::Stop::Claimed)
@@ -1410,7 +1540,10 @@ fn an_accepted_action_cannot_cross_revocation_or_binding_generation() {
                         "session",
                         "original",
                         &epoch,
-                        pending::Delivery::Current { review: false }
+                        pending::Delivery::Current {
+                            review: false,
+                            first_stop: true,
+                        }
                     )
                     .unwrap(),
                 Some(pending::Stop::Claimed)
@@ -1474,7 +1607,10 @@ fn interrupted_approval_or_write_cannot_restore_forgotten_content() {
                     "session",
                     "original",
                     &epoch,
-                    pending::Delivery::Current { review: false }
+                    pending::Delivery::Current {
+                        review: false,
+                        first_stop: true,
+                    }
                 )
                 .unwrap(),
             Some(pending::Stop::Claimed)

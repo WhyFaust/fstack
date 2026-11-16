@@ -1,4 +1,5 @@
 mod auto;
+mod codex_task;
 mod format;
 mod hooks;
 mod io;
@@ -141,6 +142,27 @@ fn decode(payload: &str) -> Result<Value> {
     }
     action(&read_json(data.as_slice(), 20000)?)
 }
+fn report_action(arguments: &[&str]) -> Result<Value> {
+    match arguments {
+        ["--skip"] => Ok(json!({"action":"skip"})),
+        ["--payload", encoded] => {
+            let request = decode(encoded)?;
+            let candidate = &request["candidate"];
+            if !matches!(request["action"].as_str(), Some("remember" | "draft"))
+                || request.get("scope").is_some()
+                || candidate["kind"] != "decision"
+                || candidate.get("supersedes").is_some()
+                || candidate["source"].as_str().is_none_or(str::is_empty)
+            {
+                return Err(
+                    "A Codex task can only report a new project decision with a source".into(),
+                );
+            }
+            Ok(request)
+        }
+        _ => Err("Invalid memory report arguments".into()),
+    }
+}
 fn correction(title: &str, body: &str, predecessor: Option<&str>) -> Result<Value> {
     for field in [title, body] {
         if field.contains([
@@ -190,7 +212,18 @@ pub fn run(arguments: &[OsString], package: &Path) -> Result<()> {
     let result = if command == "hook" {
         let event = args
             .get(1)
-            .filter(|s| matches!(s.as_str(), "UserPromptSubmit" | "PostToolUse" | "Stop"))
+            .filter(|s| {
+                matches!(
+                    s.as_str(),
+                    "SessionStart"
+                        | "SubagentStart"
+                        | "UserPromptSubmit"
+                        | "PostToolUse"
+                        | "Stop"
+                        | "SubagentStop"
+                        | "Interrupt"
+                )
+            })
             .ok_or("Invalid memory hook event")?;
         if args.len() != 2 {
             return Err("Invalid memory hook arguments".into());
@@ -276,7 +309,7 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
         return pending::Pending::new(&store.state, cwd)
             .diagnostics(&hooks::scope_id(&binding, cwd));
     }
-    let b = if command == "stage" {
+    let b = if matches!(command, "stage" | "report") {
         store.bound(cwd)?
     } else {
         store.resolve(cwd)?
@@ -308,6 +341,10 @@ fn execute(store: &store::Store, args: &[String], cwd: &Path) -> Result<Value> {
             None,
             None,
         ),
+        ("report", arguments) => {
+            report_action(&arguments.iter().map(String::as_str).collect::<Vec<_>>())?;
+            Ok(json!({"reported":true}))
+        }
         ("stage", [turn_flag, token, rest @ ..]) if turn_flag == "--turn" => {
             match rest {
                 [flag] if flag == "--skip" => json!({"action":"skip"}),

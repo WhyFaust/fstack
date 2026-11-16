@@ -52,7 +52,11 @@ pub(super) fn recall_context(
         return Ok(None);
     };
     let query = query.chars().take(500).collect::<String>();
-    let records = store.recall(&shared, &query, LIMIT)?;
+    let Some(records) = store.recall_for_hook(&shared, &query, LIMIT)? else {
+        return Ok(Some(format!(
+            "В общей памяти много записей. Подбери характерные термины задачи, выполни {prefix} shared search \"КЛЮЧЕВЫЕ СЛОВА\" --limit {LIMIT} и примени подходящие предпочтения."
+        )));
+    };
     let ids: Vec<_> = records
         .as_array()
         .into_iter()

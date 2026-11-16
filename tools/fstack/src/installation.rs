@@ -1,6 +1,7 @@
 use crate::{json, package, Result};
 use package::{json_file, require, resources};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -282,17 +283,23 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         "Обнаруженные навыки не совпадают с пакетом",
     )?;
     let hooks = flatten(hooks, "hooks")?;
-    let events: std::collections::BTreeSet<_> =
-        ["sessionStart", "userPromptSubmit", "postToolUse", "stop"]
-            .into_iter()
-            .collect();
-    let actual: std::collections::BTreeSet<_> = hooks
-        .iter()
-        .filter_map(|v| v["eventName"].as_str())
-        .collect();
+    let expected_handlers = BTreeMap::from([
+        ("sessionStart", 2),
+        ("subagentStart", 1),
+        ("userPromptSubmit", 1),
+        ("postToolUse", 1),
+        ("stop", 1),
+        ("subagentStop", 1),
+        ("interrupt", 1),
+    ]);
+    let mut actual_handlers = BTreeMap::new();
+    for hook in &hooks {
+        let event = hook["eventName"].as_str().ok_or("Нет eventName")?;
+        *actual_handlers.entry(event).or_insert(0) += 1;
+    }
     require(
-        hooks.len() == events.len() && actual == events,
-        "Обнаруженные события не совпадают с пакетом",
+        actual_handlers == expected_handlers,
+        format!("Обнаруженные обработчики не совпадают с пакетом: {actual_handlers:?}"),
     )?;
     for hook in hooks {
         let source = Path::new(hook["sourcePath"].as_str().ok_or("Нет sourcePath")?)
@@ -306,6 +313,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
             "Источник или доверие хука не совпадают",
         )?;
     }
+    let events: Vec<_> = expected_handlers.keys().copied().collect();
     println!(
         "{}",
         json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"skill_files_and_catalog":"matched_source","hooks_discovered":events,"profile_instructions_created":false,"global_roles_installed":false,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})

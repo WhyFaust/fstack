@@ -39,6 +39,11 @@ pub enum WriteOutcome {
     Written(Value),
     Forgotten,
 }
+enum StoredRecord {
+    Missing,
+    Invalid(String),
+    Loaded(Value),
+}
 impl WriteOutcome {
     fn into_record(self) -> Result<Value> {
         match self {
@@ -69,6 +74,7 @@ pub fn note(path: &Path, id: &str, marker: &str, body: bool) -> Result<Option<Fi
         .transpose()
 }
 const ENTRY_LIMIT: usize = 4096;
+const HOOK_ENTRY_LIMIT: usize = 64;
 
 pub fn files(dir: &Path, tombstones: bool) -> Result<Vec<PathBuf>> {
     if !io::directory(dir, false, false)? {
@@ -163,20 +169,28 @@ fn confirmed(canonical: Option<&Value>, old: Option<&Fields>) -> Option<Value> {
                 .map(|f| tomb_fields(&f["id"], Some(f)))
         })
 }
-fn record_approval(path: &Path, id: &str) -> Result<Option<Fields>> {
-    if !io::file(path)? {
-        return Ok(None);
+fn invalid_file_contents(error: &str) -> bool {
+    matches!(
+        error,
+        "Memory file is too large" | "Invalid encoding in memory file"
+    )
+}
+fn record_metadata(path: &Path, id: &str) -> Result<Option<Fields>> {
+    match io::read(path) {
+        Ok(raw) => Ok(raw.and_then(|s| fmt::parse(&s, id, MEMORY, false).ok())),
+        Err(e) if invalid_file_contents(&e) => io::prefix(path, 32768)?
+            .and_then(|bytes| fmt::parse_record_header(&bytes, id))
+            .map(Some)
+            .ok_or(e),
+        Err(e) => Err(e),
     }
-    let raw = match io::read(path) {
-        Ok(v) => v,
-        Err(e) if e == "Memory file is too large" || e == "Invalid encoding in memory file" => {
-            return Ok(None)
-        }
-        Err(e) => return Err(e),
-    };
-    Ok(raw
-        .and_then(|s| fmt::parse(&s, id, MEMORY, false).ok())
-        .and_then(|f| fmt::inline(&f)))
+}
+fn record_approval(path: &Path, id: &str) -> Result<Option<Fields>> {
+    match record_metadata(path, id) {
+        Ok(fields) => Ok(fields.and_then(|fields| fmt::inline(&fields))),
+        Err(e) if invalid_file_contents(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 fn find_approval(mut known: Option<Fields>, paths: &[PathBuf], id: &str) -> Result<Option<Fields>> {
     for path in paths {
@@ -415,7 +429,7 @@ impl Store {
         mode: Option<&str>,
         settings: &Path,
         prior: Option<Binding>,
-        owner: Option<&str>,
+        owner: Option<auto::ProjectOwner<'_>>,
     ) -> Result<Binding> {
         let mode = mode
             .or(prior.as_ref().map(|b| b.mode.as_str()))
@@ -448,7 +462,7 @@ impl Store {
             self.check_home(&root)?;
         }
         let project = match owner {
-            Some(hash) => auto::claim_project(&root, project, hash)?,
+            Some(owner) => auto::claim_project(&root, project, owner)?,
             None => project.to_owned(),
         };
         let generation = match prior.as_ref() {
@@ -521,18 +535,15 @@ impl Store {
             if approvals.contains_key(&id) || !io::file(&p)? {
                 continue;
             }
-            let raw = match io::read(&p) {
-                Ok(Some(s)) => s,
+            let metadata = match record_metadata(&p, &id) {
+                Ok(Some(fields)) => fields,
                 Ok(None) => continue,
                 Err(e) => {
                     unreadable.insert(id, e);
                     continue;
                 }
             };
-            if let Some(a) = fmt::parse(&raw, &id, MEMORY, false)
-                .ok()
-                .and_then(|f| fmt::inline(&f))
-            {
+            if let Some(a) = fmt::inline(&metadata) {
                 inline.insert(id, a);
             }
         }
@@ -574,20 +585,45 @@ impl Store {
         hidden.extend(predecessors.into_values());
         Ok((approvals, hidden))
     }
-    pub(super) fn public_record(
+    fn read_public_record(
+        &self,
+        root: &Path,
+        id: &str,
+        approval: Option<&Fields>,
+    ) -> Result<StoredRecord> {
+        if forgotten(root, id)? {
+            return Ok(StoredRecord::Missing);
+        }
+        let fields = match io::read(&record(root, id)) {
+            Ok(Some(raw)) => fmt::parse(&raw, id, MEMORY, true),
+            Ok(None) => return Ok(StoredRecord::Missing),
+            Err(e) if invalid_file_contents(&e) => Err(e),
+            Err(e) => return Err(e),
+        };
+        if forgotten(root, id)? {
+            return Ok(StoredRecord::Missing);
+        }
+        match fields {
+            Ok(fields) => Ok(StoredRecord::Loaded(fmt::public(fields, approval))),
+            Err(error)
+                if invalid_file_contents(&error) || error == "Invalid memory text length" =>
+            {
+                Ok(StoredRecord::Invalid(error))
+            }
+            Err(error) => Err(error),
+        }
+    }
+    fn public_record(
         &self,
         root: &Path,
         id: &str,
         approval: Option<&Fields>,
     ) -> Result<Option<Value>> {
-        if forgotten(root, id)? {
-            return Ok(None);
+        match self.read_public_record(root, id, approval)? {
+            StoredRecord::Missing => Ok(None),
+            StoredRecord::Invalid(error) => Err(error),
+            StoredRecord::Loaded(record) => Ok(Some(record)),
         }
-        let f = note(&record(root, id), id, MEMORY, true)?;
-        if forgotten(root, id)? {
-            return Ok(None);
-        }
-        Ok(f.map(|f| fmt::public(f, approval)))
     }
     pub fn get(&self, b: &Binding, id: &str) -> Result<Value> {
         fmt::id(id)?;
@@ -677,8 +713,12 @@ impl Store {
         for p in files(&root.join("Records"), false)? {
             let id = stem(&p);
             if !a.contains_key(&id) && !h.contains(&id) {
-                if let Some(v) = self.public_record(&root, &id, None)? {
-                    entries.push(v);
+                match self.read_public_record(&root, &id, None)? {
+                    StoredRecord::Loaded(record) => entries.push(record),
+                    StoredRecord::Invalid(error) => {
+                        eprintln!("Skipped unreadable memory entry {id}: {error}");
+                    }
+                    StoredRecord::Missing => {}
                 }
             }
         }
@@ -922,6 +962,30 @@ impl Store {
         self.ranked_records(b, query, limit, true)
     }
 
+    pub(super) fn recall_for_hook(
+        &self,
+        b: &Binding,
+        query: &str,
+        limit: usize,
+    ) -> Result<Option<Value>> {
+        let root = self.root(b)?;
+        let mut remaining = HOOK_ENTRY_LIMIT;
+        for folder in ["Records", "Approved", "Forgotten"] {
+            let dir = root.join(folder);
+            if !io::directory(&dir, false, false)? {
+                continue;
+            }
+            for entry in fs::read_dir(&dir).map_err(io::err)? {
+                entry.map_err(io::err)?;
+                if remaining == 0 {
+                    return Ok(None);
+                }
+                remaining -= 1;
+            }
+        }
+        self.recall(b, query, limit).map(Some)
+    }
+
     fn ranked_records(
         &self,
         b: &Binding,
@@ -973,26 +1037,34 @@ impl Store {
             if h.contains(&id) {
                 continue;
             }
-            if let Some(v) = self.public_record(&root, &id, Some(&a))? {
-                let title = v["title"].as_str().unwrap().case_fold().collect::<String>();
-                let body = v["body"].as_str().unwrap().case_fold().collect::<String>();
-                let forms = if stems.is_empty() {
-                    String::new()
-                } else {
-                    regex
-                        .find_iter(&title)
-                        .chain(regex.find_iter(&body))
-                        .filter_map(|m| russian_stem(&stemmer, m.as_str()))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                conn.execute(
-                    "INSERT INTO entries VALUES (?,?,?,?,?)",
-                    rusqlite::params![id, title, body, forms, v["created"].as_str()],
-                )
-                .map_err(io::err)?;
-                entries.insert(id, v);
-            }
+            let v = match self.read_public_record(&root, &id, Some(&a))? {
+                StoredRecord::Missing => continue,
+                StoredRecord::Invalid(error) => {
+                    if !fill_with_rules {
+                        eprintln!("Skipped unreadable memory entry {id}: {error}");
+                    }
+                    continue;
+                }
+                StoredRecord::Loaded(v) => v,
+            };
+            let title = v["title"].as_str().unwrap().case_fold().collect::<String>();
+            let body = v["body"].as_str().unwrap().case_fold().collect::<String>();
+            let forms = if stems.is_empty() {
+                String::new()
+            } else {
+                regex
+                    .find_iter(&title)
+                    .chain(regex.find_iter(&body))
+                    .filter_map(|m| russian_stem(&stemmer, m.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            conn.execute(
+                "INSERT INTO entries VALUES (?,?,?,?,?)",
+                rusqlite::params![id, title, body, forms, v["created"].as_str()],
+            )
+            .map_err(io::err)?;
+            entries.insert(id, v);
         }
         let mut ids = if terms.is_empty() {
             Vec::new()
