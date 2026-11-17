@@ -59,6 +59,12 @@ jobs:
           if [[ -n "$CHANGE_BASE" && "$RUNNER_OS" == "Linux" ]]; then
             "$BINARY" --package . release check-next "$CHANGE_BASE"
           fi
+      - name: Проверить доступность версии в GitHub Releases
+        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: '"$BINARY" --package . release plan'
       - uses: actions/setup-python@v7
         if: runner.os == 'Linux'
         with:
@@ -68,6 +74,17 @@ jobs:
         run: |
           python -m unittest discover -s tools/fstack/benchmarks -v
           python -m unittest discover -s tools/fstack/evals -v
+      - name: Проверить установленный пакет и вызов навыка в Codex
+        if: runner.os == 'Linux'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/fstack-cli" --no-save --no-audit --no-fund @openai/codex@0.169.0
+          codex="$RUNNER_TEMP/fstack-cli/node_modules/.bin/codex"
+          package="$RUNNER_TEMP/fstack-plugin"
+          mkdir -p "$package/bin"
+          git archive HEAD | tar -x -C "$package"
+          cp "$BINARY" "$package/bin/fstack"
+          "$BINARY" --package "$package" check-installation --codex "$codex"
+          python tools/fstack/evals/check_skill_invocation.py "$package" --codex "$codex"
       - name: Проверить зависимости Linux
         if: runner.os == 'Linux'
         run: |
@@ -101,6 +118,7 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7.0.1
         with:

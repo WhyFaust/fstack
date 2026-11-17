@@ -6,15 +6,11 @@ disable-model-invocation: true
 
 # Write and edit text
 
-## Inputs and scope
-
 Identify the deliverable, reader, platform and voice. Follow explicit
 requirements and source material. Ask one short question with choices when
 the answer changes the deliverable.
 
-## Procedure
-
-### Choose form and content
+## Choose form and content
 
 - For new prose choose one point and verified details. Open with the subject
   and a reason to read. Deliver on the opening and give the reader any action.
@@ -30,13 +26,13 @@ the answer changes the deliverable.
 - Verify fresh material and changing facts with
   [$fstack:research-text](../research-text/SKILL_en.md).
 
-### Technical explanations and instructions
+## Technical explanations and instructions
 
 Explain an unfamiliar object's role on first mention. Name the actor,
 conditions and check. Keep dependent steps in order and use familiar terms.
 Verify numbers, constraints, commands, paths and identifiers against the source.
 
-## Verification and result
+## Prepare the final copy
 
 Return the finished text. Default to Russian for new prose and the source
 language for edits. For a single field, give only its content. Learn the

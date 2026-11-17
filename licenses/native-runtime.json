@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "cargo_lock_sha256": "956478d298ff6af2ba95c972552609eeddd2bbe153572d990da3efbb68e7e74c",
-  "cargo_manifest_sha256": "336edefc70e50e8645df897d694e209276404a74da1c05c4389e3ce3858dd98d",
+  "cargo_lock_sha256": "b39aff9e54e9f8b60fca252c8357f3b6ba28987a89944a006932b8cd81bfcf0f",
+  "cargo_manifest_sha256": "b5cbfbc2f192754396bbffd739f90108f2773349da4e4a34d136091755082f9e",
   "rust_version": "1.90.0",
   "targets": [
     "x86_64-unknown-linux-gnu",
@@ -363,6 +363,14 @@
       "notice_source": "LICENSE-MIT"
     },
     {
+      "name": "pulldown-cmark",
+      "version": "0.13.6",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT",
+      "checksum": "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b",
+      "notice_source": "LICENSE"
+    },
+    {
       "name": "quote",
       "version": "1.0.47",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -563,6 +571,14 @@
       "notice_source": "LICENSE-MIT"
     },
     {
+      "name": "unicase",
+      "version": "2.10.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT OR Apache-2.0",
+      "checksum": "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f",
+      "notice_source": "LICENSE-MIT"
+    },
+    {
       "name": "unicode-casefold",
       "version": "0.2.0",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -660,7 +676,7 @@
     }
   ],
   "notice_files": {
-    "licenses/native-runtime.txt": "5d5eecbd9b61ac3fe3e0ed68dfd23a1b1b2fe611cab11c01324e26872dcedd32",
+    "licenses/native-runtime.txt": "1445b88fb53d13b48532035e517a867d40a318436fe0b6dfd7989b7e78b4b110",
     "licenses/native-runtime-rust-1.90.0.html": "025c0dd1236493fcd5b6386b68453852e6528722bd5f8dce5949e94d225e7a60"
   },
   "excluded_packages": [

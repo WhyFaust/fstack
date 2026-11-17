@@ -23,6 +23,7 @@ tempfile = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 serde = { version = "1.0", features = ["derive"] }
 rust-stemmers = "1.2.0"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

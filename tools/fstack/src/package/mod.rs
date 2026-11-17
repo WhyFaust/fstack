@@ -161,18 +161,12 @@ fn skill_markdown(path: &Path) -> bool {
         })
 }
 
-fn frontmatter(path: &Path) -> Result<Value> {
-    let text = read(path)?;
+fn parse_skill<'a>(path: &Path, text: &'a str) -> Result<(Value, &'a str)> {
     let header = rx!(r"(?m)\A---\r?\n((?s:.*?))^---\r?$")
-        .captures(&text)
+        .captures(text)
         .ok_or("Отсутствует frontmatter")?;
-    let value = yaml(&header[1])?;
-    require(value.is_object(), "Frontmatter должен быть объектом")?;
-    Ok(value)
-}
-
-pub(crate) fn metadata(path: &Path) -> Result<Value> {
-    let data = frontmatter(path)?;
+    let data = yaml(&header[1])?;
+    require(data.is_object(), "Frontmatter должен быть объектом")?;
     let name = string(&data, "name")?;
     require(valid_skill_name(name), "Некорректное имя навыка")?;
     require(
@@ -215,6 +209,11 @@ pub(crate) fn metadata(path: &Path) -> Result<Value> {
             "disable-model-invocation должен быть булевым значением",
         )?;
     }
+    Ok((data, &text[header.get(0).unwrap().end()..]))
+}
+
+pub(crate) fn metadata(path: &Path) -> Result<Value> {
+    let (data, _) = parse_skill(path, &read(path)?)?;
     Ok(data)
 }
 
@@ -613,18 +612,31 @@ pub(crate) fn skill_names(root: &Path) -> Result<BTreeSet<String>> {
 
 fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
     let mut listed = BTreeSet::new();
-    for row in rx!(r"(?m)^\| `([a-z0-9-]+)` \|([^\n]*)").captures_iter(listing) {
-        let name = &row[1];
-        let instructions = row[2]
-            .trim_end()
-            .trim_end_matches('|')
-            .rsplit('|')
-            .next()
-            .unwrap_or("");
-        let targets = markdown_targets(instructions);
+    for row in rx!(r"(?m)^\| ([^|\n]+) \|([^\n]*)").captures_iter(listing) {
+        let first = &row[1];
+        let (name, target) =
+            if let Some(link) = rx!(r"^\[([a-z0-9-]+)\]\(([^)]+)\)$").captures(first) {
+                (link[1].to_owned(), link[2].to_owned())
+            } else if let Some(name) = first.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+                let instructions = row[2]
+                    .trim_end()
+                    .trim_end_matches('|')
+                    .rsplit('|')
+                    .next()
+                    .unwrap_or("");
+                (
+                    name.to_owned(),
+                    markdown_targets(instructions)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default(),
+                )
+            } else {
+                continue;
+            };
         let entry = format!("../skills/{name}/SKILL.md");
         require(
-            targets.first() == Some(&entry),
+            target == entry,
             format!("Каталог: основная ссылка {name} должна вести на {entry}"),
         )?;
         require(
@@ -636,6 +648,23 @@ fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
         !skills.is_empty() && &listed == skills,
         "Каталог навыков не совпадает с пакетом",
     )
+}
+
+pub(crate) fn manifest_assets(manifest: &Value) -> Result<Vec<&str>> {
+    let interface = &manifest["interface"];
+    let mut assets = vec![
+        string(interface, "composerIcon")?,
+        string(interface, "logo")?,
+    ];
+    if let Some(screenshots) = interface.get("screenshots") {
+        for value in screenshots
+            .as_array()
+            .ok_or("screenshots должен быть массивом")?
+        {
+            assets.push(value.as_str().ok_or("Некорректный screenshot")?);
+        }
+    }
+    Ok(assets)
 }
 
 pub(crate) fn check(root: &Path) -> Result<String> {
@@ -672,8 +701,13 @@ pub(crate) fn check(root: &Path) -> Result<String> {
         let folder = root.join("skills").join(name);
         for path in entries(&folder)? {
             if skill_markdown(&path) {
-                let data =
-                    metadata(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+                let text = read(&path)?;
+                let (data, body) = parse_skill(&path, &text)
+                    .map_err(|error| format!("{}: {error}", path.display()))?;
+                require(
+                    !body.trim().is_empty(),
+                    format!("{}: отсутствует текст инструкции", path.display()),
+                )?;
                 require(
                     data["disable-model-invocation"] == true,
                     format!(
@@ -690,20 +724,7 @@ pub(crate) fn check(root: &Path) -> Result<String> {
         resources(&folder, root)?;
         skill_ui(root, &folder, name)?;
     }
-    let interface = &manifest["interface"];
-    let mut assets = vec![
-        string(interface, "composerIcon")?,
-        string(interface, "logo")?,
-    ];
-    if let Some(screenshots) = interface.get("screenshots") {
-        for value in screenshots
-            .as_array()
-            .ok_or("screenshots должен быть массивом")?
-        {
-            assets.push(value.as_str().ok_or("Некорректный screenshot")?);
-        }
-    }
-    for asset in assets {
+    for asset in manifest_assets(&manifest)? {
         let path = contained(root, root, asset, false)?;
         require(
             fs::read(&path)

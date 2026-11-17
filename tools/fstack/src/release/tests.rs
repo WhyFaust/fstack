@@ -1,7 +1,26 @@
 use super::*;
 use std::cell::{Cell, RefCell};
+
+#[test]
+fn migration_notes_keep_code_and_skip_examples_and_template_hints() {
+    let example = "~~~md\n## При обновлении\nПример\n~~~\n\n> ## При обновлении\n";
+    assert_eq!(upgrade_section(example), None);
+    let steps = "Сохраните настройки.\n\n```sh\n# Комментарий\ncat settings\n<!-- literal -->\n```";
+    let body = format!("{example}\n## При обновлении\n\n<!-- удалите\nподсказку -->\n{steps}\n\n  ## Проверка\nГотово.");
+    assert_eq!(upgrade_section(&body).as_deref(), Some(steps));
+    assert_eq!(upgrade_section("## При обновлении\n<!-- пусто -->"), None);
+    for heading in ["##  При обновлении", "При обновлении\n--------------"]
+    {
+        let body = format!("{heading}\n\n    команда\n");
+        assert_eq!(upgrade_section(&body).as_deref(), Some("    команда"));
+    }
+}
+
 struct Stub {
     records: RefCell<Vec<Value>>,
+    exact: RefCell<Value>,
+    version_pull: RefCell<Option<(String, Value)>>,
+    created_notes: RefCell<String>,
     calls: RefCell<Vec<Vec<String>>>,
     publish_tag: bool,
     fail_release_action: Cell<Option<&'static str>>,
@@ -15,14 +34,35 @@ impl Runner for Stub {
             return System.run(root, args, input);
         }
         if args[1] == "api" {
-            return serde_json::to_vec(&vec![self.records.borrow().clone()])
-                .map_err(|e| e.to_string());
+            let response = if args[2] == "graphql" {
+                json!({"data":{"repository":{"release":*self.exact.borrow()}}})
+            } else if args.last().unwrap().ends_with("/pulls?per_page=100") {
+                let pulls = self.version_pull.borrow();
+                match pulls.as_ref() {
+                    Some((commit, pull))
+                        if args
+                            .last()
+                            .unwrap()
+                            .contains(&format!("/commits/{commit}/")) =>
+                    {
+                        json!([[pull]])
+                    }
+                    _ => json!([[]]),
+                }
+            } else {
+                json!([*self.records.borrow()])
+            };
+            return serde_json::to_vec(&response).map_err(|e| e.to_string());
         }
         self.calls
             .borrow_mut()
             .push(args.iter().map(|s| s.to_string()).collect());
         if args[1] == "release" && self.fail_release_action.get() == Some(args[2]) {
             return Err(format!("Сбой gh release {}", args[2]));
+        }
+        if args[1..3] == ["release", "create"] {
+            assert!(args.windows(2).any(|pair| pair == ["--notes-file", "-"]));
+            *self.created_notes.borrow_mut() = String::from_utf8(input.unwrap().to_vec()).unwrap();
         }
         if self.publish_tag && args[1..3] == ["release", "edit"] {
             let target = args[args.iter().position(|s| *s == "--target").unwrap() + 1];
@@ -42,6 +82,9 @@ impl Runner for Stub {
 }
 fn stub() -> Stub {
     Stub {
+        exact: RefCell::new(Value::Null),
+        version_pull: RefCell::new(None),
+        created_notes: RefCell::new(String::new()),
         records: RefCell::new(vec![
             json!({"tag_name":"v0.2.0","draft":false,"prerelease":false}),
         ]),
@@ -74,7 +117,9 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
     save(
         &root,
         MANIFEST,
-        b"{\"name\": \"fstack\", \"version\": \"0.2.0\"}",
+        json!({"name":"fstack","version":"0.2.0","interface":{
+            "composerIcon":"./media/icon.png","logo":"./assets/logo.png","screenshots":["./gallery/shot.png"]
+        }}).to_string(),
     );
     save(&root, PACKAGE_VERSION, "0.2.0\n");
     save(&root, "launchers/package-major", "0\n");
@@ -335,10 +380,20 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
     );
     save(&root, PACKAGE_VERSION, "0.3.0\n");
     commit(&root, "feat: validated behavior");
+    let version_commit = git(&root, &["rev-parse", "HEAD"]);
+    save(&root, "guide.md", "Documentation after the version change");
+    commit(&root, "docs: clarify usage");
     let sha = git(&root, &["rev-parse", "HEAD"]);
     origin(&root);
     let artifacts = artifacts(&root, &sha);
     let stub = stub();
+    *stub.version_pull.borrow_mut() = Some((
+        version_commit,
+        json!({
+            "merged_at":"2026-11-17", "base":{"ref":"main","repo":{"full_name":"fixture/fstack"}},
+            "body":"## При обновлении\n\n<!-- Подсказка -->\nЗамените старый вызов.\n\n## Проверка\nЛоги"
+        }),
+    ));
     let release = Release {
         root: &root,
         runner: &stub,
@@ -362,6 +417,9 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
     stub.fail_release_action.set(None);
     git(&root, &["checkout", "--detach", &sha]);
     release.publish("fixture/fstack", &event(&sha)).unwrap();
+    assert_eq!(*stub.created_notes.borrow(), format!(
+        "Пакет fstack 0.3.0. Архивы, бинарники и SHA-256.\n\n## При обновлении\n\nЗамените старый вызов.\n\n<!-- release-source:{sha} -->"
+    ));
     assert_eq!(
         stub.calls
             .borrow()
@@ -474,6 +532,11 @@ fn explicit_version_checks_package_and_skill_changes_against_the_pr_base() {
             Some("---\nname: alpha\ndescription: Localized skill\n---\n"),
         ),
         ("skills/alpha/explanation.md", Some("New resource\n")),
+        ("docs/skills.md", Some("Updated skill catalog")),
+        ("assets/logo.png", Some("Replaced logo")),
+        ("media/icon.png", Some("Composer icon declared outside assets")),
+        ("gallery/shot.png", Some("Screenshot declared outside assets")),
+        (".agents/plugins/marketplace.json", Some("Updated marketplace")),
         ("skills/beta/SKILL.md", None),
         (
             "skills/gamma/SKILL.md",
@@ -498,6 +561,32 @@ fn explicit_version_checks_package_and_skill_changes_against_the_pr_base() {
     assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
     git(&root, &["tag", "v0.2.1"]);
     assert!(release.check_next(&base).unwrap_err().contains("занята"));
+}
+
+#[test]
+fn exact_release_survives_a_missing_list_entry_and_git_tag() {
+    let (_temp, root) = fixture();
+    let stub = stub();
+    let release = Release {
+        root: &root,
+        runner: &stub,
+        artifacts: None,
+    };
+    let published = json!({"node_id":"R_1","tag_name":"v0.2.0","draft":false,"prerelease":false});
+    *stub.exact.borrow_mut() = published.clone();
+    *stub.records.borrow_mut() = vec![published];
+    let records = release.records("fixture/fstack").unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(release.plan(&records).unwrap()["publish"], false);
+
+    stub.records.borrow_mut().clear();
+    git(&root, &["tag", "-d", "v0.2.0"]);
+    let records = release.records("fixture/fstack").unwrap();
+    assert!(release
+        .plan(&records)
+        .unwrap_err()
+        .contains("Git-тег отсутствует"));
+    assert!(stub.calls.borrow().is_empty());
 }
 
 #[test]

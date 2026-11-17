@@ -364,6 +364,17 @@ fn complete_package_accepts_minimal_skills_with_explicit_invocation() {
     fs::write(&ui, policy).unwrap();
     check(&package).unwrap();
 
+    for empty in ["", "\r\n \t\r\n"] {
+        fs::write(
+            &skill,
+            format!("{header}disable-model-invocation: true\n---{empty}"),
+        )
+        .unwrap();
+        assert!(check(&package)
+            .unwrap_err()
+            .contains("отсутствует текст инструкции"));
+    }
+
     for value in ["false", "\"true\""] {
         fs::write(
             &skill,
@@ -528,4 +539,8 @@ fn catalog_links_must_open_the_named_skill() {
     assert!(check_catalog(listing, &skills).is_ok());
     assert!(check_catalog(&listing.replace("read/SKILL.md", "write/SKILL.md"), &skills).is_err());
     assert!(check_catalog(&format!("{listing}\n{listing}"), &skills).is_err());
+    let linked = "| [read](../skills/read/SKILL.md) | Чтение |\n| [write](../skills/write/SKILL.md) | Запись |";
+    assert!(check_catalog(linked, &skills).is_ok());
+    assert!(check_catalog(&linked.replace("read/SKILL.md", "write/SKILL.md"), &skills).is_err());
+    assert!(check_catalog(&format!("{linked}\n{linked}"), &skills).is_err());
 }

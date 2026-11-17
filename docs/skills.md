@@ -5,82 +5,79 @@
 
 ## Основные методы
 
-| Навык | Когда применять | Инструкция |
-| --- | --- | --- |
-| `route` | Один основной метод и необходимые предметные дополнения | [Открыть](../skills/route/SKILL.md) |
-| `how` | Исследование кода по исходным данным | [Открыть](../skills/how/SKILL.md) |
-| `audit` | Аудит и приоритетный backlog улучшений | [Открыть](../skills/audit/SKILL.md) |
-| `scope` | План выбранного улучшения и сверка его актуальности | [Открыть](../skills/scope/SKILL.md) |
-| `implement` | Реализация законченного изменения | [Открыть](../skills/implement/SKILL.md) |
-| `skill` | Создание, перенос и улучшение исходников навыков | [Открыть](../skills/skill/SKILL.md) |
-| `debug` | Причина сбоя и проверка исправления | [Открыть](../skills/debug/SKILL.md) |
-| `refactor` | Упрощение кода с сохранением контрактов | [Открыть](../skills/refactor/SKILL.md) |
-| `review` | Ревью изменения и повторная проверка замечаний по коммитам | [Открыть](../skills/review/SKILL.md) |
-| `verify` | Проверки и доказательства готовности | [Открыть](../skills/verify/SKILL.md) |
-| `unslop` | Удаление шаблонности ИИ из текста в любом результате работы | [Открыть](../skills/unslop/SKILL.md) |
+| Навык | Когда применять |
+| --- | --- |
+| [route](../skills/route/SKILL.md) | Один основной метод и необходимые предметные дополнения |
+| [how](../skills/how/SKILL.md) | Исследование кода по исходным данным |
+| [audit](../skills/audit/SKILL.md) | Аудит и приоритетный backlog улучшений |
+| [scope](../skills/scope/SKILL.md) | План выбранного улучшения и сверка его актуальности |
+| [implement](../skills/implement/SKILL.md) | Реализация законченного изменения |
+| [skill](../skills/skill/SKILL.md) | Создание, перенос и улучшение исходников навыков |
+| [debug](../skills/debug/SKILL.md) | Причина сбоя и проверка исправления |
+| [refactor](../skills/refactor/SKILL.md) | Упрощение кода с сохранением контрактов |
+| [review](../skills/review/SKILL.md) | Ревью изменения и повторная проверка замечаний по коммитам |
+| [verify](../skills/verify/SKILL.md) | Проверки и доказательства готовности |
+| [unslop](../skills/unslop/SKILL.md) | Удаление шаблонности ИИ из текста в любом результате работы |
 
 ## Инженерные решения
 
-| Навык | Когда применять | Инструкция |
-| --- | --- | --- |
-| `principles` | Критерии архитектуры, состояния и проверки | [Открыть](../skills/principles/SKILL.md) |
-| `design` | Проектирование модели и границ изменения | [Открыть](../skills/design/SKILL.md) |
-| `ui` | Пользовательский сценарий, компоненты и визуальная проверка UI | [Открыть](../skills/ui/SKILL.md) |
-| `impact` | Последствия изменения и затронутые потребители | [Открыть](../skills/impact/SKILL.md) |
-| `simplify` | Упрощение готового diff без расширения задачи | [Открыть](../skills/simplify/SKILL.md) |
-| `state` | Владение состоянием и конкурентными записями | [Открыть](../skills/state/SKILL.md) |
-| `model-check` | Проверка свойства автомата по коду и трасса в Mermaid | [Открыть](../skills/model-check/SKILL.md) |
-| `resources` | Жизненный цикл и очистка собственных ресурсов | [Открыть](../skills/resources/SKILL.md) |
-| `migrate` | Миграция контрактов и всех потребителей | [Открыть](../skills/migrate/SKILL.md) |
-| `perf` | Измерение ускорения без потери покрытия | [Открыть](../skills/perf/SKILL.md) |
-| `why` | Причины решений по истории и источникам | [Открыть](../skills/why/SKILL.md) |
+| Навык | Когда применять |
+| --- | --- |
+| [principles](../skills/principles/SKILL.md) | Критерии архитектуры, состояния и проверки |
+| [design](../skills/design/SKILL.md) | Проектирование модели и границ изменения |
+| [ui](../skills/ui/SKILL.md) | Пользовательский сценарий, компоненты и визуальная проверка UI |
+| [impact](../skills/impact/SKILL.md) | Последствия изменения и затронутые потребители |
+| [simplify](../skills/simplify/SKILL.md) | Упрощение готового diff без расширения задачи |
+| [state](../skills/state/SKILL.md) | Владение состоянием и конкурентными записями |
+| [model-check](../skills/model-check/SKILL.md) | Проверка свойства автомата по коду и трасса в Mermaid |
+| [resources](../skills/resources/SKILL.md) | Жизненный цикл и очистка собственных ресурсов |
+| [migrate](../skills/migrate/SKILL.md) | Миграция контрактов и всех потребителей |
+| [perf](../skills/perf/SKILL.md) | Измерение ускорения без потери покрытия |
+| [why](../skills/why/SKILL.md) | Причины решений по истории и источникам |
 
 ## Выполнение и продолжение
 
-| Навык | Когда применять | Инструкция |
-| --- | --- | --- |
-| `faust-mode` | Включение полного процесса на весь чат до `/faust-mode-off` | [Открыть](../skills/faust-mode/SKILL.md) |
-| `plan` | План законченных этапов, зависимостей и проверок | [Открыть](../skills/plan/SKILL.md) |
-| `delegate` | Поручения, владение и завершение подагентов | [Открыть](../skills/delegate/SKILL.md) |
-| `checkpoint` | Сохранение проверяемой точки продолжения | [Открыть](../skills/checkpoint/SKILL.md) |
-| `resume` | Продолжение задачи со сверкой живого состояния | [Открыть](../skills/resume/SKILL.md) |
-| `test-setup` | Подготовка воспроизводимой проверки проекта | [Открыть](../skills/test-setup/SKILL.md) |
-| `test` | Проверка проекта через реальный сценарий | [Открыть](../skills/test/SKILL.md) |
-| `test-update` | Поддержание актуальности проектной проверки | [Открыть](../skills/test-update/SKILL.md) |
+| Навык | Когда применять |
+| --- | --- |
+| [faust-mode](../skills/faust-mode/SKILL.md) | Включение полного процесса на весь чат до `/faust-mode-off` |
+| [plan](../skills/plan/SKILL.md) | План законченных этапов, зависимостей и проверок |
+| [delegate](../skills/delegate/SKILL.md) | Поручения, владение и завершение подагентов |
+| [checkpoint](../skills/checkpoint/SKILL.md) | Сохранение проверяемой точки продолжения |
+| [resume](../skills/resume/SKILL.md) | Продолжение задачи со сверкой живого состояния |
+| [test-setup](../skills/test-setup/SKILL.md) | Подготовка воспроизводимой проверки проекта |
+| [test](../skills/test/SKILL.md) | Проверка проекта через реальный сценарий |
+| [test-update](../skills/test-update/SKILL.md) | Поддержание актуальности проектной проверки |
 
 ## PR и MR
 
-| Навык | Когда применять | Инструкция |
-| --- | --- | --- |
-| `watch-pr` | Состояние и сопровождение PR или MR | [Открыть](../skills/watch-pr/SKILL.md) |
-| `feedback` | Разбор и исправление замечаний ревью | [Открыть](../skills/feedback/SKILL.md) |
-| `merge` | Слияние проверенной ревизии PR или MR | [Открыть](../skills/merge/SKILL.md) |
+| Навык | Когда применять |
+| --- | --- |
+| [watch-pr](../skills/watch-pr/SKILL.md) | Состояние и сопровождение PR или MR |
+| [feedback](../skills/feedback/SKILL.md) | Разбор и исправление замечаний ревью |
+| [merge](../skills/merge/SKILL.md) | Слияние проверенной ревизии PR или MR |
 
 ## Предметные инструменты
 
-| Навык | Когда применять | Инструкция |
-| --- | --- | --- |
-| `python` | Python-код, окружение, типы и ресурсы | [Открыть](../skills/python/SKILL.md) |
-| `no-comments` | Понятный код без лишних комментариев, с сохранением внешних ограничений | [Открыть](../skills/no-comments/SKILL.md) |
-| `docs` | Проверка API по документации нужной версии | [Открыть](../skills/docs/SKILL.md) |
-| `glab` | GitLab CLI для операций, недоступных через MCP | [Открыть](../skills/glab/SKILL.md) |
-| `playwright-cli` | Работа с веб-интерфейсом через Playwright CLI | [Открыть](../skills/playwright-cli/SKILL.md) |
+| Навык | Когда применять |
+| --- | --- |
+| [python](../skills/python/SKILL.md) | Python-код, окружение, типы и ресурсы |
+| [no-comments](../skills/no-comments/SKILL.md) | Понятный код без лишних комментариев, с сохранением внешних ограничений |
+| [docs](../skills/docs/SKILL.md) | Проверка API по документации нужной версии |
+| [glab](../skills/glab/SKILL.md) | GitLab CLI для операций, недоступных через MCP |
+| [playwright-cli](../skills/playwright-cli/SKILL.md) | Работа с веб-интерфейсом через Playwright CLI |
 
 ## Работа с текстом
 
-| Навык | Когда применять | Инструкция |
-| --- | --- | --- |
-| `write` | Написание, редактура и адаптация текста для аудитории, формата и площадки | [Открыть](../skills/write/SKILL.md), [English](../skills/write/SKILL_en.md) |
-| `research-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов [$fstack:research-text](../skills/research-text/SKILL.md) | [Открыть](../skills/research-text/SKILL.md), [English](../skills/research-text/SKILL_en.md) |
-| `deepread` | Разбор присланного материала и выполнение поручения по нему с проверкой данных по источнику. Вызов [$fstack:deepread](../skills/deepread/SKILL.md) | [Открыть](../skills/deepread/SKILL.md) |
-
-Поиск можно запросить отдельно или подключить к написанию и правке, когда нужны
-новые материалы или проверка фактов.
+| Навык | Когда применять |
+| --- | --- |
+| [write](../skills/write/SKILL.md) | Написание, редактура и адаптация текста для аудитории, формата и площадки, [English](../skills/write/SKILL_en.md) |
+| [research-text](../skills/research-text/SKILL.md) | Подбор материалов, поиск свежих поводов и проверка фактов с источниками, [English](../skills/research-text/SKILL_en.md) |
+| [deepread](../skills/deepread/SKILL.md) | Разбор присланного материала и выполнение поручения по нему с проверкой данных по источнику |
 
 ## Память и внешние компоненты
 
-| Навык | Когда применять | Инструкция |
-| --- | --- | --- |
-| `memory` | Поправки проекта и общие предпочтения в Obsidian | [Открыть](../skills/memory/SKILL.md) |
-| `rtk` | Сокращение шума RTK с сохранением доказательств | [Открыть](../skills/rtk/SKILL.md) |
-| `eval` | Контролируемое сравнение настроек и навыков | [Открыть](../skills/eval/SKILL.md) |
+| Навык | Когда применять |
+| --- | --- |
+| [memory](../skills/memory/SKILL.md) | Поправки проекта и общие предпочтения в Obsidian |
+| [rtk](../skills/rtk/SKILL.md) | Сокращение шума RTK с сохранением доказательств |
+| [eval](../skills/eval/SKILL.md) | Контролируемое сравнение настроек и навыков |

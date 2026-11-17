@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # GitLab через CLI
 
-## Вход и границы
-
 Проверь GitLab MCP. Если операции нет или повторные тайм-ауты мешают работе,
 сверь состояние, область и авторизацию по [$fstack:verify](../verify/SKILL.md),
 затем используй CLI. Отказ политики или прав исключает переход и смену токена.
@@ -17,9 +15,7 @@ disable-model-invocation: true
 [$fstack:watch-pr](../watch-pr/SKILL.md), [$fstack:feedback](../feedback/SKILL.md)
 и [$fstack:merge](../merge/SKILL.md).
 
-## Порядок работы
-
-### Чтение и CI
+## Чтение и CI
 
 Для снимка используй `ci get` (`ci trace` ждёт, `ci view` интерактивен).
 Для `ci retry` возьми ID попытки, для коллекций `glab api --paginate`.
@@ -31,7 +27,7 @@ glab ci get --pipeline-id "$pipeline_id" --with-job-details
 glab api "projects/:id/jobs/$job_id/trace"
 ```
 
-### Изменения
+## Изменения
 
 Пиши в пределах поручения. При неизвестном исходе сначала прочитай результат.
 В полном цикле веди один MR и его source branch по
@@ -58,7 +54,7 @@ glab mr note resolve "$mr_iid" "$discussion_id"
 Используй `--push` только для ещё не опубликованной ветки. Для MR указывай
 `--description`, фильтры списка `--all`, `--merged`, `--closed`.
 
-### Текст в PowerShell
+## Текст в PowerShell
 
 Храни Markdown в UTF-8 файле с переводами строк. Передавай содержимое без
 интерполяции обратных кавычек, `$()` и многострочного текста в shell.
@@ -76,7 +72,7 @@ issue/incident note используй API с `-F body=@file`. Артефакт 
 `projects/$project_id/jobs/$job_id/artifacts` по проекту, ID и SHA попытки.
 Сверь код выхода и архив. [Документация glab](https://docs.gitlab.com/cli/)
 
-## Проверка и результат
+## Проверить состояние на сервере
 
 Сверь источник и цель MR, ID и SHA pipeline, последние jobs и дочерние
 запуски. Для jobs бери project ID pipeline. У merged results проверь обоих

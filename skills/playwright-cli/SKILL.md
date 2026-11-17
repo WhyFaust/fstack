@@ -6,13 +6,9 @@ disable-model-invocation: true
 
 # Браузер через Playwright
 
-## Вход и границы
-
 При параллельной работе выдели сессию, профиль и данные. Используй ссылку из
 свежего snapshot той же вкладки. После навигации, смены вкладки или DOM обнови
 снимок. Действия с внешним эффектом выполняй в рамках полномочий.
-
-## Порядок работы
 
 Проверь `playwright-cli --version` и флаги через `playwright-cli --help <command>`.
 Если CLI отсутствует, проверь `playwright cli --help` и подставь `playwright cli`
@@ -41,8 +37,6 @@ playwright-cli -s="$session" close
 [Playwright Test](https://playwright.dev/docs/test-cli).
 Материалы Playwright CLI адаптированы. Copyright (c) Microsoft Corporation.
 [Apache-2.0](../../licenses/Apache-2.0.txt). Собственные инструкции fstack распространяются по MIT.
-
-## Проверка и результат
 
 Подтверди эффект свежим snapshot, состоянием или сохранённым результатом.
 При сбое укажи шаг и освободи свою сессию. Сохрани артефакты в рабочей области
