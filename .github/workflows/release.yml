@@ -2,6 +2,8 @@ name: fstack
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   workflow_dispatch:
@@ -40,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+          fetch-depth: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '0' || '1' }}
       - name: Rust, сборка и тесты
         run: |
           rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt,clippy
@@ -50,12 +52,12 @@ jobs:
           cargo "+$TOOLCHAIN" build --release --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST"
       - name: Проверить пакет и версию
         env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
           "$BINARY" --package . check-package .
           "$BINARY" --package . release check
-          if [[ -n "$PR_BASE" && "$RUNNER_OS" == "Linux" ]]; then
-            "$BINARY" --package . release check-next "$PR_BASE"
+          if [[ -n "$CHANGE_BASE" && "$RUNNER_OS" == "Linux" ]]; then
+            "$BINARY" --package . release check-next "$CHANGE_BASE"
           fi
       - uses: actions/setup-python@v7
         if: runner.os == 'Linux'
@@ -95,7 +97,7 @@ jobs:
   release:
     name: Выпустить пакет
     needs: package
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-22.04
     permissions:
       contents: write
