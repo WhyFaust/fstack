@@ -2,6 +2,8 @@
 name: route
 description: "Выбирает подходящий навык fstack для текущей задачи."
 disable-model-invocation: true
+metadata:
+  version: "2.5.0"
 ---
 
 # Выбрать навыки для поручения

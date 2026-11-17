@@ -2,6 +2,8 @@
 name: test-setup
 description: "Составляет воспроизводимую инструкцию для проверки проекта."
 disable-model-invocation: true
+metadata:
+  version: "2.1.4"
 ---
 
 # Описать воспроизводимую проверку

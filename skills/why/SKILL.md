@@ -2,6 +2,8 @@
 name: why
 description: "По истории проекта выясняет, зачем приняли решение или когда появилась ошибка."
 disable-model-invocation: true
+metadata:
+  version: "2.1.2"
 ---
 
 # Установить происхождение решения

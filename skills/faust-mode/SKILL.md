@@ -2,6 +2,8 @@
 name: faust-mode
 description: "Включает координатора fstack в текущем чате до команды /faust-mode-off."
 disable-model-invocation: true
+metadata:
+  version: "2.7.0"
 ---
 
 # Включить faust-mode

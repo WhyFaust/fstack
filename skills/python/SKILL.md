@@ -2,6 +2,8 @@
 name: python
 description: "Помогает писать и проверять Python-код с учётом типов, зависимостей и asyncio."
 disable-model-invocation: true
+metadata:
+  version: "2.0.8"
 ---
 
 # Python

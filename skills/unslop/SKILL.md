@@ -2,6 +2,8 @@
 name: unslop
 description: "Убирает из текста шаблонные обороты ИИ."
 disable-model-invocation: true
+metadata:
+  version: "0.1.0"
 ---
 
 # Убрать шаблонность

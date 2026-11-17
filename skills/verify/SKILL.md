@@ -2,6 +2,8 @@
 name: verify
 description: "Подбирает проверки и показывает, какие требования выполнены на текущей ревизии."
 disable-model-invocation: true
+metadata:
+  version: "3.3.0"
 ---
 
 # Проверить фактический результат

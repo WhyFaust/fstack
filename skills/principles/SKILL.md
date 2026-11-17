@@ -2,6 +2,8 @@
 name: principles
 description: "Подбирает инженерный метод для работы с данными, состоянием или совместимостью."
 disable-model-invocation: true
+metadata:
+  version: "2.0.4"
 ---
 
 # Выбрать инженерный метод

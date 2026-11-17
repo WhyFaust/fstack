@@ -2,6 +2,8 @@
 name: migrate
 description: "Переводит потребителей на новый API, схему данных или настройку."
 disable-model-invocation: true
+metadata:
+  version: "2.0.3"
 ---
 
 # Провести переход на новый контракт

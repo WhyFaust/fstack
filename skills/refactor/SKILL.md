@@ -2,6 +2,8 @@
 name: refactor
 description: "Упрощает устройство кода, сохраняя поведение и совместимость."
 disable-model-invocation: true
+metadata:
+  version: "2.0.4"
 ---
 
 # Перестроить код, сохранив контракт

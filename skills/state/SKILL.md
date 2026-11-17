@@ -2,6 +2,8 @@
 name: state
 description: "Проверяет, как общие данные переживают одновременную запись, сбой и повтор."
 disable-model-invocation: true
+metadata:
+  version: "2.0.3"
 ---
 
 # Согласовать записи и восстановление

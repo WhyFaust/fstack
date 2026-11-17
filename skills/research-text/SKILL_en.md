@@ -2,6 +2,8 @@
 name: research-text
 description: "Finds sources and timely angles and checks facts and dates."
 disable-model-invocation: true
+metadata:
+  version: "2.0.6"
 ---
 
 # Research for text

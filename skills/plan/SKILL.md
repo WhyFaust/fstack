@@ -2,6 +2,8 @@
 name: plan
 description: "Разбивает задачу на этапы с зависимостями и критериями готовности."
 disable-model-invocation: true
+metadata:
+  version: "2.3.1"
 ---
 
 # Спланировать последовательность работы

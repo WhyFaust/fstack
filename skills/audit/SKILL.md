@@ -2,6 +2,8 @@
 name: audit
 description: "Находит проблемы в кодовой базе и предлагает, что исправить первым."
 disable-model-invocation: true
+metadata:
+  version: "2.1.6"
 ---
 
 # Подготовить улучшения кодовой базы

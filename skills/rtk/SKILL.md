@@ -2,6 +2,8 @@
 name: rtk
 description: "Сокращает вывод команд через RTK и сохраняет доступ к исходным данным."
 disable-model-invocation: true
+metadata:
+  version: "2.0.3"
 ---
 
 # Использовать RTK

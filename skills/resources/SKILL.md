@@ -2,6 +2,8 @@
 name: resources
 description: "Определяет, кто владеет ресурсами, когда и как их освобождать."
 disable-model-invocation: true
+metadata:
+  version: "2.0.5"
 ---
 
 # Определить срок жизни ресурсов

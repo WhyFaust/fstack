@@ -2,6 +2,8 @@
 name: docs
 description: "Проверяет по документации, как работает API или библиотека нужной версии."
 disable-model-invocation: true
+metadata:
+  version: "2.0.5"
 ---
 
 # Поиск документации

@@ -2,6 +2,8 @@
 name: glab
 description: "Работает с GitLab через glab, когда нужная операция недоступна через MCP."
 disable-model-invocation: true
+metadata:
+  version: "2.2.2"
 ---
 
 # GitLab через CLI

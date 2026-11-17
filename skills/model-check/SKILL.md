@@ -2,6 +2,8 @@
 name: model-check
 description: "Проверяет допустимый порядок событий и показывает контрпример, если он найден."
 disable-model-invocation: true
+metadata:
+  version: "1.1.2"
 ---
 
 # Проверить свойство автомата подсистемы

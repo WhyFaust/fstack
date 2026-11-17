@@ -2,6 +2,8 @@
 name: scope
 description: "Составляет или обновляет план одного улучшения по текущему коду."
 disable-model-invocation: true
+metadata:
+  version: "1.0.5"
 ---
 
 # Подготовить план выбранного улучшения

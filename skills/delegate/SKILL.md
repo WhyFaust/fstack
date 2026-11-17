@@ -2,6 +2,8 @@
 name: delegate
 description: "Распределяет независимые задачи между агентами и проверяет результат каждого."
 disable-model-invocation: true
+metadata:
+  version: "3.5.0"
 ---
 
 # Делегировать работу

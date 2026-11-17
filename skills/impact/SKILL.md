@@ -2,6 +2,8 @@
 name: impact
 description: "Определяет, кого затронет изменение и где может нарушиться совместимость."
 disable-model-invocation: true
+metadata:
+  version: "2.0.3"
 ---
 
 # Оценить последствия изменения

@@ -2,6 +2,8 @@
 name: implement
 description: "Реализует изменение и проверяет новое поведение у потребителей."
 disable-model-invocation: true
+metadata:
+  version: "2.8.0"
 ---
 
 # Реализовать законченное изменение

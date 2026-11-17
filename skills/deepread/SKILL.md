@@ -2,6 +2,8 @@
 name: deepread
 description: "Разбирает присланный материал и выполняет поручение с опорой на источник."
 disable-model-invocation: true
+metadata:
+  version: "1.0.6"
 ---
 
 # Прочитать источник и выполнить поручение

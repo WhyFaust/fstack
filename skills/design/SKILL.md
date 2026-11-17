@@ -2,6 +2,8 @@
 name: design
 description: "Помогает выбрать модель данных, границы компонентов и интерфейс."
 disable-model-invocation: true
+metadata:
+  version: "2.1.2"
 ---
 
 # Подготовить инженерное решение

@@ -2,6 +2,8 @@
 name: checkpoint
 description: "Сохраняет состояние задачи перед паузой или передачей другому исполнителю."
 disable-model-invocation: true
+metadata:
+  version: "2.0.3"
 ---
 
 # Зафиксировать точку продолжения

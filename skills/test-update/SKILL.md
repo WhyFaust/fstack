@@ -2,6 +2,8 @@
 name: test-update
 description: "Обновляет команды и шаги в существующей инструкции проверки."
 disable-model-invocation: true
+metadata:
+  version: "2.0.4"
 ---
 
 # Поддерживать проектную проверку

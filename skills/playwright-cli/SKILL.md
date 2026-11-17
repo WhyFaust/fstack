@@ -2,6 +2,8 @@
 name: playwright-cli
 description: "Проверяет веб-сценарии и разбирает сбои тестов через Playwright CLI."
 disable-model-invocation: true
+metadata:
+  version: "2.0.5"
 ---
 
 # Браузер через Playwright

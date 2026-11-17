@@ -2,6 +2,8 @@
 name: ui
 description: "Проектирует пользовательский сценарий, компоненты и состояния интерфейса."
 disable-model-invocation: true
+metadata:
+  version: "2.0.4"
 ---
 
 # Спроектировать и проверить интерфейс

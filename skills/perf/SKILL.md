@@ -2,6 +2,8 @@
 name: perf
 description: "Сравнивает скорость и расход ресурсов при одинаковой нагрузке."
 disable-model-invocation: true
+metadata:
+  version: "2.0.6"
 ---
 
 # Проверить гипотезу об ускорении

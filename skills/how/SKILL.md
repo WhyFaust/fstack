@@ -2,6 +2,8 @@
 name: how
 description: "Объясняет по исходникам, как работает код и куда передаются данные."
 disable-model-invocation: true
+metadata:
+  version: "2.2.2"
 ---
 
 # Исследовать существующий код

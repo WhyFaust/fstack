@@ -2,6 +2,8 @@
 name: merge
 description: "По разрешению пользователя сливает проверенную ревизию PR или MR."
 disable-model-invocation: true
+metadata:
+  version: "2.2.2"
 ---
 
 # Выполнить разрешённое слияние

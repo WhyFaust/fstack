@@ -2,6 +2,8 @@
 name: memory
 description: "Сохраняет и находит в Obsidian решения проекта и общие предпочтения."
 disable-model-invocation: true
+metadata:
+  version: "3.5.1"
 ---
 
 # Использовать память проекта

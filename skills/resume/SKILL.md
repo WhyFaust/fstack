@@ -2,6 +2,8 @@
 name: resume
 description: "Сверяет сохранённое состояние с текущим и возобновляет работу после паузы."
 disable-model-invocation: true
+metadata:
+  version: "2.1.2"
 ---
 
 # Возобновить работу по фактам

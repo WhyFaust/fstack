@@ -2,6 +2,8 @@
 name: write
 description: "Writes and edits prose for its reader, purpose and publication."
 disable-model-invocation: true
+metadata:
+  version: "2.1.0"
 ---
 
 # Write and edit text

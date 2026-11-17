@@ -2,6 +2,8 @@
 name: debug
 description: "Находит причину сбоя и проверяет исправление на исходном примере."
 disable-model-invocation: true
+metadata:
+  version: "2.2.3"
 ---
 
 # Найти причину и исправить сбой

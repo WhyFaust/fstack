@@ -2,6 +2,8 @@
 name: simplify
 description: "Убирает лишнее из готового diff, сохраняя результат."
 disable-model-invocation: true
+metadata:
+  version: "2.0.3"
 ---
 
 # Упростить готовое изменение

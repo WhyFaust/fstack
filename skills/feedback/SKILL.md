@@ -2,6 +2,8 @@
 name: feedback
 description: "Проверяет замечания к PR или MR, исправляет подтверждённые дефекты и готовит ответы."
 disable-model-invocation: true
+metadata:
+  version: "2.3.1"
 ---
 
 # Обработать замечания к изменению

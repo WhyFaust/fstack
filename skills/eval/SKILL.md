@@ -2,6 +2,8 @@
 name: eval
 description: "По явному запросу сравнивает настройки Codex, промпты или навыки на одинаковых задачах."
 disable-model-invocation: true
+metadata:
+  version: "2.4.3"
 ---
 
 # Сравнение настроек Codex

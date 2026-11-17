@@ -2,6 +2,8 @@
 name: write
 description: "Пишет и редактирует тексты под читателя, задачу и площадку."
 disable-model-invocation: true
+metadata:
+  version: "2.1.0"
 ---
 
 # Писать и редактировать текст

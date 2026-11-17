@@ -2,6 +2,8 @@
 name: watch-pr
 description: "Проверяет статус PR или MR и сопровождает его до согласованного состояния."
 disable-model-invocation: true
+metadata:
+  version: "2.6.0"
 ---
 
 # Проверить и сопровождать PR/MR

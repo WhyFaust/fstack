@@ -2,6 +2,8 @@
 name: no-comments
 description: "Убирает лишние комментарии, выражая смысл кода именами и структурой."
 disable-model-invocation: true
+metadata:
+  version: "2.1.1"
 ---
 
 # Код без лишних комментариев

@@ -2,6 +2,8 @@
 name: test
 description: "Проверяет выбранную ревизию проекта через UI, API, CLI или установку."
 disable-model-invocation: true
+metadata:
+  version: "2.3.3"
 ---
 
 # Выполнить проверку приложения

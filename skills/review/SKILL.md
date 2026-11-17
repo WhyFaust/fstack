@@ -2,6 +2,8 @@
 name: review
 description: "Проверяет конкретное изменение и показывает, где и при каких условиях оно даст сбой."
 disable-model-invocation: true
+metadata:
+  version: "2.5.0"
 ---
 
 # Проверить конкретное изменение
