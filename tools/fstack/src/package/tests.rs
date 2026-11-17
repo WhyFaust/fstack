@@ -236,11 +236,60 @@ fn resources_allow_shared_files_and_reject_missing_escape() {
         fs::write(&f.skill, format!("[Resource]({target})")).unwrap();
         assert!(resources(&f.folder, &f.root).is_err());
     }
-    fs::write(f.folder.join("space name.md"), "present").unwrap();
+    fs::write(f.folder.join("space name.md"), "## Section\n").unwrap();
     fs::write(&f.skill,"[Present](space%20name.md#section)\n`[Example](missing.md)`\n~~~~md\n[Example](missing.md)\n~~~~\n").unwrap();
     resources(&f.folder, &f.root).unwrap();
     fs::write(&f.skill, "[Missing](space%20missing.md)").unwrap();
     assert!(resources(&f.folder, &f.root).is_err());
+}
+
+#[test]
+fn packaged_markdown_links_resolve_rendered_sections() {
+    let f = Fixture::new();
+    let guide = f.folder.join("Краткий обзор.md");
+    fs::write(
+        &guide,
+        concat!(
+            "## Шаг `A_B`: [API](#шаг-a_b-api)\n",
+            "Шаг `A_B`: API\n------------\n",
+            "## Шаг A_B API-1\n",
+            "## Шаг A_B API\n",
+            "## 東京 — café!\n",
+            "<a name=\"manual-id\"></a>\n",
+            "<span id=\"A&amp;B\"></span>\n",
+            "<!-- <a name=\"hidden\"></a> -->\n",
+            "\n```md\n## Только пример\n```\n",
+        ),
+    )
+    .unwrap();
+    let dest = "Краткий%20обзор.md";
+    fs::write(
+        &f.skill,
+        format!(
+            "# Местный заголовок\n[Здесь](#местный-заголовок)\n\n\
+         [Первый]({dest}#шаг-a_b-api) [Повтор]({dest}#шаг-a_b-api-1)\n\
+         [Коллизия]({dest}#шаг-a_b-api-1-1) [Следующий]({dest}#шаг-a_b-api-2)\n\
+         [Unicode][section] [HTML]({dest}#manual-id)\n\n\
+         [section]: <Краткий обзор.md#東京--caf%C3%A9> \"Раздел\"\n\n\
+         <a href=\"{dest}#a%26b\">Раздел HTML</a>\n\n\
+         `[Образец](#нет)`\n\n~~~~\n[Образец](нет.md#нет)\n~~~~\n"
+        ),
+    )
+    .unwrap();
+    resources(&f.folder, &f.root).unwrap();
+    for target in ["#несуществующий", "Краткий%20обзор.md#только-пример"]
+    {
+        fs::write(&f.skill, format!("[Раздел][id]\n\n[id]: {target}")).unwrap();
+        let error = resources(&f.folder, &f.root).unwrap_err();
+        assert!(
+            error.contains("SKILL.md") && error.contains(target),
+            "{error}"
+        );
+    }
+    fs::write(&f.skill, format!("<a href=\"{dest}#hidden\">Проверка</a>")).unwrap();
+    assert!(resources(&f.folder, &f.root)
+        .unwrap_err()
+        .contains("#hidden"));
 }
 
 #[test]
@@ -477,6 +526,44 @@ fn package_rejects_instructions_for_a_removed_skill() {
     fs::write(&guide, "Use $fstack:profile").unwrap();
     let error = check(&package).unwrap_err();
     assert!(error.contains("obsolete.md") && error.contains("отсутствует навык profile"));
+}
+
+#[test]
+fn check_package_follows_links_in_documentation_and_skill_resources() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    for path in [
+        "work/notes.md",
+        "tools/fstack/target/private.md",
+        ".codex/local.md",
+    ] {
+        let path = package.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "[Черновик](#нет)").unwrap();
+    }
+    check(&package).unwrap();
+    for relative in [
+        "README.md",
+        "AGENTS.md",
+        "docs/examples.md",
+        "skills/delegate/worker.md",
+    ] {
+        let path = package.join(relative);
+        let original = read(&path).unwrap();
+        fs::write(
+            &path,
+            format!("{original}\n\n[Правило](/docs/skills.md#исчезнувший-раздел)\n"),
+        )
+        .unwrap();
+        let error = check(&package).unwrap_err();
+        assert!(
+            error.contains(path.file_name().unwrap().to_str().unwrap())
+                && error.contains("#исчезнувший-раздел"),
+            "{error}"
+        );
+        fs::write(&path, original).unwrap();
+    }
 }
 #[cfg(windows)]
 #[test]
