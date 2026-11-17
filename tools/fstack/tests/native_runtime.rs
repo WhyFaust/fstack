@@ -787,12 +787,18 @@ fn desktop_hooks_use_recorded_plan_mode_and_capture_native_agent_decisions() {
 
 #[test]
 fn relocated_runtime_discovers_obsidian_registry_and_creates_the_project_on_demand() {
-    first_ordinary_turn(true);
-    first_ordinary_turn(false);
+    first_ordinary_turn(Runtime::new(), true);
+    first_ordinary_turn(Runtime::new(), false);
 }
 
-fn first_ordinary_turn(save_correction: bool) {
+#[test]
+fn empty_git_directory_does_not_block_memory_capture() {
     let runtime = Runtime::new();
+    fs::create_dir(runtime.project.parent().unwrap().join(".git")).unwrap();
+    first_ordinary_turn(runtime, true);
+}
+
+fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
     let vault = runtime.root.parent().unwrap().join("My Work Vault");
     fs::create_dir_all(vault.join(".obsidian")).unwrap();
     let config = if cfg!(target_os = "macos") {

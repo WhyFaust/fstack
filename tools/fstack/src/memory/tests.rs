@@ -1022,6 +1022,7 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
     git(&["worktree", "add", "--detach", &git_linked]);
     let nested = linked.join("nested");
     fs::create_dir(&nested).unwrap();
+    fs::create_dir(nested.join(".git")).unwrap();
     for cwd in [&nested, &f.repo] {
         let restored = f.store.auto_resolve(cwd).unwrap().unwrap();
         assert_eq!(restored.project, "pilot");
@@ -1041,6 +1042,11 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
             .unwrap()
             .identity
     );
+    for worktree in [&f.repo, &linked] {
+        let state_in_worktree = worktree.join("profile/fstack/memory");
+        assert!(io::profile_state(&state_in_worktree, true).is_err());
+        assert!(!state_in_worktree.exists());
+    }
     let forged = f.base.join("forged");
     fs::create_dir(&forged).unwrap();
     fs::copy(linked.join(".git"), forged.join(".git")).unwrap();
@@ -1975,7 +1981,12 @@ fn unknown_mode_stop_cannot_replay_an_older_action_without_current_turn_confirma
 fn invalid_profile_layout_blocks_only_when_an_existing_generation_must_be_revoked() {
     let f = Fixture::new("auto", "pilot");
     let versioned = f.base.join("versioned");
-    fs::create_dir_all(versioned.join(".git")).unwrap();
+    let marker = versioned.join(".git");
+    fs::create_dir_all(&marker).unwrap();
+    let state_in_marker = marker.join("fstack/memory");
+    assert!(io::profile_state(&state_in_marker, true).is_err());
+    assert!(!state_in_marker.exists());
+    fs::write(marker.join("HEAD"), "ref: refs/heads/main\n").unwrap();
     let state = versioned.join("absent-profile/fstack/memory");
     let store = Store::new(Some(state.clone()), &f.store.package).unwrap();
     let event = json!({"hook_event_name":"UserPromptSubmit","session_id":"session","turn_id":"test",
