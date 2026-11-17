@@ -1,6 +1,6 @@
 ---
 name: faust-mode
-description: "Включает координатора, поручения и методы fstack в текущем чате по явной команде /faust-mode или $fstack:faust-mode. Режим сохраняется до /faust-mode-off."
+description: "Включает координатора fstack в текущем чате до команды /faust-mode-off."
 disable-model-invocation: true
 ---
 

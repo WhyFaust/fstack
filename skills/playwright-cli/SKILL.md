@@ -1,6 +1,6 @@
 ---
 name: playwright-cli
-description: 'Выполняет веб-сценарии и диагностирует Playwright-тесты через Playwright CLI, используя snapshot, снимки экрана и трассировку. Визуальное проектирование относится к ui, работа с нативными приложениями требует другого инструмента.'
+description: "Проверяет веб-сценарии и разбирает сбои тестов через Playwright CLI."
 disable-model-invocation: true
 ---
 

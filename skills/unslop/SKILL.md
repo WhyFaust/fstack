@@ -1,6 +1,6 @@
 ---
 name: unslop
-description: 'Убирает характерные шаблоны ИИ из текста в любом результате работы.'
+description: "Убирает из текста шаблонные обороты ИИ."
 disable-model-invocation: true
 ---
 

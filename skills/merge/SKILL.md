@@ -1,6 +1,6 @@
 ---
 name: merge
-description: 'Выполняет явно разрешённое слияние GitHub PR или GitLab MR после проверки текущего head и правил ветки. Охватывает merge, land и auto-merge; оценка готовности без слияния относится к watch-pr.'
+description: "По разрешению пользователя сливает проверенную ревизию PR или MR."
 disable-model-invocation: true
 ---
 

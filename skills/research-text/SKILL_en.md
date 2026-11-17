@@ -1,6 +1,6 @@
 ---
 name: research-text
-description: 'Finds sources and timely angles and verifies facts and dates for prose or a standalone fact-check. Supplies verified material and caveats for drafting or editing.'
+description: "Finds sources and timely angles and checks facts and dates."
 disable-model-invocation: true
 ---
 

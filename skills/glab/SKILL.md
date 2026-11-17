@@ -1,6 +1,6 @@
 ---
 name: glab
-description: "Выполняет разрешённые операции с MR, CI, артефактами и GitLab API через glab, когда нужная возможность MCP недоступна. Сопровождение и слияние задают отдельные методы."
+description: "Работает с GitLab через glab, когда нужная операция недоступна через MCP."
 disable-model-invocation: true
 ---
 

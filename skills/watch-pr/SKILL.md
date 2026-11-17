@@ -1,6 +1,6 @@
 ---
 name: watch-pr
-description: 'Читает статус GitHub PR или GitLab MR по текущему head и сопровождает изменение до согласованной готовности по CI, обсуждениям, approvals и конфликтам. Слияние относится к merge.'
+description: "Проверяет статус PR или MR и сопровождает его до согласованного состояния."
 disable-model-invocation: true
 ---
 

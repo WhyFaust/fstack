@@ -1,6 +1,6 @@
 ---
 name: write
-description: 'Drafts, edits and adapts authored prose, technical explanations and documentation for the intended audience. Produces posts, articles, emails, scripts, ideas, titles, outlines, captions, comments and replies.'
+description: "Writes and edits prose for its reader, purpose and publication."
 disable-model-invocation: true
 ---
 
