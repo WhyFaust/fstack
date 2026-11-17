@@ -59,7 +59,7 @@ fn legacy_identity(cwd: &Path) -> Result<(String, Option<PathBuf>)> {
     }
     let mut marker = None;
     for p in cwd.ancestors() {
-        if io::info(&p.join(".git"))?.is_some() {
+        if io::has_git_marker(&p.join(".git"))? {
             marker = Some(p.to_owned());
             break;
         }

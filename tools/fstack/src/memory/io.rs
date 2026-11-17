@@ -159,6 +159,16 @@ pub fn info(path: &Path) -> Result<Option<fs::Metadata>> {
         Err(e) => Err(err(e)),
     }
 }
+pub fn has_git_marker(path: &Path) -> Result<bool> {
+    let Some(metadata) = info(path)? else {
+        return Ok(false);
+    };
+    if !metadata.is_dir() {
+        return Ok(true);
+    }
+    let mut entries = fs::read_dir(path).map_err(err)?;
+    Ok(entries.next().transpose().map_err(err)?.is_some())
+}
 pub fn directory(path: &Path, create: bool, _private: bool) -> Result<bool> {
     let mut parents = path.ancestors().collect::<Vec<_>>();
     parents.reverse();
@@ -435,7 +445,8 @@ pub fn state(dir: &Path, cwd: &Path, create: bool) -> Result<bool> {
 
 pub fn profile_state(dir: &Path, create: bool) -> Result<bool> {
     for p in dir.ancestors() {
-        if info(&p.join(".git"))?.is_some() {
+        let marker = p.join(".git");
+        if within(dir, &marker) || has_git_marker(&marker)? {
             return Err("Memory hook state must be outside the workspace".into());
         }
     }
