@@ -399,10 +399,26 @@ impl Release<'_> {
         Ok(outputs)
     }
     fn draft_target(&self, record: &Value, head: &str, number: &str) -> Result<String> {
-        let body = record["body"].as_str().unwrap_or("");
-        let marker = rx(r"(?m)^<!-- release-source:([a-f0-9]{40}) -->$");
-        let mut matches = marker.captures_iter(body);
-        let target = matches.next().ok_or("Нет ревизии черновика")?[1].to_owned();
+        use pulldown_cmark::{Event, Parser};
+
+        let body = record["body"].as_str().unwrap_or("").trim_end();
+        let marker = rx(r"\A<!-- release-source:([a-f0-9]{40}) -->\z");
+        let source = |line: &str| {
+            marker
+                .captures(line.trim_end())
+                .map(|capture| capture[1].to_owned())
+        };
+        let (notes, last_line) = body.rsplit_once('\n').unwrap_or(("", body));
+        let footer = source(last_line);
+        let mut matches = Parser::new(if footer.is_some() { notes } else { body }).filter_map(
+            |event| match event {
+                Event::Html(html) => source(&html),
+                _ => None,
+            },
+        );
+        let target = footer
+            .or_else(|| matches.next())
+            .ok_or("Нет ревизии черновика")?;
         if matches.next().is_some()
             || record["author"]["login"] != "github-actions[bot]"
             || record["draft"] != true

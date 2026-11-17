@@ -263,6 +263,12 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
     assert!(stub.calls.borrow().is_empty());
     assert!(!root.join("dist").exists());
     record["author"]["login"] = json!("github-actions[bot]");
+    let marker = format!("<!-- release-source:{sha} -->");
+    record["body"] = json!(format!("```html\n{marker}\n```\n\n{marker}"));
+    assert_eq!(release.draft_target(&record, &sha, "0.2.1").unwrap(), sha);
+    record["body"] = json!(format!("{marker}\n\n{marker}"));
+    assert!(release.draft_target(&record, &sha, "0.2.1").is_err());
+    record["body"] = json!(format!("{marker}\n\nДополнение к черновику"));
     release
         .finish("fixture/fstack", "0.2.1", &[record], &sha)
         .unwrap();
