@@ -27,7 +27,8 @@ codex plugin add fstack@fstack
 ```
 
 Одобри хуки fstack и открой чат. Плагин подберёт готовый бинарник для системы
-и проверит SHA-256. [Подробная установка и платформы](docs/installation.md).
+и проверит SHA-256. [Установка и платформы](docs/installation.md) ·
+[Диагностика с `fstack doctor`](docs/installation.md#диагностика-установки).
 
 ```text
 /faust-mode Разберись, почему публикация отчёта не завершается.

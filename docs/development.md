@@ -22,6 +22,10 @@ Silicon. Список платформ, флаги сборки и провер�
 в [workflow](../.github/workflows/release.yml). Для тестов памяти используй
 временные vault и профиль вне Git-дерева.
 
+`check-package` проверяет локальные Markdown-ссылки в инструкциях и документации.
+Для ссылок с `#` он ищет заголовок или HTML-якорь в целевом Markdown-файле.
+При ошибке выводит файл, ссылку и отсутствующий раздел.
+
 В Linux CI работают Python-проверки измерителя и runner без моделей.
 
 ```bash
@@ -33,14 +37,16 @@ python -m unittest discover -s tools/fstack/evals -p 'test_*.py' -v
 
 ```bash
 bin/fstack check-installation --codex /absolute/path/to/codex
+python tools/fstack/evals/check_doctor.py /absolute/path/to/package --codex /absolute/path/to/codex
 python tools/fstack/evals/check_skill_invocation.py /absolute/path/to/package --codex /absolute/path/to/codex
 ```
 
 Команда устанавливает пакет в отдельный временный профиль. Она сверяет
 версию и содержимое навыков, обнаружение хуков и загрузку конфигурации.
-Вторая команда устанавливает пакет в чистый профиль и направляет два запроса
+`check_doctor.py` проверяет отчёт и код выхода до установки, после установки
+и после одобрения хуков. `check_skill_invocation.py` направляет два запроса
 Codex в локальный HTTP-обработчик. Явный вызов `$fstack:review` должен передать
-полный текст навыка, обычный запрос пропускает его. В Linux CI обе проверки
+полный текст навыка, обычный запрос пропускает его. В Linux CI эти проверки
 выполняются с закреплённой версией CLI из workflow. Выполнение задач моделью
 проверяется отдельно.
 

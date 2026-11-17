@@ -84,6 +84,7 @@ jobs:
           git archive HEAD | tar -x -C "$package"
           cp "$BINARY" "$package/bin/fstack"
           "$BINARY" --package "$package" check-installation --codex "$codex"
+          python tools/fstack/evals/check_doctor.py "$package" --codex "$codex"
           python tools/fstack/evals/check_skill_invocation.py "$package" --codex "$codex"
       - name: Проверить зависимости Linux
         if: runner.os == 'Linux'
