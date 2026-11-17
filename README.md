@@ -116,7 +116,7 @@ codex plugin add fstack@fstack
 
 Codex с поддержкой автообновления Git marketplace получает пакет из `main`
 при запуске. Новый чат подготавливает подходящий бинарник.
-[Переход со старых установок и миграция профиля](docs/installation.md#обновление).
+[Обновление fstack](docs/installation.md#обновление).
 
 Runtime и проверки находятся в `tools/fstack/`. Для разработки нужны Rust 1.90.0
 и системный C/C++ toolchain. Бенчмарки используют Python 3.11+ без дополнительных
