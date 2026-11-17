@@ -53,7 +53,10 @@ struct Runtime {
 
 impl Runtime {
     fn new() -> Self {
-        let temporary = tempfile::tempdir().unwrap();
+        Self::from_temp(tempfile::tempdir().unwrap())
+    }
+
+    fn from_temp(temporary: tempfile::TempDir) -> Self {
         let directory = temporary.path().canonicalize().unwrap();
         let root = directory.join("relocated-package");
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -71,7 +74,9 @@ impl Runtime {
         #[cfg(unix)]
         let fixture_binary = fixture_binary();
         #[cfg(unix)]
-        fs::hard_link(&*fixture_binary, &binary).unwrap();
+        if fs::hard_link(&*fixture_binary, &binary).is_err() {
+            fs::copy(&*fixture_binary, &binary).unwrap();
+        }
         #[cfg(windows)]
         fs::copy(env!("CARGO_BIN_EXE_fstack"), &binary).unwrap();
         let codex_home = directory.join("codex");
@@ -296,6 +301,74 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn exec_command_skip_with_literal_paths_finishes_on_first_stop() {
+    let mut runtime = Runtime::from_temp(tempfile::tempdir_in("/tmp").unwrap());
+    let cache = runtime.runtime_cache();
+    fs::create_dir_all(&cache).unwrap();
+    let cached = cache.join(runtime.binary.file_name().unwrap());
+    fs::rename(&runtime.binary, &cached).unwrap();
+    runtime.binary = cached;
+    let vault = runtime.root.parent().unwrap().join("vault");
+    fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    runtime.json(
+        &[
+            "memory",
+            "init",
+            "--vault",
+            vault.to_str().unwrap(),
+            "--repo",
+            runtime.project.to_str().unwrap(),
+            "--project",
+            "exec",
+        ],
+        None,
+    );
+    let hooks: Value =
+        serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
+    let event = |name: &str, fields: Value| {
+        let mut payload = json!({"hook_event_name":name,"session_id":"exec-session","turn_id":"skip-turn",
+            "cwd":runtime.project,"permission_mode":"default","transcript_path":null});
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        runtime.hook(&hooks["hooks"][name][0]["hooks"][0], Some(payload))
+    };
+    let issued = event("UserPromptSubmit", json!({"prompt":"Объясни результат"}));
+    let context = issued["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    let token = regex::Regex::new(r"memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})")
+        .unwrap()
+        .captures(context)
+        .unwrap()
+        .get(1)
+        .unwrap()
+        .as_str();
+    let command = format!(
+        "{} --package {} memory stage --turn {token} --skip",
+        runtime.binary.display(),
+        runtime.root.display()
+    );
+    let receipt = runtime.run(Command::new("/bin/sh").args(["-c", &command]), None);
+    assert_eq!(receipt.trim(), "{\"staged\": true}");
+    let post = |command: &str| {
+        json!({"tool_name":"Bash","tool_use_id":"call-exec",
+        "tool_input":{"command":command},"tool_response":receipt})
+    };
+    event("PostToolUse", post(&format!("{command}; true")));
+    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 0);
+    event("PostToolUse", post(&command));
+    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
+    assert_eq!(event("Stop", json!({"stop_hook_active":false})), json!({}));
+    assert_eq!(
+        runtime.json(&["memory", "diagnostics"], None)["phase"],
+        "skipped"
+    );
 }
 
 #[test]

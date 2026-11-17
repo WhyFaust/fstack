@@ -57,21 +57,33 @@ fn shell_path(path: &Path) -> Result<String> {
     Ok(quoted)
 }
 
-fn strip_quoted_path<'a>(command: &'a str, path: &Path) -> Result<Option<&'a str>> {
-    let rest = command.strip_prefix(&shell_path(path)?);
+fn strip_command_path<'a>(command: &'a str, path: &Path) -> Result<Option<&'a str>> {
+    if let Some(rest) = command.strip_prefix(&shell_path(path)?) {
+        return Ok(Some(rest));
+    }
+    let path = path.to_str().ok_or("Invalid memory command path")?;
     #[cfg(windows)]
-    if rest.is_none() {
+    {
         let mut quoted = String::from("'");
-        for ch in path.to_str().ok_or("Invalid memory command path")?.chars() {
+        for ch in path.chars() {
             if matches!(ch, '\'' | '‘' | '’' | '‚' | '‛') {
                 quoted.push(ch);
             }
             quoted.push(ch);
         }
         quoted.push('\'');
-        return Ok(command.strip_prefix(&quoted));
+        Ok(command.strip_prefix(&quoted))
     }
-    Ok(rest)
+    #[cfg(not(windows))]
+    {
+        if path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/._-".contains(&byte))
+        {
+            return Ok(command.strip_prefix(path));
+        }
+        Ok(None)
+    }
 }
 
 fn strip_memory_invocation<'a>(command: &'a str, package: &Path) -> Result<Option<&'a str>> {
@@ -80,14 +92,14 @@ fn strip_memory_invocation<'a>(command: &'a str, package: &Path) -> Result<Optio
         return Ok(None);
     };
     let (binary, package) = command_paths(package)?;
-    let Some(mut rest) = strip_quoted_path(command, &binary)? else {
+    let Some(mut rest) = strip_command_path(command, &binary)? else {
         return Ok(None);
     };
     if let Some(package) = package {
         let Some(argument) = rest.strip_prefix(" --package ") else {
             return Ok(None);
         };
-        let Some(after_package) = strip_quoted_path(argument, package)? else {
+        let Some(after_package) = strip_command_path(argument, package)? else {
             return Ok(None);
         };
         rest = after_package;
