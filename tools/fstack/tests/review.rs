@@ -158,6 +158,50 @@ fn carries_one_finding_across_line_moves_and_checks_only_current_report() {
 }
 
 #[test]
+fn checks_required_ci_results_on_the_reviewed_head() {
+    let repo = Repo::new();
+    let base = repo.commit("base");
+    let head = repo.commit("change");
+    let plan = repo.plan(&base, &head, &Value::Null);
+    let review = repo.record(&plan, &Value::Null, outcome(vec![], vec![]));
+    let mut request = json!({"action":"check","revision":revision(&base, &head),
+    "report":review["report"],"verification":{
+        "required":["build","integration","lint","regression"],
+        "results":{
+            "build":{"head":head,"status":"success"},
+            "integration":{"head":head,"status":"skipped"},
+            "lint":{"head":base,"status":"success"},
+            "optional":{"head":head,"status":"failure"}
+        }
+    }});
+    let blocked = repo.request(request.clone());
+    assert_eq!(blocked.status.code(), Some(1));
+    let blocked: Value = serde_json::from_slice(&blocked.stdout)
+        .unwrap_or_else(|err| panic!("{err}: {}", String::from_utf8_lossy(&blocked.stderr)));
+    assert_eq!(blocked["status"], "checks_blocked");
+    assert_eq!(
+        blocked["blocked_checks"],
+        json!({
+            "integration":"not_successful", "lint":"stale", "regression":"missing"
+        })
+    );
+
+    for name in ["integration", "lint", "regression"] {
+        request["verification"]["results"][name] = json!({"head":head,"status":"success"});
+    }
+    let ready = repo.json(request.clone());
+    assert_eq!(ready["status"], "ready");
+    assert_eq!(ready["blocked_checks"], json!({}));
+
+    let updated = repo.commit("new change");
+    request["revision"] = revision(&base, &updated);
+    let stale = repo.request(request);
+    assert_eq!(stale.status.code(), Some(1));
+    let stale: Value = serde_json::from_slice(&stale.stdout).unwrap();
+    assert_eq!(stale["status"], "stale");
+}
+
+#[test]
 fn stops_after_three_snapshots_and_preserves_unresolved_findings_on_restart() {
     let repo = Repo::new();
     let base = repo.commit("base");

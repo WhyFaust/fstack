@@ -1,7 +1,7 @@
 use crate::{json, package::require, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -189,6 +189,45 @@ struct Outcome {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Verification {
+    required: BTreeSet<String>,
+    results: BTreeMap<String, CheckResult>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckResult {
+    head: String,
+    status: String,
+}
+
+impl Verification {
+    fn blocked_checks(&self, head: &str) -> Result<BTreeMap<&str, &'static str>> {
+        require(
+            !self.required.is_empty() && self.required.iter().all(|name| !name.trim().is_empty()),
+            "Укажи непустой список обязательных проверок CI и их имена",
+        )?;
+        let mut blocked = BTreeMap::new();
+        for name in &self.required {
+            let status = match self.results.get(name) {
+                None => "missing",
+                Some(result) => {
+                    validate_sha(&result.head).map_err(|error| format!("{name}: {error}"))?;
+                    match (result.head == head, result.status.as_str()) {
+                        (false, _) => "stale",
+                        (true, "success") => continue,
+                        (true, _) => "not_successful",
+                    }
+                }
+            };
+            blocked.insert(name.as_str(), status);
+        }
+        Ok(blocked)
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
     Plan {
@@ -207,6 +246,7 @@ enum Request {
     Check {
         revision: Revision,
         report: Report,
+        verification: Option<Verification>,
     },
 }
 
@@ -411,7 +451,11 @@ fn execute(request: Request) -> Result<Value> {
             Next::Review(expected) if expected == plan => record(plan, previous, outcome),
             _ => Err("Снимок или план изменился. Сначала запроси следующий шаг".into()),
         },
-        Request::Check { revision, report } => {
+        Request::Check {
+            revision,
+            report,
+            verification,
+        } => {
             report.validate()?;
             let base = merge_base(&revision)?;
             let status = if report.revision == revision && report.merge_base == base {
@@ -419,10 +463,16 @@ fn execute(request: Request) -> Result<Value> {
             } else {
                 "stale"
             };
-            Ok(
-                json!({"status": status, "revision": revision, "report_revision": report.revision,
-                "round": report.round, "open": report.open()}),
-            )
+            let mut result = json!({"status": status, "revision": revision,
+                "report_revision": report.revision, "round": report.round, "open": report.open()});
+            if let Some(verification) = verification {
+                let blocked = verification.blocked_checks(&revision.head)?;
+                if status == "ready" && !blocked.is_empty() {
+                    result["status"] = json!("checks_blocked");
+                }
+                result["blocked_checks"] = json!(blocked);
+            }
+            Ok(result)
         }
     }
 }
