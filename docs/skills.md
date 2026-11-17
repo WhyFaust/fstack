@@ -10,13 +10,13 @@
 | [route](../skills/route/SKILL.md) | Один основной метод и необходимые предметные дополнения |
 | [how](../skills/how/SKILL.md) | Исследование кода по исходным данным |
 | [audit](../skills/audit/SKILL.md) | Аудит и приоритетный backlog улучшений |
-| [scope](../skills/scope/SKILL.md) | План выбранного улучшения и сверка его актуальности |
+| [scope](../skills/scope/SKILL.md) | Составить или обновить план одного выбранного улучшения |
 | [implement](../skills/implement/SKILL.md) | Реализация законченного изменения |
 | [skill](../skills/skill/SKILL.md) | Создание, перенос и улучшение исходников навыков |
 | [debug](../skills/debug/SKILL.md) | Причина сбоя и проверка исправления |
 | [refactor](../skills/refactor/SKILL.md) | Упрощение кода с сохранением контрактов |
 | [review](../skills/review/SKILL.md) | Ревью изменения и повторная проверка замечаний по коммитам |
-| [verify](../skills/verify/SKILL.md) | Проверки и доказательства готовности |
+| [verify](../skills/verify/SKILL.md) | Определить критерии приёмки и оценить, что подтверждено проверками |
 | [unslop](../skills/unslop/SKILL.md) | Удаление шаблонности ИИ из текста в любом результате работы |
 
 ## Инженерные решения
@@ -40,12 +40,12 @@
 | Навык | Когда применять |
 | --- | --- |
 | [faust-mode](../skills/faust-mode/SKILL.md) | Включение полного процесса на весь чат до `/faust-mode-off` |
-| [plan](../skills/plan/SKILL.md) | План законченных этапов, зависимостей и проверок |
+| [plan](../skills/plan/SKILL.md) | Установить порядок зависимых этапов и условия перехода между ними |
 | [delegate](../skills/delegate/SKILL.md) | Поручения, владение и завершение подагентов |
 | [checkpoint](../skills/checkpoint/SKILL.md) | Сохранение проверяемой точки продолжения |
 | [resume](../skills/resume/SKILL.md) | Продолжение задачи со сверкой живого состояния |
 | [test-setup](../skills/test-setup/SKILL.md) | Подготовка воспроизводимой проверки проекта |
-| [test](../skills/test/SKILL.md) | Проверка проекта через реальный сценарий |
+| [test](../skills/test/SKILL.md) | Запустить пользовательский сценарий и зафиксировать фактическое поведение |
 | [test-update](../skills/test-update/SKILL.md) | Поддержание актуальности проектной проверки |
 
 ## PR и MR
