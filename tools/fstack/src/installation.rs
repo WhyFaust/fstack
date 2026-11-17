@@ -4,44 +4,70 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
+pub(crate) mod doctor;
+
+fn default_executable() -> OsString {
+    #[cfg(windows)]
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path).filter(|dir| !dir.as_os_str().is_empty()) {
+            for name in ["codex.exe", "codex.cmd", "codex.bat"] {
+                let candidate = directory.join(name);
+                if !candidate.is_file() {
+                    continue;
+                }
+                if let Ok(path) = std::path::absolute(candidate) {
+                    return path.into_os_string();
+                }
+            }
+        }
+    }
+    OsString::from("codex")
+}
+
 struct Client {
     child: Child,
     messages: Receiver<std::result::Result<Value, String>>,
+    errors: fs::File,
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
+        drop(self.child.stdin.take());
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
 impl Client {
-    fn start(executable: &OsString, home: &Path, directory: &Path) -> Result<Self> {
-        let log = fs::File::create(directory.join("app-server.log")).map_err(|e| e.to_string())?;
-        let mut child = Command::new(executable)
-            .args([
-                "app-server",
-                "--stdio",
+    fn start(executable: &OsString, home: Option<&Path>, directory: &Path) -> Result<Self> {
+        let mut command = Command::new(executable);
+        command.args([
+            "app-server",
+            "--stdio",
+            "-c",
+            "check_for_update_on_startup=false",
+        ]);
+        if let Some(home) = home {
+            command.env("CODEX_HOME", home).args([
                 "--strict-config",
                 "--disable",
                 "apps",
                 "--disable",
                 "remote_plugin",
-                "-c",
-                "check_for_update_on_startup=false",
-            ])
-            .env("CODEX_HOME", home)
+            ]);
+        }
+        let errors = tempfile::tempfile().map_err(|e| e.to_string())?;
+        let mut child = command
             .current_dir(directory)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(log)
+            .stderr(errors.try_clone().map_err(|e| e.to_string())?)
             .spawn()
             .map_err(|e| e.to_string())?;
         let stdout = child.stdout.take().ok_or("Нет stdout app-server")?;
@@ -56,7 +82,34 @@ impl Client {
                 }
             }
         });
-        Ok(Self { child, messages })
+        Ok(Self {
+            child,
+            messages,
+            errors,
+        })
+    }
+
+    fn transport_error(&mut self, method: &str, cause: impl std::fmt::Display) -> String {
+        let mut message = format!("{method}: {cause}");
+        if let Ok(Some(status)) = self.child.try_wait() {
+            message.push_str(&format!(" (Codex: {status})"));
+        }
+        let mut tail = Vec::new();
+        if let Ok(meta) = self.errors.metadata() {
+            let start = meta.len().saturating_sub(4096);
+            if self.errors.seek(SeekFrom::Start(start)).is_ok()
+                && Read::by_ref(&mut self.errors)
+                    .take(4096)
+                    .read_to_end(&mut tail)
+                    .is_ok()
+            {
+                let text = String::from_utf8_lossy(&tail);
+                if !text.trim().is_empty() {
+                    message.push_str(&format!("\n{}", text.trim()));
+                }
+            }
+        }
+        message
     }
 
     fn send(&mut self, value: Value) -> Result<()> {
@@ -66,14 +119,22 @@ impl Client {
             .map_err(|e| e.to_string())
     }
 
+    fn initialize(&mut self, name: &str) -> Result<Value> {
+        let info = self.request(1, "initialize", json!({"clientInfo":{"name":name,"version":"1.0"},"capabilities":{"experimentalApi":true,"explicitGatewayOauth":true}}))?;
+        self.send(json!({"method":"initialized"}))?;
+        Ok(info)
+    }
+
     fn request(&mut self, id: u64, method: &str, params: Value) -> Result<Value> {
-        self.send(json!({"id":id,"method":method,"params":params}))?;
+        self.send(json!({"id":id,"method":method,"params":params}))
+            .map_err(|e| self.transport_error(method, e))?;
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let value = self
                 .messages
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .map_err(|e| format!("{method}: {e}"))??;
+                .map_err(|e| self.transport_error(method, e))?
+                .map_err(|e| self.transport_error(method, e))?;
             if value["id"] == id {
                 require(
                     value.get("error").is_none(),
@@ -114,7 +175,6 @@ fn command(
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    use std::io::{Read, Seek};
     let mut output = output;
     let mut errors = errors;
     output.rewind().map_err(|e| e.to_string())?;
@@ -159,7 +219,7 @@ fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
 
 pub fn run(args: &[OsString], root: &Path) -> Result<()> {
     let executable = match args {
-        [] => OsString::from("codex"),
+        [] => default_executable(),
         [flag, path] if flag == "--codex" => path.clone(),
         _ => return Err("check-installation [--codex PATH]".into()),
     };
@@ -239,9 +299,8 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
             .all(|path| !home.join(path).exists()),
         "Пакет создал пользовательские инструкции или агентов",
     )?;
-    let mut client = Client::start(&executable, &home, directory)?;
-    client.request(1, "initialize", json!({"clientInfo":{"name":"fstack-installation-check","version":"1.0"},"capabilities":{"experimentalApi":true,"explicitGatewayOauth":true}}))?;
-    client.send(json!({"method":"initialized"}))?;
+    let mut client = Client::start(&executable, Some(&home), directory)?;
+    client.initialize("fstack-installation-check")?;
     let skills = client.request(
         2,
         "skills/list",
@@ -273,13 +332,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         .filter_map(|v| v["name"].as_str().map(str::to_owned))
         .collect();
     require(
-        actual == expected
-            && skills.iter().all(|v| {
-                v["enabled"] == true
-                    && v["interface"]["defaultPrompt"].as_str().is_some_and(|p| {
-                        p.contains(&format!("${}", v["name"].as_str().unwrap_or("")))
-                    })
-            }),
+        actual == expected && skills.iter().all(|v| v["enabled"] == true),
         "Обнаруженные навыки не совпадают с пакетом",
     )?;
     let hooks = flatten(hooks, "hooks")?;

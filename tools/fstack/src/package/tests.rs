@@ -41,6 +41,12 @@ fn frontmatter_validates_types_and_name() {
     let base = Fixture::metadata();
     f.write(&base);
     assert_eq!(metadata(&f.skill).unwrap(), base);
+    for field in ["name", "description"] {
+        let mut value = base.clone();
+        value.as_object_mut().unwrap().remove(field);
+        f.write(&value);
+        assert!(metadata(&f.skill).unwrap_err().contains(field));
+    }
     for changes in [
         json!({"name":"example--invalid"}),
         json!({"name":"another"}),
@@ -52,7 +58,7 @@ fn frontmatter_validates_types_and_name() {
         json!({"compatibility":"x".repeat(501)}),
         json!({"allowed-tools":[]}),
         json!({"metadata":{"author":"WhyFaust","version":2}}),
-        json!({"metadata":{"author":"another","source":"https://github.com/WhyFaust/fstack"}}),
+        json!({"disable-model-invocation":"true"}),
     ] {
         let mut value = base.clone();
         for (key, v) in changes.as_object().unwrap() {
@@ -74,6 +80,21 @@ fn frontmatter_validates_types_and_name() {
 }
 
 #[test]
+fn frontmatter_requires_delimiter_lines() {
+    let f = Fixture::new();
+    let header = "---\r\nname: example\r\ndescription: Текст --- примера.\r\n";
+    fs::write(&f.skill, format!("{header}---\r\nТекст\r\n")).unwrap();
+    assert_eq!(
+        metadata(&f.skill).unwrap()["description"],
+        "Текст --- примера."
+    );
+    fs::write(&f.skill, format!("{header}--- текст")).unwrap();
+    assert!(metadata(&f.skill)
+        .unwrap_err()
+        .contains("Отсутствует frontmatter"));
+}
+
+#[test]
 fn skill_ui_validates_types_limits_policy_and_dependencies() {
     let f = Fixture::new();
     let path = f.folder.join("openai.yaml");
@@ -87,6 +108,7 @@ fn skill_ui_validates_types_limits_policy_and_dependencies() {
         skill_ui_file(&f.root, &f.folder, "example", &path)
     };
     validate(&base).unwrap();
+    validate(&json!({"interface":{"display_name":"Пример"}})).unwrap();
     for policy in [
         json!({}),
         json!({"allow_implicit_invocation":true}),
@@ -214,11 +236,60 @@ fn resources_allow_shared_files_and_reject_missing_escape() {
         fs::write(&f.skill, format!("[Resource]({target})")).unwrap();
         assert!(resources(&f.folder, &f.root).is_err());
     }
-    fs::write(f.folder.join("space name.md"), "present").unwrap();
+    fs::write(f.folder.join("space name.md"), "## Section\n").unwrap();
     fs::write(&f.skill,"[Present](space%20name.md#section)\n`[Example](missing.md)`\n~~~~md\n[Example](missing.md)\n~~~~\n").unwrap();
     resources(&f.folder, &f.root).unwrap();
     fs::write(&f.skill, "[Missing](space%20missing.md)").unwrap();
     assert!(resources(&f.folder, &f.root).is_err());
+}
+
+#[test]
+fn packaged_markdown_links_resolve_rendered_sections() {
+    let f = Fixture::new();
+    let guide = f.folder.join("Краткий обзор.md");
+    fs::write(
+        &guide,
+        concat!(
+            "## Шаг `A_B`: [API](#шаг-a_b-api)\n",
+            "Шаг `A_B`: API\n------------\n",
+            "## Шаг A_B API-1\n",
+            "## Шаг A_B API\n",
+            "## 東京 — café!\n",
+            "<a name=\"manual-id\"></a>\n",
+            "<span id=\"A&amp;B\"></span>\n",
+            "<!-- <a name=\"hidden\"></a> -->\n",
+            "\n```md\n## Только пример\n```\n",
+        ),
+    )
+    .unwrap();
+    let dest = "Краткий%20обзор.md";
+    fs::write(
+        &f.skill,
+        format!(
+            "# Местный заголовок\n[Здесь](#местный-заголовок)\n\n\
+         [Первый]({dest}#шаг-a_b-api) [Повтор]({dest}#шаг-a_b-api-1)\n\
+         [Коллизия]({dest}#шаг-a_b-api-1-1) [Следующий]({dest}#шаг-a_b-api-2)\n\
+         [Unicode][section] [HTML]({dest}#manual-id)\n\n\
+         [section]: <Краткий обзор.md#東京--caf%C3%A9> \"Раздел\"\n\n\
+         <a href=\"{dest}#a%26b\">Раздел HTML</a>\n\n\
+         `[Образец](#нет)`\n\n~~~~\n[Образец](нет.md#нет)\n~~~~\n"
+        ),
+    )
+    .unwrap();
+    resources(&f.folder, &f.root).unwrap();
+    for target in ["#несуществующий", "Краткий%20обзор.md#только-пример"]
+    {
+        fs::write(&f.skill, format!("[Раздел][id]\n\n[id]: {target}")).unwrap();
+        let error = resources(&f.folder, &f.root).unwrap_err();
+        assert!(
+            error.contains("SKILL.md") && error.contains(target),
+            "{error}"
+        );
+    }
+    fs::write(&f.skill, format!("<a href=\"{dest}#hidden\">Проверка</a>")).unwrap();
+    assert!(resources(&f.folder, &f.root)
+        .unwrap_err()
+        .contains("#hidden"));
 }
 
 #[test]
@@ -296,28 +367,6 @@ fn nested_resource_directory_links_are_checked_after_valid_files() {
     fs::remove_dir(&link).unwrap();
 }
 
-#[test]
-fn structure_ignores_fences_and_requires_order_and_content() {
-    let f = Fixture::new();
-    f.write(&Fixture::metadata());
-    let header = read(&f.skill).unwrap();
-    let sections="## Вход и границы\nВход.\n## Порядок работы\n```md\n## Чужой заголовок\n```\n## Проверка и результат\nРезультат.\n";
-    fs::write(&f.skill, format!("{header}{sections}")).unwrap();
-    skill_structure(&f.skill).unwrap();
-    for body in [
-        sections.replace("## Вход и границы", "## Иной раздел"),
-        sections.replace("Результат.", ""),
-        format!("{sections}# Второй заголовок\n"),
-        sections.replace("## Порядок работы", "## Проверка и результат"),
-    ] {
-        fs::write(&f.skill, format!("{header}{body}")).unwrap();
-        assert!(skill_structure(&f.skill).is_err());
-    }
-    let english = f.folder.join("SKILL_en.md");
-    fs::write(&english,format!("{header}## Inputs and scope\nInput.\n## Procedure\nDo it.\n## Verification and result\nCheck.\n")).unwrap();
-    skill_structure(&english).unwrap();
-}
-
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -343,6 +392,66 @@ fn copy_tree(from: &Path, to: &Path) {
         }
     }
 }
+
+#[test]
+fn complete_package_accepts_minimal_skills_with_explicit_invocation() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    let folder = package.join("skills/no-comments");
+    let skill = folder.join("SKILL.md");
+    let ui = folder.join("agents/openai.yaml");
+    let header = "---\nname: no-comments\ndescription: Проверяет код.\n";
+    let body = "---\n\nПроверь код.\n";
+    let policy = "policy:\n  allow_implicit_invocation: false\n";
+
+    fs::write(
+        &skill,
+        format!("{header}disable-model-invocation: true\n{body}"),
+    )
+    .unwrap();
+    fs::write(&ui, policy).unwrap();
+    check(&package).unwrap();
+
+    for empty in ["", "\r\n \t\r\n"] {
+        fs::write(
+            &skill,
+            format!("{header}disable-model-invocation: true\n---{empty}"),
+        )
+        .unwrap();
+        assert!(check(&package)
+            .unwrap_err()
+            .contains("отсутствует текст инструкции"));
+    }
+
+    for value in ["false", "\"true\""] {
+        fs::write(
+            &skill,
+            format!("{header}disable-model-invocation: {value}\n{body}"),
+        )
+        .unwrap();
+        assert!(check(&package)
+            .unwrap_err()
+            .contains("disable-model-invocation"));
+    }
+
+    fs::write(&skill, format!("{header}{body}")).unwrap();
+    assert!(check(&package)
+        .unwrap_err()
+        .contains("disable-model-invocation"));
+    fs::write(
+        &skill,
+        format!("{header}disable-model-invocation: true\n{body}"),
+    )
+    .unwrap();
+    for value in ["true", "\"false\"", "null"] {
+        fs::write(&ui, policy.replace("false", value)).unwrap();
+        assert!(check(&package).unwrap_err().contains("openai.yaml"));
+    }
+    fs::remove_file(&ui).unwrap();
+    assert!(check(&package).unwrap_err().contains("openai.yaml"));
+}
+
 #[test]
 fn complete_package_rejects_broken_release_contracts() {
     let temp = tempfile::tempdir().unwrap();
@@ -418,6 +527,44 @@ fn package_rejects_instructions_for_a_removed_skill() {
     let error = check(&package).unwrap_err();
     assert!(error.contains("obsolete.md") && error.contains("отсутствует навык profile"));
 }
+
+#[test]
+fn check_package_follows_links_in_documentation_and_skill_resources() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    for path in [
+        "work/notes.md",
+        "tools/fstack/target/private.md",
+        ".codex/local.md",
+    ] {
+        let path = package.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "[Черновик](#нет)").unwrap();
+    }
+    check(&package).unwrap();
+    for relative in [
+        "README.md",
+        "AGENTS.md",
+        "docs/examples.md",
+        "skills/delegate/worker.md",
+    ] {
+        let path = package.join(relative);
+        let original = read(&path).unwrap();
+        fs::write(
+            &path,
+            format!("{original}\n\n[Правило](/docs/skills.md#исчезнувший-раздел)\n"),
+        )
+        .unwrap();
+        let error = check(&package).unwrap_err();
+        assert!(
+            error.contains(path.file_name().unwrap().to_str().unwrap())
+                && error.contains("#исчезнувший-раздел"),
+            "{error}"
+        );
+        fs::write(&path, original).unwrap();
+    }
+}
 #[cfg(windows)]
 #[test]
 fn case_variants_cannot_skip_validation() {
@@ -430,7 +577,7 @@ fn case_variants_cannot_skip_validation() {
     fs::rename(&skill, &interim).unwrap();
     let lower = skill.with_file_name("skill.md");
     fs::rename(interim, &lower).unwrap();
-    fs::write(&lower, original.replace("license: MIT", "license: 123")).unwrap();
+    fs::write(&lower, original.replace("name: no-comments", "name: 123")).unwrap();
     assert!(check(&package).is_err());
     fs::write(&lower, original).unwrap();
     check(&package).unwrap();
@@ -479,4 +626,8 @@ fn catalog_links_must_open_the_named_skill() {
     assert!(check_catalog(listing, &skills).is_ok());
     assert!(check_catalog(&listing.replace("read/SKILL.md", "write/SKILL.md"), &skills).is_err());
     assert!(check_catalog(&format!("{listing}\n{listing}"), &skills).is_err());
+    let linked = "| [read](../skills/read/SKILL.md) | Чтение |\n| [write](../skills/write/SKILL.md) | Запись |";
+    assert!(check_catalog(linked, &skills).is_ok());
+    assert!(check_catalog(&linked.replace("read/SKILL.md", "write/SKILL.md"), &skills).is_err());
+    assert!(check_catalog(&format!("{linked}\n{linked}"), &skills).is_err());
 }

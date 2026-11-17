@@ -460,10 +460,9 @@ pub fn windows_info(path: &Path, directory: bool) -> Result<(u32, u64, u32)> {
 
 #[cfg(windows)]
 pub fn windows_info_if_present(path: &Path, directory: bool) -> Result<Option<(u32, u64, u32)>> {
-    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     };
     let mut opts = OpenOptions::new();
     opts.read(true).custom_flags(
@@ -479,6 +478,16 @@ pub fn windows_info_if_present(path: &Path, directory: bool) -> Result<Option<(u
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(err(error)),
     };
+    windows_info_by_handle(&f)
+}
+
+#[cfg(windows)]
+pub(super) fn windows_info_by_handle(f: &File) -> Result<Option<(u32, u64, u32)>> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileStandardInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_STANDARD_INFO,
+    };
     let mut metadata = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
     if unsafe { GetFileInformationByHandle(f.as_raw_handle(), metadata.as_mut_ptr()) } == 0 {
         return Err("Cannot inspect physical memory file".into());
@@ -486,6 +495,24 @@ pub fn windows_info_if_present(path: &Path, directory: bool) -> Result<Option<(u
     let m = unsafe { metadata.assume_init() };
     if m.dwFileAttributes & 0x400 != 0 {
         return Err("Reparse points are not allowed in memory paths".into());
+    }
+    if m.nNumberOfLinks == 0 {
+        // SQLite can unlink its rollback journal after we open it but before we inspect it.
+        let mut standard = FILE_STANDARD_INFO::default();
+        if unsafe {
+            GetFileInformationByHandleEx(
+                f.as_raw_handle(),
+                FileStandardInfo,
+                (&raw mut standard).cast(),
+                size_of::<FILE_STANDARD_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err("Cannot inspect physical memory file".into());
+        }
+        if standard.DeletePending && standard.NumberOfLinks == 0 && !standard.Directory {
+            return Ok(None);
+        }
     }
     Ok(Some((
         m.dwVolumeSerialNumber,

@@ -1157,6 +1157,29 @@ fn legacy_tombstones_respect_new_confirmation_without_rewriting() {
     assert!(v["supersedes"].is_null());
     assert!(f.store.get(&f.binding, id(&first)).is_ok());
 }
+#[cfg(windows)]
+#[test]
+fn windows_pending_journal_distinguishes_commit_from_hard_links() {
+    let f = Fixture::new("auto", "pilot");
+    f.token("seed");
+    let db = rusqlite::Connection::open(f.store.state.join("pending.sqlite3")).unwrap();
+    let journal = f.store.state.join("pending.sqlite3-journal");
+    db.execute_batch("BEGIN IMMEDIATE; INSERT INTO diagnostics VALUES ('probe','test',0)")
+        .unwrap();
+    let handle = fs::File::open(&journal).unwrap();
+    assert_eq!(io::windows_info_by_handle(&handle).unwrap().unwrap().2, 1);
+    db.execute_batch("COMMIT").unwrap();
+    assert_eq!(io::windows_info_by_handle(&handle).unwrap(), None);
+    drop(handle);
+
+    db.execute_batch("BEGIN IMMEDIATE; DELETE FROM diagnostics WHERE scope='probe'")
+        .unwrap();
+    fs::hard_link(&journal, f.base.join("second-link")).unwrap();
+    assert_eq!(
+        f.pending().diagnostics("probe").unwrap_err(),
+        "Unsafe pending memory journal"
+    );
+}
 #[test]
 fn project_lock_does_not_hold_pending_database_during_stop() {
     let f = Fixture::new("auto", "pilot");

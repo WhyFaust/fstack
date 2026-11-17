@@ -1,7 +1,2 @@
-interface:
-  display_name: Реализация изменения
-  short_description: Реализация законченного изменения
-  default_prompt: Используй $fstack:implement, чтобы реализовать требуемое поведение и проверить критерии
-    приёмки.
 policy:
   allow_implicit_invocation: false

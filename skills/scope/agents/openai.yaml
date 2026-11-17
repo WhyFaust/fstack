@@ -1,6 +1,2 @@
-interface:
-  display_name: План выбранного улучшения
-  short_description: Исполнимый план выбранного улучшения
-  default_prompt: Используй $fstack:scope, чтобы подготовить или актуализировать один план по выбранному улучшению.
 policy:
   allow_implicit_invocation: false

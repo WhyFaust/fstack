@@ -1,6 +1,2 @@
-interface:
-  display_name: Слияние проверенной ревизии PR или MR
-  short_description: Слияние проверенной ревизии PR или MR
-  default_prompt: "Используй $fstack:merge, чтобы проверить готовность текущей ревизии PR/MR и выполнить слияние при наличии разрешения."
 policy:
   allow_implicit_invocation: false

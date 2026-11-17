@@ -18,6 +18,22 @@ macro_rules! rx {
     }};
 }
 
+mod markdown;
+
+const EXCLUDED_DIRECTORIES: &[&str] = &[
+    ".git",
+    ".codex",
+    ".aws",
+    ".ssh",
+    ".venv",
+    "work",
+    "dist",
+    "target",
+    "bin",
+    "__pycache__",
+    "node_modules",
+];
+
 pub(crate) fn require(ok: bool, message: impl Into<String>) -> Result<()> {
     if ok {
         Ok(())
@@ -117,7 +133,7 @@ fn walk(path: &Path, excluded: &[&str], result: &mut Vec<PathBuf>) -> Result<()>
         if child
             .file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(|n| excluded.contains(&n))
+            .is_some_and(|name| excluded_dir(name, excluded))
         {
             continue;
         }
@@ -128,6 +144,16 @@ fn walk(path: &Path, excluded: &[&str], result: &mut Vec<PathBuf>) -> Result<()>
         }
     }
     Ok(())
+}
+
+fn excluded_dir(name: &str, excluded: &[&str]) -> bool {
+    excluded.iter().any(|entry| {
+        if cfg!(windows) {
+            name.eq_ignore_ascii_case(entry)
+        } else {
+            name == *entry
+        }
+    })
 }
 
 pub(crate) fn descendants(path: &Path, excluded: &[&str]) -> Result<Vec<PathBuf>> {
@@ -161,22 +187,12 @@ fn skill_markdown(path: &Path) -> bool {
         })
 }
 
-fn frontmatter(path: &Path) -> Result<Value> {
-    let text = read(path)?;
-    let mut parts = text.splitn(3, "---");
-    require(
-        parts.next().is_some_and(|s| s.trim().is_empty()),
-        "Отсутствует frontmatter",
-    )?;
-    let body = parts.next().ok_or("Отсутствует frontmatter")?;
-    require(parts.next().is_some(), "Отсутствует frontmatter")?;
-    let value = yaml(body)?;
-    require(value.is_object(), "Frontmatter должен быть объектом")?;
-    Ok(value)
-}
-
-pub(crate) fn metadata(path: &Path) -> Result<Value> {
-    let data = frontmatter(path)?;
+fn parse_skill<'a>(path: &Path, text: &'a str) -> Result<(Value, &'a str)> {
+    let header = rx!(r"(?m)\A---\r?\n((?s:.*?))^---\r?$")
+        .captures(text)
+        .ok_or("Отсутствует frontmatter")?;
+    let data = yaml(&header[1])?;
+    require(data.is_object(), "Frontmatter должен быть объектом")?;
     let name = string(&data, "name")?;
     require(valid_skill_name(name), "Некорректное имя навыка")?;
     require(
@@ -192,9 +208,9 @@ pub(crate) fn metadata(path: &Path) -> Result<Value> {
         "description должен содержать 1–1024 символа",
     )?;
     for field in ["license", "compatibility", "allowed-tools"] {
-        if field == "license" || data.get(field).is_some() {
+        if let Some(value) = data.get(field) {
             require(
-                nonempty(&data[field]),
+                nonempty(value),
                 format!("{field} должен быть непустой строкой"),
             )?;
         }
@@ -205,18 +221,25 @@ pub(crate) fn metadata(path: &Path) -> Result<Value> {
             "compatibility длиннее 500 символов",
         )?;
     }
-    let fields = data["metadata"]
-        .as_object()
-        .ok_or("metadata должен быть строковым словарём")?;
-    require(
-        fields.values().all(Value::is_string),
-        "metadata должен быть строковым словарём",
-    )?;
-    require(
-        data["metadata"]["author"] == "WhyFaust"
-            && data["metadata"]["source"] == "https://github.com/WhyFaust/fstack",
-        "Отсутствуют автор или источник",
-    )?;
+    if let Some(value) = data.get("metadata") {
+        require(
+            value
+                .as_object()
+                .is_some_and(|fields| fields.values().all(Value::is_string)),
+            "metadata должен быть строковым словарём",
+        )?;
+    }
+    if let Some(value) = data.get("disable-model-invocation") {
+        require(
+            value.is_boolean(),
+            "disable-model-invocation должен быть булевым значением",
+        )?;
+    }
+    Ok((data, &text[header.get(0).unwrap().end()..]))
+}
+
+pub(crate) fn metadata(path: &Path) -> Result<Value> {
+    let (data, _) = parse_skill(path, &read(path)?)?;
     Ok(data)
 }
 
@@ -258,16 +281,22 @@ fn skill_ui_file(root: &Path, folder: &Path, name: &str, path: &Path) -> Result<
         )?;
     }
     let interface = &ui["interface"];
-    metadata_text(interface, "display_name", 64)?;
-    let description = metadata_text(interface, "short_description", 64)?;
-    require(description.chars().count() >= 25, "Короткое UI description")?;
-    let prompt = metadata_text(interface, "default_prompt", 1024)?;
-    require(
-        rx!(r"\$fstack:([a-z0-9-]+)")
-            .captures_iter(&prompt)
-            .any(|entry| &entry[1] == name),
-        "default_prompt без полного имени навыка",
-    )?;
+    if interface.get("display_name").is_some() {
+        metadata_text(interface, "display_name", 64)?;
+    }
+    if interface.get("short_description").is_some() {
+        let description = metadata_text(interface, "short_description", 64)?;
+        require(description.chars().count() >= 25, "Короткое UI description")?;
+    }
+    if interface.get("default_prompt").is_some() {
+        let prompt = metadata_text(interface, "default_prompt", 1024)?;
+        require(
+            rx!(r"\$fstack:([a-z0-9-]+)")
+                .captures_iter(&prompt)
+                .any(|entry| &entry[1] == name),
+            "default_prompt без полного имени навыка",
+        )?;
+    }
     if let Some(value) = ui["policy"].get("allow_implicit_invocation") {
         require(
             value.is_null() || value.is_boolean(),
@@ -362,136 +391,6 @@ fn skill_ui(root: &Path, folder: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn skill_structure(path: &Path) -> Result<()> {
-    let text = read(path)?;
-    let body = text
-        .splitn(3, "---")
-        .nth(2)
-        .ok_or("Отсутствует frontmatter")?;
-    let english = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|name| {
-            if cfg!(windows) {
-                name.eq_ignore_ascii_case("SKILL_en.md")
-            } else {
-                name == "SKILL_en.md"
-            }
-        });
-    let expected = if english {
-        ["Inputs and scope", "Procedure", "Verification and result"]
-    } else {
-        ["Вход и границы", "Порядок работы", "Проверка и результат"]
-    };
-    let mut fence: Option<String> = None;
-    let mut title = false;
-    let mut sections = Vec::new();
-    let mut content = Vec::new();
-    for line in body.lines() {
-        if let Some(marker) = rx!(r"^ {0,3}(`{3,}|~{3,})").captures(line) {
-            let token = &marker[1];
-            match &fence {
-                None => fence = Some(token.to_string()),
-                Some(open)
-                    if open.as_bytes()[0] == token.as_bytes()[0] && token.len() >= open.len() =>
-                {
-                    fence = None
-                }
-                _ => (),
-            }
-            continue;
-        }
-        if fence.is_some() {
-            if !line.trim().is_empty() {
-                if let Some(present) = content.last_mut() {
-                    *present = true;
-                }
-            }
-            continue;
-        }
-        if let Some(heading) = rx!(r"^ {0,3}(#{1,2})(?:[ \t]+(.*)|$)").captures(line) {
-            let name = heading.get(2).map_or("", |m| m.as_str()).trim();
-            let name = rx!(r"[ \t]+#+[ \t]*$").replace(name, "");
-            if heading[1].len() == 1 {
-                require(
-                    !title && sections.is_empty() && !name.is_empty(),
-                    "Ожидался один заголовок H1 перед разделами",
-                )?;
-                title = true;
-            } else {
-                require(title, "Перед разделами требуется H1")?;
-                sections.push(name.into_owned());
-                content.push(false);
-            }
-        } else if !line.trim().is_empty() {
-            if let Some(present) = content.last_mut() {
-                *present = true;
-            }
-        }
-    }
-    require(
-        title && sections == expected && content.iter().all(|present| *present),
-        format!(
-            "{}: требуется H1 и три непустых раздела шаблона",
-            path.display()
-        ),
-    )
-}
-
-fn strip_inline(line: &str) -> String {
-    let mut rest = line;
-    let mut output = String::new();
-    while let Some(start) = rest.find('`') {
-        output.push_str(&rest[..start]);
-        let ticks = rest[start..].bytes().take_while(|b| *b == b'`').count();
-        let matched = (1..=ticks).rev().find_map(|size| {
-            rest[start + size..]
-                .find(&rest[start..start + size])
-                .map(|end| start + size + end + size)
-        });
-        if let Some(end) = matched {
-            rest = &rest[end..];
-        } else {
-            output.push_str(&rest[start..start + ticks]);
-            rest = &rest[start + ticks..];
-        }
-    }
-    output.push_str(rest);
-    output
-}
-
-fn markdown_targets(text: &str) -> Vec<String> {
-    let mut fence: Option<String> = None;
-    let mut targets = Vec::new();
-    for line in text.split([
-        '\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{2028}',
-        '\u{2029}',
-    ]) {
-        if let Some(marker) = rx!(r"^ {0,3}(`{3,}|~{3,})").captures(line) {
-            let token = &marker[1];
-            match &fence {
-                None => fence = Some(token.to_string()),
-                Some(open)
-                    if open.as_bytes()[0] == token.as_bytes()[0] && token.len() >= open.len() =>
-                {
-                    fence = None
-                }
-                _ => (),
-            }
-            continue;
-        }
-        if fence.is_none() {
-            let prose = strip_inline(line);
-            targets.extend(
-                rx!(r"\]\(([^)]+)\)")
-                    .captures_iter(&prose)
-                    .map(|c| c[1].to_string()),
-            );
-        }
-    }
-    targets
-}
-
 fn unquote(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut result = Vec::new();
@@ -512,29 +411,14 @@ fn unquote(text: &str) -> String {
     String::from_utf8_lossy(&result).into_owned()
 }
 
-fn links(path: &Path, root: &Path, text: &str) -> Result<()> {
-    for target in markdown_targets(text) {
-        let target = target.split('#').next().unwrap_or("");
-        if !target.is_empty() && !target.contains("://") && !target.starts_with("mailto:") {
-            contained(
-                root,
-                path.parent().ok_or("Нет родительского каталога")?,
-                unquote(target),
-                true,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn resources(folder: &Path, root: &Path) -> Result<()> {
+fn resource_directories(folder: &Path, root: &Path) -> Result<()> {
     for name in ["scripts", "references", "assets"] {
         let directory = folder.join(name);
         if directory.exists() {
             contained(root, folder, name, true)?;
             require(directory.is_dir(), "Ожидался каталог ресурсов")?;
             let mut content = false;
-            for path in descendants(&directory, &[])? {
+            for path in descendants(&directory, EXCLUDED_DIRECTORIES)? {
                 let resource = contained(
                     root,
                     &directory,
@@ -555,9 +439,16 @@ pub(crate) fn resources(folder: &Path, root: &Path) -> Result<()> {
             )?;
         }
     }
-    for path in descendants(folder, &[])? {
-        if extension_matches(&path, "md") {
-            links(&path, root, &read(&path)?)?;
+    Ok(())
+}
+
+pub(crate) fn resources(folder: &Path, root: &Path) -> Result<()> {
+    let directory = contained(root, folder, ".", true)?;
+    resource_directories(folder, root)?;
+    let mut links = markdown::Links::new(root)?;
+    for path in descendants(&directory, EXCLUDED_DIRECTORIES)? {
+        if markdown::is_markdown(&path) {
+            links.check(&path, &links.read_document(&path)?)?;
         }
     }
     Ok(())
@@ -584,33 +475,7 @@ pub(crate) fn check_package_major(root: &Path, number: &str) -> Result<()> {
 
 pub(crate) fn check_versions(root: &Path, number: &str) -> Result<()> {
     version::parse(number)?;
-    check_launcher_version(root, number)?;
-    let mut count = 0;
-    for folder in entries(&root.join("skills"))? {
-        if !folder.is_dir() {
-            continue;
-        }
-        let mut previous: Option<String> = None;
-        for path in entries(&folder)? {
-            if skill_markdown(&path) {
-                let text = read(&path)?.replace("\r\n", "\n");
-                require(
-                    rx!(r"\A---\n(?s:.*?)\n---(?:\n|\z)").is_match(&text),
-                    "Нет frontmatter версии",
-                )?;
-                let data = frontmatter(&path)?;
-                let version = string(&data["metadata"], "version")?;
-                version::parse(version)?;
-                require(
-                    previous.as_deref().is_none_or(|v| v == version),
-                    "Версии локализаций навыка различаются",
-                )?;
-                previous = Some(version.into());
-                count += 1;
-            }
-        }
-    }
-    require(count > 0, "Не найдены навыки")
+    check_launcher_version(root, number)
 }
 
 fn hooks(root: &Path, relative: &str) -> Result<()> {
@@ -711,18 +576,31 @@ pub(crate) fn skill_names(root: &Path) -> Result<BTreeSet<String>> {
 
 fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
     let mut listed = BTreeSet::new();
-    for row in rx!(r"(?m)^\| `([a-z0-9-]+)` \|([^\n]*)").captures_iter(listing) {
-        let name = &row[1];
-        let instructions = row[2]
-            .trim_end()
-            .trim_end_matches('|')
-            .rsplit('|')
-            .next()
-            .unwrap_or("");
-        let targets = markdown_targets(instructions);
+    for row in rx!(r"(?m)^\| ([^|\n]+) \|([^\n]*)").captures_iter(listing) {
+        let first = &row[1];
+        let (name, target) =
+            if let Some(link) = rx!(r"^\[([a-z0-9-]+)\]\(([^)]+)\)$").captures(first) {
+                (link[1].to_owned(), link[2].to_owned())
+            } else if let Some(name) = first.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+                let instructions = row[2]
+                    .trim_end()
+                    .trim_end_matches('|')
+                    .rsplit('|')
+                    .next()
+                    .unwrap_or("");
+                (
+                    name.to_owned(),
+                    markdown::targets(instructions)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default(),
+                )
+            } else {
+                continue;
+            };
         let entry = format!("../skills/{name}/SKILL.md");
         require(
-            targets.first() == Some(&entry),
+            target == entry,
             format!("Каталог: основная ссылка {name} должна вести на {entry}"),
         )?;
         require(
@@ -734,6 +612,23 @@ fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
         !skills.is_empty() && &listed == skills,
         "Каталог навыков не совпадает с пакетом",
     )
+}
+
+pub(crate) fn manifest_assets(manifest: &Value) -> Result<Vec<&str>> {
+    let interface = &manifest["interface"];
+    let mut assets = vec![
+        string(interface, "composerIcon")?,
+        string(interface, "logo")?,
+    ];
+    if let Some(screenshots) = interface.get("screenshots") {
+        for value in screenshots
+            .as_array()
+            .ok_or("screenshots должен быть массивом")?
+        {
+            assets.push(value.as_str().ok_or("Некорректный screenshot")?);
+        }
+    }
+    Ok(assets)
 }
 
 pub(crate) fn check(root: &Path) -> Result<String> {
@@ -764,37 +659,37 @@ pub(crate) fn check(root: &Path) -> Result<String> {
         "Некорректный source",
     )?;
     let skills = skill_names(root)?;
-    let listing = read(&root.join("docs/skills.md"))?;
+    let mut links = markdown::Links::new(root)?;
+    let listing = links.read_document(&root.join("docs/skills.md"))?;
     check_catalog(&listing, &skills)?;
     for name in &skills {
         let folder = root.join("skills").join(name);
         for path in entries(&folder)? {
             if skill_markdown(&path) {
-                metadata(&path)?;
-                skill_structure(&path)?;
+                let text = links.read_document(&path)?;
+                let (data, body) = parse_skill(&path, &text)
+                    .map_err(|error| format!("{}: {error}", path.display()))?;
+                require(
+                    !body.trim().is_empty(),
+                    format!("{}: отсутствует текст инструкции", path.display()),
+                )?;
+                require(
+                    data["disable-model-invocation"] == true,
+                    format!(
+                        "{}: disable-model-invocation должен быть true",
+                        path.display()
+                    ),
+                )?;
             }
         }
         require(
             folder.join("SKILL.md").is_file(),
             format!("{name}: отсутствует SKILL.md"),
         )?;
-        resources(&folder, root)?;
+        resource_directories(&folder, root)?;
         skill_ui(root, &folder, name)?;
     }
-    let interface = &manifest["interface"];
-    let mut assets = vec![
-        string(interface, "composerIcon")?,
-        string(interface, "logo")?,
-    ];
-    if let Some(screenshots) = interface.get("screenshots") {
-        for value in screenshots
-            .as_array()
-            .ok_or("screenshots должен быть массивом")?
-        {
-            assets.push(value.as_str().ok_or("Некорректный screenshot")?);
-        }
-    }
-    for asset in assets {
+    for asset in manifest_assets(&manifest)? {
         let path = contained(root, root, asset, false)?;
         require(
             fs::read(&path)
@@ -814,20 +709,34 @@ pub(crate) fn check(root: &Path) -> Result<String> {
             format!("Пакет не устанавливает глобальные роли или настройки: {relative}"),
         )?;
     }
-    for path in descendants(
-        root,
-        &[
-            ".git",
-            ".venv",
-            "work",
-            "dist",
-            "target",
-            "bin",
-            "__pycache__",
-        ],
-    )? {
-        if extension_matches(&path, "md") {
-            let text = read(&path)?;
+    let mut documents: Vec<_> = entries(root)?
+        .into_iter()
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+        })
+        .collect();
+    for directory in [
+        "docs",
+        "skills",
+        ".github",
+        "assets",
+        "tools",
+        "hooks",
+        "launchers",
+        "licenses",
+        ".codex-plugin",
+        ".agents/plugins",
+    ] {
+        if root.join(directory).is_dir() {
+            let directory = contained(root, root, directory, true)?;
+            documents.extend(descendants(&directory, EXCLUDED_DIRECTORIES)?);
+        }
+    }
+    for path in documents {
+        if markdown::is_markdown(&path) {
+            let text = links.read_document(&path)?;
             for reference in rx!(r"\bfstack:([a-z][a-z0-9-]*)").captures_iter(&text) {
                 let name = &reference[1];
                 require(
@@ -835,7 +744,7 @@ pub(crate) fn check(root: &Path) -> Result<String> {
                     format!("{}: отсутствует навык {name}", path.display()),
                 )?;
             }
-            links(&path, root, &text)?;
+            links.check(&path, &text)?;
         }
     }
     Ok(format!(

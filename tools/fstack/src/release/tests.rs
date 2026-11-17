@@ -1,7 +1,26 @@
 use super::*;
 use std::cell::{Cell, RefCell};
+
+#[test]
+fn migration_notes_keep_code_and_skip_examples_and_template_hints() {
+    let example = "~~~md\n## При обновлении\nПример\n~~~\n\n> ## При обновлении\n";
+    assert_eq!(upgrade_section(example), None);
+    let steps = "Сохраните настройки.\n\n```sh\n# Комментарий\ncat settings\n<!-- literal -->\n```";
+    let body = format!("{example}\n## При обновлении\n\n<!-- удалите\nподсказку -->\n{steps}\n\n  ## Проверка\nГотово.");
+    assert_eq!(upgrade_section(&body).as_deref(), Some(steps));
+    assert_eq!(upgrade_section("## При обновлении\n<!-- пусто -->"), None);
+    for heading in ["##  При обновлении", "При обновлении\n--------------"]
+    {
+        let body = format!("{heading}\n\n    команда\n");
+        assert_eq!(upgrade_section(&body).as_deref(), Some("    команда"));
+    }
+}
+
 struct Stub {
     records: RefCell<Vec<Value>>,
+    exact: RefCell<Value>,
+    version_pull: RefCell<Option<(String, Value)>>,
+    created_notes: RefCell<String>,
     calls: RefCell<Vec<Vec<String>>>,
     publish_tag: bool,
     fail_release_action: Cell<Option<&'static str>>,
@@ -15,14 +34,35 @@ impl Runner for Stub {
             return System.run(root, args, input);
         }
         if args[1] == "api" {
-            return serde_json::to_vec(&vec![self.records.borrow().clone()])
-                .map_err(|e| e.to_string());
+            let response = if args[2] == "graphql" {
+                json!({"data":{"repository":{"release":*self.exact.borrow()}}})
+            } else if args.last().unwrap().ends_with("/pulls?per_page=100") {
+                let pulls = self.version_pull.borrow();
+                match pulls.as_ref() {
+                    Some((commit, pull))
+                        if args
+                            .last()
+                            .unwrap()
+                            .contains(&format!("/commits/{commit}/")) =>
+                    {
+                        json!([[pull]])
+                    }
+                    _ => json!([[]]),
+                }
+            } else {
+                json!([*self.records.borrow()])
+            };
+            return serde_json::to_vec(&response).map_err(|e| e.to_string());
         }
         self.calls
             .borrow_mut()
             .push(args.iter().map(|s| s.to_string()).collect());
         if args[1] == "release" && self.fail_release_action.get() == Some(args[2]) {
             return Err(format!("Сбой gh release {}", args[2]));
+        }
+        if args[1..3] == ["release", "create"] {
+            assert!(args.windows(2).any(|pair| pair == ["--notes-file", "-"]));
+            *self.created_notes.borrow_mut() = String::from_utf8(input.unwrap().to_vec()).unwrap();
         }
         if self.publish_tag && args[1..3] == ["release", "edit"] {
             let target = args[args.iter().position(|s| *s == "--target").unwrap() + 1];
@@ -42,6 +82,9 @@ impl Runner for Stub {
 }
 fn stub() -> Stub {
     Stub {
+        exact: RefCell::new(Value::Null),
+        version_pull: RefCell::new(None),
+        created_notes: RefCell::new(String::new()),
         records: RefCell::new(vec![
             json!({"tag_name":"v0.2.0","draft":false,"prerelease":false}),
         ]),
@@ -74,7 +117,9 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
     save(
         &root,
         MANIFEST,
-        b"{\"name\": \"fstack\", \"version\": \"0.2.0\"}",
+        json!({"name":"fstack","version":"0.2.0","interface":{
+            "composerIcon":"./media/icon.png","logo":"./assets/logo.png","screenshots":["./gallery/shot.png"]
+        }}).to_string(),
     );
     save(&root, PACKAGE_VERSION, "0.2.0\n");
     save(&root, "launchers/package-major", "0\n");
@@ -84,7 +129,7 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
             &root,
             &format!("skills/{name}/SKILL.md"),
             format!(
-                "---\nname: {name}\nmetadata:\n  version: 0.2.0\n---\n# Original body {name}\n"
+                "---\nname: {name}\ndescription: Fixture skill\ndisable-model-invocation: true\n---\n# Original body {name}\n"
             ),
         );
     }
@@ -218,6 +263,12 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
     assert!(stub.calls.borrow().is_empty());
     assert!(!root.join("dist").exists());
     record["author"]["login"] = json!("github-actions[bot]");
+    let marker = format!("<!-- release-source:{sha} -->");
+    record["body"] = json!(format!("```html\n{marker}\n```\n\n{marker}"));
+    assert_eq!(release.draft_target(&record, &sha, "0.2.1").unwrap(), sha);
+    record["body"] = json!(format!("{marker}\n\n{marker}"));
+    assert!(release.draft_target(&record, &sha, "0.2.1").is_err());
+    record["body"] = json!(format!("{marker}\n\nДополнение к черновику"));
     release
         .finish("fixture/fstack", "0.2.1", &[record], &sha)
         .unwrap();
@@ -333,20 +384,22 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
             .unwrap()
             .unwrap(),
     );
-    let alpha = root.join("skills/alpha/SKILL.md");
-    fs::write(
-        &alpha,
-        fs::read_to_string(&alpha)
-            .unwrap()
-            .replace("0.2.0", "0.2.1"),
-    )
-    .unwrap();
     save(&root, PACKAGE_VERSION, "0.3.0\n");
     commit(&root, "feat: validated behavior");
+    let version_commit = git(&root, &["rev-parse", "HEAD"]);
+    save(&root, "guide.md", "Documentation after the version change");
+    commit(&root, "docs: clarify usage");
     let sha = git(&root, &["rev-parse", "HEAD"]);
     origin(&root);
     let artifacts = artifacts(&root, &sha);
     let stub = stub();
+    *stub.version_pull.borrow_mut() = Some((
+        version_commit,
+        json!({
+            "merged_at":"2026-11-17", "base":{"ref":"main","repo":{"full_name":"fixture/fstack"}},
+            "body":"## При обновлении\n\n<!-- Подсказка -->\nЗамените старый вызов.\n\n## Проверка\nЛоги"
+        }),
+    ));
     let release = Release {
         root: &root,
         runner: &stub,
@@ -370,6 +423,9 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
     stub.fail_release_action.set(None);
     git(&root, &["checkout", "--detach", &sha]);
     release.publish("fixture/fstack", &event(&sha)).unwrap();
+    assert_eq!(*stub.created_notes.borrow(), format!(
+        "Пакет fstack 0.3.0. Архивы, бинарники и SHA-256.\n\n## При обновлении\n\nЗамените старый вызов.\n\n<!-- release-source:{sha} -->"
+    ));
     assert_eq!(
         stub.calls
             .borrow()
@@ -391,6 +447,13 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
             .read_to_end(&mut bytes)
             .unwrap();
         assert_eq!(bytes, b"Independent skill resource\n");
+        bytes.clear();
+        archive
+            .by_name("fstack/skills/alpha/SKILL.md")
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes, fs::read(root.join("skills/alpha/SKILL.md")).unwrap());
         let mut text = String::new();
         archive
             .by_name("fstack/.codex-plugin/plugin.json")
@@ -459,32 +522,77 @@ fn explicit_version_checks_package_and_skill_changes_against_the_pr_base() {
     };
     let base = git(&root, &["rev-parse", "HEAD"]);
     assert_eq!(release.check_next(&base).unwrap(), "0.2.0");
-    assert!(release.prepare(Some("1.0.0")).is_err());
+    for invalid in ["1.0.0", "1.2", "00.2.3", "0.2.3-rc1", "0.2.3+build"] {
+        assert!(release.prepare(Some(invalid)).is_err(), "{invalid}");
+    }
 
-    let entry = "skills/alpha/SKILL.md";
-    let original = fs::read_to_string(root.join(entry)).unwrap();
-    save(&root, entry, format!("{original}\nNew instruction\n"));
-    commit(&root, "feat: add skill instruction");
-    assert!(release
-        .check_next(&base)
-        .unwrap_err()
-        .contains("повышение версии"));
-
-    save(
-        &root,
-        entry,
-        format!("{}\nNew instruction\n", original.replace("0.2.0", "0.2.1")),
-    );
-    commit(&root, "fix: update skill version");
-    assert!(release
-        .check_next(&base)
-        .unwrap_err()
-        .contains("новой версии"));
+    for (path, text) in [
+        (
+            "skills/alpha/SKILL.md",
+            Some(
+                "---\nname: alpha\ndescription: Fixture skill\ndisable-model-invocation: true\n---\nNew instruction\n",
+            ),
+        ),
+        (
+            "skills/alpha/SKILL_en.md",
+            Some("---\nname: alpha\ndescription: Localized skill\n---\n"),
+        ),
+        ("skills/alpha/explanation.md", Some("New resource\n")),
+        ("docs/skills.md", Some("Updated skill catalog")),
+        ("assets/logo.png", Some("Replaced logo")),
+        ("media/icon.png", Some("Composer icon declared outside assets")),
+        ("gallery/shot.png", Some("Screenshot declared outside assets")),
+        (".agents/plugins/marketplace.json", Some("Updated marketplace")),
+        ("skills/beta/SKILL.md", None),
+        (
+            "skills/gamma/SKILL.md",
+            Some("---\nname: gamma\ndescription: Added skill\n---\n"),
+        ),
+    ] {
+        let previous = git(&root, &["rev-parse", "HEAD"]);
+        if let Some(text) = text {
+            save(&root, path, text);
+        } else {
+            fs::remove_file(root.join(path)).unwrap();
+        }
+        commit(&root, "fix: change shipped skill files");
+        assert_eq!(
+            release.check_next(&previous).unwrap_err(),
+            "Изменение пакета требует новой версии",
+            "{path}"
+        );
+    }
     release.prepare(Some("0.2.1")).unwrap();
     commit(&root, "chore: prepare package");
     assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
     git(&root, &["tag", "v0.2.1"]);
     assert!(release.check_next(&base).unwrap_err().contains("занята"));
+}
+
+#[test]
+fn exact_release_survives_a_missing_list_entry_and_git_tag() {
+    let (_temp, root) = fixture();
+    let stub = stub();
+    let release = Release {
+        root: &root,
+        runner: &stub,
+        artifacts: None,
+    };
+    let published = json!({"node_id":"R_1","tag_name":"v0.2.0","draft":false,"prerelease":false});
+    *stub.exact.borrow_mut() = published.clone();
+    *stub.records.borrow_mut() = vec![published];
+    let records = release.records("fixture/fstack").unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(release.plan(&records).unwrap()["publish"], false);
+
+    stub.records.borrow_mut().clear();
+    git(&root, &["tag", "-d", "v0.2.0"]);
+    let records = release.records("fixture/fstack").unwrap();
+    assert!(release
+        .plan(&records)
+        .unwrap_err()
+        .contains("Git-тег отсутствует"));
+    assert!(stub.calls.borrow().is_empty());
 }
 
 #[test]
@@ -509,7 +617,10 @@ fn publishing_depends_on_the_current_version_only() {
     );
     save(&root, "skills/alpha/explanation.md", "new resource\n");
     commit(&root, "fix: changed shipped skill");
-    assert!(release.plan(&[same]).is_err());
+    assert_eq!(
+        release.plan(&[same]).unwrap_err(),
+        "Версия 0.2.0 уже опубликована с другими исходниками"
+    );
     assert_eq!(git(&root, &["rev-parse", "HEAD^"]), base);
 }
 
@@ -535,18 +646,4 @@ fn release_preparation_binds_the_staged_build_inputs() {
     release.prepare(None).unwrap();
     commit(&root, "chore: refresh package");
     assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
-}
-
-#[test]
-fn each_localization_uses_the_same_stable_version() {
-    let (_temp, root) = fixture();
-    for name in ["1.2", "01.2.3", "1.2.3-rc1", "1.2.3+build"] {
-        assert!(version(name).is_err());
-    }
-    let localized = "skills/alpha/SKILL_en.md";
-    let raw = fs::read_to_string(root.join("skills/alpha/SKILL.md")).unwrap();
-    save(&root, localized, raw.replace("0.2.0", "0.2.1"));
-    assert!(check_versions(&root).is_err());
-    save(&root, localized, raw);
-    assert_eq!(check_versions(&root).unwrap(), "0.2.0");
 }

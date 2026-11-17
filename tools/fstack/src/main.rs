@@ -12,9 +12,18 @@ mod version;
 type Result<T> = std::result::Result<T, String>;
 
 fn main_result() -> Result<()> {
-    let mut arguments: Vec<_> = std::env::args_os().skip(1).collect();
-    let root = package_root(&mut arguments)?;
+    let argv: Vec<_> = std::env::args_os().skip(1).collect();
+    let (package, arguments) = if argv.first().is_some_and(|a| a == "--package") {
+        package::require(argv.len() >= 3, "После --package нужен каталог и команда")?;
+        (Some(Path::new(&argv[1])), &argv[2..])
+    } else {
+        (None, argv.as_slice())
+    };
     let command = arguments.first().and_then(|s| s.to_str()).unwrap_or("");
+    if command == "doctor" {
+        return installation::doctor::run(&arguments[1..]);
+    }
+    let root = package_root(package)?;
     match (command, arguments.len()) {
         ("gitlab-ci-action", 1) => return gitlab_ci::run(std::io::stdin().lock()),
         ("memory", _) => return memory::run(&arguments[1..], &root),
@@ -24,8 +33,7 @@ fn main_result() -> Result<()> {
         ("check-package", 2) => println!("{}", package::check(Path::new(&arguments[1]))?),
         ("resources", 3) => package::resources(Path::new(&arguments[2]), Path::new(&arguments[1]))?,
         ("metadata", 2) => println!("{}", package::metadata(Path::new(&arguments[1]))?),
-        ("structure", 2) => package::skill_structure(Path::new(&arguments[1]))?,
-        _ => return Err("Использование: fstack [--package ROOT] memory | gitlab-ci-action | release | review [JSON] | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH".into()),
+        _ => return Err("Использование: fstack [--package ROOT] doctor [--codex PATH] [--json] | memory | gitlab-ci-action | release | review [JSON] | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH".into()),
     }
     Ok(())
 }
@@ -37,14 +45,8 @@ fn main() {
     }
 }
 
-fn package_root(arguments: &mut Vec<std::ffi::OsString>) -> Result<PathBuf> {
-    if arguments.first().is_some_and(|a| a == "--package") {
-        package::require(
-            arguments.len() >= 3,
-            "После --package нужен каталог и команда",
-        )?;
-        let root = PathBuf::from(arguments.remove(1));
-        arguments.remove(0);
+fn package_root(package: Option<&Path>) -> Result<PathBuf> {
+    if let Some(root) = package {
         return root.canonicalize().map_err(|e| e.to_string());
     }
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;

@@ -17,6 +17,11 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 const MANIFEST: &str = ".codex-plugin/plugin.json";
 const RUNTIME_ID: &str = "launchers/runtime-id";
+const RELEASE_BY_TAG: &str = "query($owner:String!,$name:String!,$tag:String!){
+  repository(owner:$owner,name:$name){release(tagName:$tag){
+    node_id:id tag_name:tagName draft:isDraft prerelease:isPrerelease body:description author{login}
+  }}
+}";
 const BUILD_INPUTS: &[&str] = &[
     ".cargo",
     ".gitattributes",
@@ -27,16 +32,6 @@ const BUILD_INPUTS: &[&str] = &[
 ];
 fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).unwrap()
-}
-fn parse_skill(text: &str) -> Result<(serde_yaml::Value, String)> {
-    let text = text.replace("\r\n", "\n");
-    let matched = rx(r"\A---\n(?s:(.*?))\n---(?:\n|\z)");
-    let capture = matched.captures(&text).ok_or("Нет frontmatter")?;
-    let data: serde_yaml::Value = serde_yaml::from_str(&capture[1]).map_err(|e| e.to_string())?;
-    if data["metadata"].as_mapping().is_none() {
-        return Err("Некорректные metadata".into());
-    }
-    Ok((data, text[capture.get(0).unwrap().end()..].into()))
 }
 fn manifest(root: &Path) -> Result<Value> {
     serde_json::from_slice(&fs::read(root.join(MANIFEST)).map_err(|e| e.to_string())?)
@@ -123,6 +118,25 @@ impl Release<'_> {
         Ok(())
     }
     fn records(&self, repo: &str) -> Result<Vec<Value>> {
+        let (owner, name) = repo.split_once('/').ok_or("Некорректное имя репозитория")?;
+        let tag = format!("v{}", check_versions(self.root)?);
+        let lookup: Value = serde_json::from_str(&self.cmd(&[
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            &format!("query={RELEASE_BY_TAG}"),
+            "-f",
+            &format!("owner={owner}"),
+            "-f",
+            &format!("name={name}"),
+            "-f",
+            &format!("tag={tag}"),
+        ])?)
+        .map_err(|e| e.to_string())?;
+        let exact = lookup
+            .pointer("/data/repository/release")
+            .ok_or("GitHub не подтвердил поиск релиза по тегу")?;
         let pages: Vec<Vec<Value>> = serde_json::from_str(&self.cmd(&[
             "gh",
             "api",
@@ -131,95 +145,52 @@ impl Release<'_> {
             &format!("repos/{repo}/releases?per_page=100"),
         ])?)
         .map_err(|e| e.to_string())?;
-        Ok(pages.into_iter().flatten().collect())
-    }
-    fn tree(&self, rev: &str) -> Result<BTreeMap<String, String>> {
-        self.cmd(&["git", "ls-tree", "-r", "-z", rev, "--", "skills"])?
-            .split('\0')
-            .filter(|v| !v.is_empty())
-            .map(|entry| {
-                let (metadata, path) = entry.split_once('\t').ok_or("Некорректное дерево git")?;
-                Ok((path.into(), metadata.into()))
-            })
-            .collect()
-    }
-    fn skill_at(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
-        let text = String::from_utf8(self.bytes(&["git", "show", &format!("{rev}:{path}")])?)
-            .map_err(|e| e.to_string())?;
-        parse_skill(&text)
-    }
-    fn skill_version(&self, rev: &str, path: &str) -> Result<[u64; 3]> {
-        let (data, _) = self.skill_at(rev, path)?;
-        version(
-            data["metadata"]["version"]
-                .as_str()
-                .ok_or_else(|| format!("{path}: нет версии навыка"))?,
-        )
-    }
-    fn signature(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
-        let (mut data, body) = self.skill_at(rev, path)?;
-        data["metadata"]
-            .as_mapping_mut()
-            .unwrap()
-            .remove(serde_yaml::Value::String("version".into()));
-        Ok((data, body.trim_matches('\n').to_owned()))
-    }
-    fn changed_skills(&self, base: &str, head: &str, verify_versions: bool) -> Result<Vec<String>> {
-        let old = self.tree(base)?;
-        let new = self.tree(head)?;
-        let names: BTreeSet<_> = old
-            .keys()
-            .chain(new.keys())
-            .filter_map(|p| p.strip_prefix("skills/")?.strip_suffix("/SKILL.md"))
-            .filter(|name| !name.contains('/'))
+        let mut records: Vec<_> = pages
+            .into_iter()
+            .flatten()
+            .filter(|record| record["tag_name"] == tag)
             .collect();
-        let mut changed = Vec::new();
-        for name in names {
-            let prefix = format!("skills/{name}/");
-            let before: BTreeMap<_, _> =
-                old.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
-            let after: BTreeMap<_, _> =
-                new.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
-            if before == after {
-                continue;
+        if !exact.is_null() {
+            let id = exact["node_id"]
+                .as_str()
+                .ok_or("GitHub не вернул ID релиза")?;
+            if exact["tag_name"] != tag {
+                return Err("GitHub вернул релиз для другого тега".into());
             }
-            let entry = format!("{prefix}SKILL.md");
-            let mut different = before.keys().ne(after.keys());
-            if !different {
-                for (path, metadata) in &after {
-                    let previous = before[path];
-                    if previous == *metadata {
-                        continue;
-                    }
-                    let versioned = rx(r"\Askills/[^/]+/SKILL[^/]*\.md\z").is_match(path);
-                    if previous
-                        .split_whitespace()
-                        .take(2)
-                        .eq(metadata.split_whitespace().take(2))
-                        && versioned
-                        && self.signature(base, path)? == self.signature(head, path)?
-                    {
-                        continue;
-                    }
-                    different = true;
-                    break;
-                }
-            }
-            if verify_versions && old.contains_key(&entry) && new.contains_key(&entry) {
-                let before = self.skill_version(base, &entry)?;
-                let after = self.skill_version(head, &entry)?;
-                if after < before || (different && after == before) {
-                    return Err(format!(
-                        "{name}: требуется повышение версии изменённого навыка"
-                    ));
-                }
-                different |= before != after;
-            }
-            if different {
-                changed.push(name.to_owned());
+            if !records.iter().any(|record| record["node_id"] == id) {
+                records.push(exact.clone());
             }
         }
-        Ok(changed)
+        Ok(records)
+    }
+    fn same_package(&self, base: &str, head: &str) -> Result<bool> {
+        let data = manifest(self.root)?;
+        if self.manifest_at(base)? != data || !self.same_build_inputs(base, head)? {
+            return Ok(false);
+        }
+        let mut paths = vec![
+            "skills",
+            "docs/skills.md",
+            ".agents/plugins/marketplace.json",
+            "assets",
+            "licenses",
+            "LICENSE",
+        ];
+        paths.extend(package::manifest_assets(&data)?);
+        let tree = |rev| {
+            let mut args = vec![
+                "git",
+                "--literal-pathspecs",
+                "ls-tree",
+                "-r",
+                "-z",
+                rev,
+                "--",
+            ];
+            args.extend_from_slice(&paths);
+            self.bytes(&args)
+        };
+        Ok(tree(base)? == tree(head)?)
     }
     fn plan(&self, records: &[Value]) -> Result<Value> {
         let number = check_versions(self.root)?;
@@ -234,12 +205,11 @@ impl Release<'_> {
             if record["draft"] == true {
                 self.draft_target(record, "HEAD", &number)?;
             } else {
+                if self.cmd(&["git", "tag", "--list", &tag])?.is_empty() {
+                    return Err(format!("GitHub Release {tag} уже опубликован, но Git-тег отсутствует. Проверьте теги или выберите свободную версию."));
+                }
                 self.cmd(&["git", "merge-base", "--is-ancestor", &tag, "HEAD"])?;
-                if record["prerelease"] != false
-                    || !self.same_build_inputs(&tag, "HEAD")?
-                    || !self.changed_skills(&tag, "HEAD", true)?.is_empty()
-                    || self.manifest_at(&tag)? != manifest(self.root)?
-                {
+                if record["prerelease"] != false || !self.same_package(&tag, "HEAD")? {
                     return Err(format!(
                         "Версия {number} уже опубликована с другими исходниками"
                     ));
@@ -266,12 +236,8 @@ impl Release<'_> {
             .ok_or("Нет версии базового пакета")?;
         let old_version = version(before)?;
         let new_version = version(&current)?;
-        let skills = self.changed_skills(&base, "HEAD", true)?;
         if before == current {
-            if !self.same_build_inputs(&base, "HEAD")?
-                || !skills.is_empty()
-                || previous != manifest(self.root)?
-            {
+            if !self.same_package(&base, "HEAD")? {
                 return Err("Изменение пакета требует новой версии".into());
             }
         } else if old_version[0] == new_version[0] && new_version < old_version {
@@ -433,10 +399,26 @@ impl Release<'_> {
         Ok(outputs)
     }
     fn draft_target(&self, record: &Value, head: &str, number: &str) -> Result<String> {
-        let body = record["body"].as_str().unwrap_or("");
-        let marker = rx(r"(?m)^<!-- release-source:([a-f0-9]{40}) -->$");
-        let mut matches = marker.captures_iter(body);
-        let target = matches.next().ok_or("Нет ревизии черновика")?[1].to_owned();
+        use pulldown_cmark::{Event, Parser};
+
+        let body = record["body"].as_str().unwrap_or("").trim_end();
+        let marker = rx(r"\A<!-- release-source:([a-f0-9]{40}) -->\z");
+        let source = |line: &str| {
+            marker
+                .captures(line.trim_end())
+                .map(|capture| capture[1].to_owned())
+        };
+        let (notes, last_line) = body.rsplit_once('\n').unwrap_or(("", body));
+        let footer = source(last_line);
+        let mut matches = Parser::new(if footer.is_some() { notes } else { body }).filter_map(
+            |event| match event {
+                Event::Html(html) => source(&html),
+                _ => None,
+            },
+        );
+        let target = footer
+            .or_else(|| matches.next())
+            .ok_or("Нет ревизии черновика")?;
         if matches.next().is_some()
             || record["author"]["login"] != "github-actions[bot]"
             || record["draft"] != true
@@ -444,11 +426,7 @@ impl Release<'_> {
             return Err("Черновик не принадлежит этому выпуску".into());
         }
         self.cmd(&["git", "merge-base", "--is-ancestor", &target, head])?;
-        if self.manifest_at(&target)?["version"] != number
-            || !self.same_build_inputs(&target, head)?
-            || !self.changed_skills(&target, head, true)?.is_empty()
-            || self.manifest_at(&target)? != manifest(self.root)?
-        {
+        if self.manifest_at(&target)?["version"] != number || !self.same_package(&target, head)? {
             return Err("Исходники черновика отличаются от проверенного выпуска".into());
         }
         Ok(target)
@@ -484,6 +462,46 @@ impl Release<'_> {
     fn same_build_inputs(&self, base: &str, head: &str) -> Result<bool> {
         Ok(self.runtime_id(base)? == self.runtime_id(head)?)
     }
+    fn release_notes(&self, repo: &str, number: &str, sha: &str) -> Result<String> {
+        let version_commit = self.cmd(&[
+            "git",
+            "log",
+            "--first-parent",
+            "-1",
+            "--format=%H",
+            sha,
+            "--",
+            PACKAGE_VERSION,
+        ])?;
+        let pages: Vec<Vec<Value>> = serde_json::from_str(&self.cmd(&[
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            &format!("repos/{repo}/commits/{version_commit}/pulls?per_page=100"),
+        ])?)
+        .map_err(|e| e.to_string())?;
+        let mut sections = Vec::new();
+        for pull in pages.into_iter().flatten().filter(|pull| {
+            pull["merged_at"].is_string()
+                && pull["base"]["ref"] == "main"
+                && pull["base"]["repo"]["full_name"]
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(repo))
+        }) {
+            if let Some(section) = pull["body"].as_str().and_then(upgrade_section) {
+                if !sections.contains(&section) {
+                    sections.push(section);
+                }
+            }
+        }
+        let mut notes = format!("Пакет fstack {number}. Архивы, бинарники и SHA-256.");
+        if !sections.is_empty() {
+            notes.push_str("\n\n## При обновлении\n\n");
+            notes.push_str(&sections.join("\n\n"));
+        }
+        Ok(format!("{notes}\n\n<!-- release-source:{sha} -->"))
+    }
     fn finish(&self, repo: &str, number: &str, records: &[Value], head: &str) -> Result<()> {
         version(number)?;
         let tag = format!("v{number}");
@@ -495,7 +513,6 @@ impl Release<'_> {
             .map(|r| self.draft_target(r, head, number))
             .transpose()?;
         let sha = target.as_deref().unwrap_or(head);
-        let marker = format!("<!-- release-source:{sha} -->");
         if !self.cmd(&["git", "tag", "--list", &tag])?.is_empty()
             && self.cmd(&["git", "rev-parse", &format!("{tag}^{{commit}}")])? != sha
         {
@@ -505,11 +522,25 @@ impl Release<'_> {
         let artifacts = self.artifacts(head)?;
         let outputs = self.archive(number, sha, &artifacts)?;
         if existing.is_none() {
-            let notes = format!("Пакет fstack {number}. Архивы, бинарники и SHA-256.\n\n{marker}");
-            self.cmd(&[
-                "gh", "release", "create", &tag, "--repo", repo, "--target", sha, "--title", &tag,
-                "--notes", &notes, "--draft",
-            ])?;
+            let notes = self.release_notes(repo, number, sha)?;
+            self.command(
+                &[
+                    "gh",
+                    "release",
+                    "create",
+                    &tag,
+                    "--repo",
+                    repo,
+                    "--target",
+                    sha,
+                    "--title",
+                    &tag,
+                    "--notes-file",
+                    "-",
+                    "--draft",
+                ],
+                Some(notes.as_bytes()),
+            )?;
         }
         let output_names: Vec<_> = outputs
             .iter()
@@ -564,6 +595,61 @@ impl Release<'_> {
         self.runner.check(self.root)?;
         self.finish(repo, plan["version"].as_str().unwrap(), &records, expected)
     }
+}
+fn upgrade_section(body: &str) -> Option<String> {
+    use pulldown_cmark::{Event, HeadingLevel, Parser, Tag};
+
+    let mut depth = 0;
+    let mut section = None;
+    let mut end = body.len();
+    for (event, span) in Parser::new(body).into_offset_iter() {
+        match event {
+            Event::Start(tag) => {
+                if depth == 0 {
+                    if let Tag::Heading {
+                        level: level @ (HeadingLevel::H1 | HeadingLevel::H2),
+                        ..
+                    } = tag
+                    {
+                        if section.is_some() {
+                            end = span.start;
+                            break;
+                        }
+                        let title: String = Parser::new(&body[span.clone()])
+                            .filter_map(|event| match event {
+                                Event::Text(text) | Event::Code(text) => Some(text.into_string()),
+                                _ => None,
+                            })
+                            .collect();
+                        if level == HeadingLevel::H2 && title.trim() == "При обновлении"
+                        {
+                            section = Some(span.end);
+                        }
+                    }
+                }
+                depth += 1;
+            }
+            Event::End(_) => depth -= 1,
+            _ => (),
+        }
+    }
+    let section = &body[section?..end];
+    let mut text = String::new();
+    let mut cursor = 0;
+    let comment = rx(r"(?s)<!--.*?(?:-->|\z)");
+    for (event, span) in Parser::new(section).into_offset_iter() {
+        if matches!(event, Event::Start(Tag::HtmlBlock) | Event::InlineHtml(_)) {
+            let html = &section[span.clone()];
+            text.push_str(&section[cursor..span.start]);
+            text.push_str(&comment.replace_all(html, ""));
+            cursor = span.end;
+        }
+    }
+    text.push_str(&section[cursor..]);
+    let lines: Vec<_> = text.lines().collect();
+    let first = lines.iter().position(|line| !line.trim().is_empty())?;
+    let last = lines.iter().rposition(|line| !line.trim().is_empty())?;
+    Some(lines[first..=last].join("\n"))
 }
 const TARGETS: [&str; 4] = [
     "x86_64-unknown-linux-gnu",
