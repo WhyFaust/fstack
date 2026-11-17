@@ -24,8 +24,7 @@ fn main_result() -> Result<()> {
         ("check-package", 2) => println!("{}", package::check(Path::new(&arguments[1]))?),
         ("resources", 3) => package::resources(Path::new(&arguments[2]), Path::new(&arguments[1]))?,
         ("metadata", 2) => println!("{}", package::metadata(Path::new(&arguments[1]))?),
-        ("structure", 2) => package::skill_structure(Path::new(&arguments[1]))?,
-        _ => return Err("Использование: fstack [--package ROOT] memory | gitlab-ci-action | release | review [JSON] | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH | structure PATH".into()),
+        _ => return Err("Использование: fstack [--package ROOT] memory | gitlab-ci-action | release | review [JSON] | check-installation | check-package ROOT | resources ROOT FOLDER | metadata PATH".into()),
     }
     Ok(())
 }

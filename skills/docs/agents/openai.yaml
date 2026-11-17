@@ -1,7 +1,2 @@
-interface:
-  display_name: Поиск документации
-  short_description: Проверка API по документации нужной версии
-  default_prompt: Используй $fstack:docs, чтобы проверить нужный контракт по официальной документации применимой
-    версии.
 policy:
   allow_implicit_invocation: false

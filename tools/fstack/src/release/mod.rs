@@ -28,16 +28,6 @@ const BUILD_INPUTS: &[&str] = &[
 fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).unwrap()
 }
-fn parse_skill(text: &str) -> Result<(serde_yaml::Value, String)> {
-    let text = text.replace("\r\n", "\n");
-    let matched = rx(r"\A---\n(?s:(.*?))\n---(?:\n|\z)");
-    let capture = matched.captures(&text).ok_or("Нет frontmatter")?;
-    let data: serde_yaml::Value = serde_yaml::from_str(&capture[1]).map_err(|e| e.to_string())?;
-    if data["metadata"].as_mapping().is_none() {
-        return Err("Некорректные metadata".into());
-    }
-    Ok((data, text[capture.get(0).unwrap().end()..].into()))
-}
 fn manifest(root: &Path) -> Result<Value> {
     serde_json::from_slice(&fs::read(root.join(MANIFEST)).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
@@ -133,93 +123,9 @@ impl Release<'_> {
         .map_err(|e| e.to_string())?;
         Ok(pages.into_iter().flatten().collect())
     }
-    fn tree(&self, rev: &str) -> Result<BTreeMap<String, String>> {
-        self.cmd(&["git", "ls-tree", "-r", "-z", rev, "--", "skills"])?
-            .split('\0')
-            .filter(|v| !v.is_empty())
-            .map(|entry| {
-                let (metadata, path) = entry.split_once('\t').ok_or("Некорректное дерево git")?;
-                Ok((path.into(), metadata.into()))
-            })
-            .collect()
-    }
-    fn skill_at(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
-        let text = String::from_utf8(self.bytes(&["git", "show", &format!("{rev}:{path}")])?)
-            .map_err(|e| e.to_string())?;
-        parse_skill(&text)
-    }
-    fn skill_version(&self, rev: &str, path: &str) -> Result<[u64; 3]> {
-        let (data, _) = self.skill_at(rev, path)?;
-        version(
-            data["metadata"]["version"]
-                .as_str()
-                .ok_or_else(|| format!("{path}: нет версии навыка"))?,
-        )
-    }
-    fn signature(&self, rev: &str, path: &str) -> Result<(serde_yaml::Value, String)> {
-        let (mut data, body) = self.skill_at(rev, path)?;
-        data["metadata"]
-            .as_mapping_mut()
-            .unwrap()
-            .remove(serde_yaml::Value::String("version".into()));
-        Ok((data, body.trim_matches('\n').to_owned()))
-    }
-    fn changed_skills(&self, base: &str, head: &str, verify_versions: bool) -> Result<Vec<String>> {
-        let old = self.tree(base)?;
-        let new = self.tree(head)?;
-        let names: BTreeSet<_> = old
-            .keys()
-            .chain(new.keys())
-            .filter_map(|p| p.strip_prefix("skills/")?.strip_suffix("/SKILL.md"))
-            .filter(|name| !name.contains('/'))
-            .collect();
-        let mut changed = Vec::new();
-        for name in names {
-            let prefix = format!("skills/{name}/");
-            let before: BTreeMap<_, _> =
-                old.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
-            let after: BTreeMap<_, _> =
-                new.iter().filter(|(p, _)| p.starts_with(&prefix)).collect();
-            if before == after {
-                continue;
-            }
-            let entry = format!("{prefix}SKILL.md");
-            let mut different = before.keys().ne(after.keys());
-            if !different {
-                for (path, metadata) in &after {
-                    let previous = before[path];
-                    if previous == *metadata {
-                        continue;
-                    }
-                    let versioned = rx(r"\Askills/[^/]+/SKILL[^/]*\.md\z").is_match(path);
-                    if previous
-                        .split_whitespace()
-                        .take(2)
-                        .eq(metadata.split_whitespace().take(2))
-                        && versioned
-                        && self.signature(base, path)? == self.signature(head, path)?
-                    {
-                        continue;
-                    }
-                    different = true;
-                    break;
-                }
-            }
-            if verify_versions && old.contains_key(&entry) && new.contains_key(&entry) {
-                let before = self.skill_version(base, &entry)?;
-                let after = self.skill_version(head, &entry)?;
-                if after < before || (different && after == before) {
-                    return Err(format!(
-                        "{name}: требуется повышение версии изменённого навыка"
-                    ));
-                }
-                different |= before != after;
-            }
-            if different {
-                changed.push(name.to_owned());
-            }
-        }
-        Ok(changed)
+    fn same_skills(&self, base: &str, head: &str) -> Result<bool> {
+        let tree = |rev| self.bytes(&["git", "ls-tree", "-z", rev, "--", "skills"]);
+        Ok(tree(base)? == tree(head)?)
     }
     fn plan(&self, records: &[Value]) -> Result<Value> {
         let number = check_versions(self.root)?;
@@ -237,7 +143,7 @@ impl Release<'_> {
                 self.cmd(&["git", "merge-base", "--is-ancestor", &tag, "HEAD"])?;
                 if record["prerelease"] != false
                     || !self.same_build_inputs(&tag, "HEAD")?
-                    || !self.changed_skills(&tag, "HEAD", true)?.is_empty()
+                    || !self.same_skills(&tag, "HEAD")?
                     || self.manifest_at(&tag)? != manifest(self.root)?
                 {
                     return Err(format!(
@@ -266,10 +172,9 @@ impl Release<'_> {
             .ok_or("Нет версии базового пакета")?;
         let old_version = version(before)?;
         let new_version = version(&current)?;
-        let skills = self.changed_skills(&base, "HEAD", true)?;
         if before == current {
             if !self.same_build_inputs(&base, "HEAD")?
-                || !skills.is_empty()
+                || !self.same_skills(&base, "HEAD")?
                 || previous != manifest(self.root)?
             {
                 return Err("Изменение пакета требует новой версии".into());
@@ -446,7 +351,7 @@ impl Release<'_> {
         self.cmd(&["git", "merge-base", "--is-ancestor", &target, head])?;
         if self.manifest_at(&target)?["version"] != number
             || !self.same_build_inputs(&target, head)?
-            || !self.changed_skills(&target, head, true)?.is_empty()
+            || !self.same_skills(&target, head)?
             || self.manifest_at(&target)? != manifest(self.root)?
         {
             return Err("Исходники черновика отличаются от проверенного выпуска".into());

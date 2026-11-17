@@ -163,14 +163,10 @@ fn skill_markdown(path: &Path) -> bool {
 
 fn frontmatter(path: &Path) -> Result<Value> {
     let text = read(path)?;
-    let mut parts = text.splitn(3, "---");
-    require(
-        parts.next().is_some_and(|s| s.trim().is_empty()),
-        "Отсутствует frontmatter",
-    )?;
-    let body = parts.next().ok_or("Отсутствует frontmatter")?;
-    require(parts.next().is_some(), "Отсутствует frontmatter")?;
-    let value = yaml(body)?;
+    let header = rx!(r"(?m)\A---\r?\n((?s:.*?))^---\r?$")
+        .captures(&text)
+        .ok_or("Отсутствует frontmatter")?;
+    let value = yaml(&header[1])?;
     require(value.is_object(), "Frontmatter должен быть объектом")?;
     Ok(value)
 }
@@ -192,9 +188,9 @@ pub(crate) fn metadata(path: &Path) -> Result<Value> {
         "description должен содержать 1–1024 символа",
     )?;
     for field in ["license", "compatibility", "allowed-tools"] {
-        if field == "license" || data.get(field).is_some() {
+        if let Some(value) = data.get(field) {
             require(
-                nonempty(&data[field]),
+                nonempty(value),
                 format!("{field} должен быть непустой строкой"),
             )?;
         }
@@ -205,18 +201,20 @@ pub(crate) fn metadata(path: &Path) -> Result<Value> {
             "compatibility длиннее 500 символов",
         )?;
     }
-    let fields = data["metadata"]
-        .as_object()
-        .ok_or("metadata должен быть строковым словарём")?;
-    require(
-        fields.values().all(Value::is_string),
-        "metadata должен быть строковым словарём",
-    )?;
-    require(
-        data["metadata"]["author"] == "WhyFaust"
-            && data["metadata"]["source"] == "https://github.com/WhyFaust/fstack",
-        "Отсутствуют автор или источник",
-    )?;
+    if let Some(value) = data.get("metadata") {
+        require(
+            value
+                .as_object()
+                .is_some_and(|fields| fields.values().all(Value::is_string)),
+            "metadata должен быть строковым словарём",
+        )?;
+    }
+    if let Some(value) = data.get("disable-model-invocation") {
+        require(
+            value.is_boolean(),
+            "disable-model-invocation должен быть булевым значением",
+        )?;
+    }
     Ok(data)
 }
 
@@ -258,16 +256,22 @@ fn skill_ui_file(root: &Path, folder: &Path, name: &str, path: &Path) -> Result<
         )?;
     }
     let interface = &ui["interface"];
-    metadata_text(interface, "display_name", 64)?;
-    let description = metadata_text(interface, "short_description", 64)?;
-    require(description.chars().count() >= 25, "Короткое UI description")?;
-    let prompt = metadata_text(interface, "default_prompt", 1024)?;
-    require(
-        rx!(r"\$fstack:([a-z0-9-]+)")
-            .captures_iter(&prompt)
-            .any(|entry| &entry[1] == name),
-        "default_prompt без полного имени навыка",
-    )?;
+    if interface.get("display_name").is_some() {
+        metadata_text(interface, "display_name", 64)?;
+    }
+    if interface.get("short_description").is_some() {
+        let description = metadata_text(interface, "short_description", 64)?;
+        require(description.chars().count() >= 25, "Короткое UI description")?;
+    }
+    if interface.get("default_prompt").is_some() {
+        let prompt = metadata_text(interface, "default_prompt", 1024)?;
+        require(
+            rx!(r"\$fstack:([a-z0-9-]+)")
+                .captures_iter(&prompt)
+                .any(|entry| &entry[1] == name),
+            "default_prompt без полного имени навыка",
+        )?;
+    }
     if let Some(value) = ui["policy"].get("allow_implicit_invocation") {
         require(
             value.is_null() || value.is_boolean(),
@@ -360,82 +364,6 @@ fn skill_ui(root: &Path, folder: &Path, name: &str) -> Result<()> {
         )?;
     }
     Ok(())
-}
-
-pub(crate) fn skill_structure(path: &Path) -> Result<()> {
-    let text = read(path)?;
-    let body = text
-        .splitn(3, "---")
-        .nth(2)
-        .ok_or("Отсутствует frontmatter")?;
-    let english = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|name| {
-            if cfg!(windows) {
-                name.eq_ignore_ascii_case("SKILL_en.md")
-            } else {
-                name == "SKILL_en.md"
-            }
-        });
-    let expected = if english {
-        ["Inputs and scope", "Procedure", "Verification and result"]
-    } else {
-        ["Вход и границы", "Порядок работы", "Проверка и результат"]
-    };
-    let mut fence: Option<String> = None;
-    let mut title = false;
-    let mut sections = Vec::new();
-    let mut content = Vec::new();
-    for line in body.lines() {
-        if let Some(marker) = rx!(r"^ {0,3}(`{3,}|~{3,})").captures(line) {
-            let token = &marker[1];
-            match &fence {
-                None => fence = Some(token.to_string()),
-                Some(open)
-                    if open.as_bytes()[0] == token.as_bytes()[0] && token.len() >= open.len() =>
-                {
-                    fence = None
-                }
-                _ => (),
-            }
-            continue;
-        }
-        if fence.is_some() {
-            if !line.trim().is_empty() {
-                if let Some(present) = content.last_mut() {
-                    *present = true;
-                }
-            }
-            continue;
-        }
-        if let Some(heading) = rx!(r"^ {0,3}(#{1,2})(?:[ \t]+(.*)|$)").captures(line) {
-            let name = heading.get(2).map_or("", |m| m.as_str()).trim();
-            let name = rx!(r"[ \t]+#+[ \t]*$").replace(name, "");
-            if heading[1].len() == 1 {
-                require(
-                    !title && sections.is_empty() && !name.is_empty(),
-                    "Ожидался один заголовок H1 перед разделами",
-                )?;
-                title = true;
-            } else {
-                require(title, "Перед разделами требуется H1")?;
-                sections.push(name.into_owned());
-                content.push(false);
-            }
-        } else if !line.trim().is_empty() {
-            if let Some(present) = content.last_mut() {
-                *present = true;
-            }
-        }
-    }
-    require(
-        title && sections == expected && content.iter().all(|present| *present),
-        format!(
-            "{}: требуется H1 и три непустых раздела шаблона",
-            path.display()
-        ),
-    )
 }
 
 fn strip_inline(line: &str) -> String {
@@ -584,33 +512,7 @@ pub(crate) fn check_package_major(root: &Path, number: &str) -> Result<()> {
 
 pub(crate) fn check_versions(root: &Path, number: &str) -> Result<()> {
     version::parse(number)?;
-    check_launcher_version(root, number)?;
-    let mut count = 0;
-    for folder in entries(&root.join("skills"))? {
-        if !folder.is_dir() {
-            continue;
-        }
-        let mut previous: Option<String> = None;
-        for path in entries(&folder)? {
-            if skill_markdown(&path) {
-                let text = read(&path)?.replace("\r\n", "\n");
-                require(
-                    rx!(r"\A---\n(?s:.*?)\n---(?:\n|\z)").is_match(&text),
-                    "Нет frontmatter версии",
-                )?;
-                let data = frontmatter(&path)?;
-                let version = string(&data["metadata"], "version")?;
-                version::parse(version)?;
-                require(
-                    previous.as_deref().is_none_or(|v| v == version),
-                    "Версии локализаций навыка различаются",
-                )?;
-                previous = Some(version.into());
-                count += 1;
-            }
-        }
-    }
-    require(count > 0, "Не найдены навыки")
+    check_launcher_version(root, number)
 }
 
 fn hooks(root: &Path, relative: &str) -> Result<()> {
@@ -770,8 +672,15 @@ pub(crate) fn check(root: &Path) -> Result<String> {
         let folder = root.join("skills").join(name);
         for path in entries(&folder)? {
             if skill_markdown(&path) {
-                metadata(&path)?;
-                skill_structure(&path)?;
+                let data =
+                    metadata(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+                require(
+                    data["disable-model-invocation"] == true,
+                    format!(
+                        "{}: disable-model-invocation должен быть true",
+                        path.display()
+                    ),
+                )?;
             }
         }
         require(

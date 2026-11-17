@@ -273,13 +273,7 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         .filter_map(|v| v["name"].as_str().map(str::to_owned))
         .collect();
     require(
-        actual == expected
-            && skills.iter().all(|v| {
-                v["enabled"] == true
-                    && v["interface"]["defaultPrompt"].as_str().is_some_and(|p| {
-                        p.contains(&format!("${}", v["name"].as_str().unwrap_or("")))
-                    })
-            }),
+        actual == expected && skills.iter().all(|v| v["enabled"] == true),
         "Обнаруженные навыки не совпадают с пакетом",
     )?;
     let hooks = flatten(hooks, "hooks")?;

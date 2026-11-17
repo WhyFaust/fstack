@@ -84,7 +84,7 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
             &root,
             &format!("skills/{name}/SKILL.md"),
             format!(
-                "---\nname: {name}\nmetadata:\n  version: 0.2.0\n---\n# Original body {name}\n"
+                "---\nname: {name}\ndescription: Fixture skill\ndisable-model-invocation: true\n---\n# Original body {name}\n"
             ),
         );
     }
@@ -333,14 +333,6 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
             .unwrap()
             .unwrap(),
     );
-    let alpha = root.join("skills/alpha/SKILL.md");
-    fs::write(
-        &alpha,
-        fs::read_to_string(&alpha)
-            .unwrap()
-            .replace("0.2.0", "0.2.1"),
-    )
-    .unwrap();
     save(&root, PACKAGE_VERSION, "0.3.0\n");
     commit(&root, "feat: validated behavior");
     let sha = git(&root, &["rev-parse", "HEAD"]);
@@ -391,6 +383,13 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
             .read_to_end(&mut bytes)
             .unwrap();
         assert_eq!(bytes, b"Independent skill resource\n");
+        bytes.clear();
+        archive
+            .by_name("fstack/skills/alpha/SKILL.md")
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes, fs::read(root.join("skills/alpha/SKILL.md")).unwrap());
         let mut text = String::new();
         archive
             .by_name("fstack/.codex-plugin/plugin.json")
@@ -459,27 +458,41 @@ fn explicit_version_checks_package_and_skill_changes_against_the_pr_base() {
     };
     let base = git(&root, &["rev-parse", "HEAD"]);
     assert_eq!(release.check_next(&base).unwrap(), "0.2.0");
-    assert!(release.prepare(Some("1.0.0")).is_err());
+    for invalid in ["1.0.0", "1.2", "00.2.3", "0.2.3-rc1", "0.2.3+build"] {
+        assert!(release.prepare(Some(invalid)).is_err(), "{invalid}");
+    }
 
-    let entry = "skills/alpha/SKILL.md";
-    let original = fs::read_to_string(root.join(entry)).unwrap();
-    save(&root, entry, format!("{original}\nNew instruction\n"));
-    commit(&root, "feat: add skill instruction");
-    assert!(release
-        .check_next(&base)
-        .unwrap_err()
-        .contains("повышение версии"));
-
-    save(
-        &root,
-        entry,
-        format!("{}\nNew instruction\n", original.replace("0.2.0", "0.2.1")),
-    );
-    commit(&root, "fix: update skill version");
-    assert!(release
-        .check_next(&base)
-        .unwrap_err()
-        .contains("новой версии"));
+    for (path, text) in [
+        (
+            "skills/alpha/SKILL.md",
+            Some(
+                "---\nname: alpha\ndescription: Fixture skill\ndisable-model-invocation: true\n---\nNew instruction\n",
+            ),
+        ),
+        (
+            "skills/alpha/SKILL_en.md",
+            Some("---\nname: alpha\ndescription: Localized skill\n---\n"),
+        ),
+        ("skills/alpha/explanation.md", Some("New resource\n")),
+        ("skills/beta/SKILL.md", None),
+        (
+            "skills/gamma/SKILL.md",
+            Some("---\nname: gamma\ndescription: Added skill\n---\n"),
+        ),
+    ] {
+        let previous = git(&root, &["rev-parse", "HEAD"]);
+        if let Some(text) = text {
+            save(&root, path, text);
+        } else {
+            fs::remove_file(root.join(path)).unwrap();
+        }
+        commit(&root, "fix: change shipped skill files");
+        assert_eq!(
+            release.check_next(&previous).unwrap_err(),
+            "Изменение пакета требует новой версии",
+            "{path}"
+        );
+    }
     release.prepare(Some("0.2.1")).unwrap();
     commit(&root, "chore: prepare package");
     assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
@@ -509,7 +522,10 @@ fn publishing_depends_on_the_current_version_only() {
     );
     save(&root, "skills/alpha/explanation.md", "new resource\n");
     commit(&root, "fix: changed shipped skill");
-    assert!(release.plan(&[same]).is_err());
+    assert_eq!(
+        release.plan(&[same]).unwrap_err(),
+        "Версия 0.2.0 уже опубликована с другими исходниками"
+    );
     assert_eq!(git(&root, &["rev-parse", "HEAD^"]), base);
 }
 
@@ -535,18 +551,4 @@ fn release_preparation_binds_the_staged_build_inputs() {
     release.prepare(None).unwrap();
     commit(&root, "chore: refresh package");
     assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
-}
-
-#[test]
-fn each_localization_uses_the_same_stable_version() {
-    let (_temp, root) = fixture();
-    for name in ["1.2", "01.2.3", "1.2.3-rc1", "1.2.3+build"] {
-        assert!(version(name).is_err());
-    }
-    let localized = "skills/alpha/SKILL_en.md";
-    let raw = fs::read_to_string(root.join("skills/alpha/SKILL.md")).unwrap();
-    save(&root, localized, raw.replace("0.2.0", "0.2.1"));
-    assert!(check_versions(&root).is_err());
-    save(&root, localized, raw);
-    assert_eq!(check_versions(&root).unwrap(), "0.2.0");
 }

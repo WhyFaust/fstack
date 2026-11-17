@@ -1,6 +1,2 @@
-interface:
-  display_name: "Выбор навыков"
-  short_description: "Основной метод и применимые предметные навыки"
-  default_prompt: "Используй $fstack:route, чтобы выбрать метод под ближайший результат и предметные навыки для его границ."
 policy:
   allow_implicit_invocation: false

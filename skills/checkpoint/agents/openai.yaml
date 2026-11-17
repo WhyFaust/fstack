@@ -1,6 +1,2 @@
-interface:
-  display_name: Сохранение проверяемой точки продолжения
-  short_description: Сохранение проверяемой точки продолжения
-  default_prompt: "Сохрани через $fstack:checkpoint точку продолжения этой задачи с ревизией, доказательствами и ближайшим шагом."
 policy:
   allow_implicit_invocation: false

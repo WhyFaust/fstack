@@ -1,6 +1,2 @@
-interface:
-  display_name: "Сценарий и визуальное решение UI"
-  short_description: "Сценарий, компоненты и проверка интерфейса"
-  default_prompt: "Используй $fstack:ui, чтобы проработать и проверить интерфейс в текущей дизайн-системе."
 policy:
   allow_implicit_invocation: false

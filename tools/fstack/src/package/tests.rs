@@ -41,6 +41,12 @@ fn frontmatter_validates_types_and_name() {
     let base = Fixture::metadata();
     f.write(&base);
     assert_eq!(metadata(&f.skill).unwrap(), base);
+    for field in ["name", "description"] {
+        let mut value = base.clone();
+        value.as_object_mut().unwrap().remove(field);
+        f.write(&value);
+        assert!(metadata(&f.skill).unwrap_err().contains(field));
+    }
     for changes in [
         json!({"name":"example--invalid"}),
         json!({"name":"another"}),
@@ -52,7 +58,7 @@ fn frontmatter_validates_types_and_name() {
         json!({"compatibility":"x".repeat(501)}),
         json!({"allowed-tools":[]}),
         json!({"metadata":{"author":"WhyFaust","version":2}}),
-        json!({"metadata":{"author":"another","source":"https://github.com/WhyFaust/fstack"}}),
+        json!({"disable-model-invocation":"true"}),
     ] {
         let mut value = base.clone();
         for (key, v) in changes.as_object().unwrap() {
@@ -74,6 +80,21 @@ fn frontmatter_validates_types_and_name() {
 }
 
 #[test]
+fn frontmatter_requires_delimiter_lines() {
+    let f = Fixture::new();
+    let header = "---\r\nname: example\r\ndescription: Текст --- примера.\r\n";
+    fs::write(&f.skill, format!("{header}---\r\nТекст\r\n")).unwrap();
+    assert_eq!(
+        metadata(&f.skill).unwrap()["description"],
+        "Текст --- примера."
+    );
+    fs::write(&f.skill, format!("{header}--- текст")).unwrap();
+    assert!(metadata(&f.skill)
+        .unwrap_err()
+        .contains("Отсутствует frontmatter"));
+}
+
+#[test]
 fn skill_ui_validates_types_limits_policy_and_dependencies() {
     let f = Fixture::new();
     let path = f.folder.join("openai.yaml");
@@ -87,6 +108,7 @@ fn skill_ui_validates_types_limits_policy_and_dependencies() {
         skill_ui_file(&f.root, &f.folder, "example", &path)
     };
     validate(&base).unwrap();
+    validate(&json!({"interface":{"display_name":"Пример"}})).unwrap();
     for policy in [
         json!({}),
         json!({"allow_implicit_invocation":true}),
@@ -296,28 +318,6 @@ fn nested_resource_directory_links_are_checked_after_valid_files() {
     fs::remove_dir(&link).unwrap();
 }
 
-#[test]
-fn structure_ignores_fences_and_requires_order_and_content() {
-    let f = Fixture::new();
-    f.write(&Fixture::metadata());
-    let header = read(&f.skill).unwrap();
-    let sections="## Вход и границы\nВход.\n## Порядок работы\n```md\n## Чужой заголовок\n```\n## Проверка и результат\nРезультат.\n";
-    fs::write(&f.skill, format!("{header}{sections}")).unwrap();
-    skill_structure(&f.skill).unwrap();
-    for body in [
-        sections.replace("## Вход и границы", "## Иной раздел"),
-        sections.replace("Результат.", ""),
-        format!("{sections}# Второй заголовок\n"),
-        sections.replace("## Порядок работы", "## Проверка и результат"),
-    ] {
-        fs::write(&f.skill, format!("{header}{body}")).unwrap();
-        assert!(skill_structure(&f.skill).is_err());
-    }
-    let english = f.folder.join("SKILL_en.md");
-    fs::write(&english,format!("{header}## Inputs and scope\nInput.\n## Procedure\nDo it.\n## Verification and result\nCheck.\n")).unwrap();
-    skill_structure(&english).unwrap();
-}
-
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -343,6 +343,55 @@ fn copy_tree(from: &Path, to: &Path) {
         }
     }
 }
+
+#[test]
+fn complete_package_accepts_minimal_skills_with_explicit_invocation() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path().join("package");
+    copy_tree(&root(), &package);
+    let folder = package.join("skills/no-comments");
+    let skill = folder.join("SKILL.md");
+    let ui = folder.join("agents/openai.yaml");
+    let header = "---\nname: no-comments\ndescription: Проверяет код.\n";
+    let body = "---\n\nПроверь код.\n";
+    let policy = "policy:\n  allow_implicit_invocation: false\n";
+
+    fs::write(
+        &skill,
+        format!("{header}disable-model-invocation: true\n{body}"),
+    )
+    .unwrap();
+    fs::write(&ui, policy).unwrap();
+    check(&package).unwrap();
+
+    for value in ["false", "\"true\""] {
+        fs::write(
+            &skill,
+            format!("{header}disable-model-invocation: {value}\n{body}"),
+        )
+        .unwrap();
+        assert!(check(&package)
+            .unwrap_err()
+            .contains("disable-model-invocation"));
+    }
+
+    fs::write(&skill, format!("{header}{body}")).unwrap();
+    assert!(check(&package)
+        .unwrap_err()
+        .contains("disable-model-invocation"));
+    fs::write(
+        &skill,
+        format!("{header}disable-model-invocation: true\n{body}"),
+    )
+    .unwrap();
+    for value in ["true", "\"false\"", "null"] {
+        fs::write(&ui, policy.replace("false", value)).unwrap();
+        assert!(check(&package).unwrap_err().contains("openai.yaml"));
+    }
+    fs::remove_file(&ui).unwrap();
+    assert!(check(&package).unwrap_err().contains("openai.yaml"));
+}
+
 #[test]
 fn complete_package_rejects_broken_release_contracts() {
     let temp = tempfile::tempdir().unwrap();
@@ -430,7 +479,7 @@ fn case_variants_cannot_skip_validation() {
     fs::rename(&skill, &interim).unwrap();
     let lower = skill.with_file_name("skill.md");
     fs::rename(interim, &lower).unwrap();
-    fs::write(&lower, original.replace("license: MIT", "license: 123")).unwrap();
+    fs::write(&lower, original.replace("name: no-comments", "name: 123")).unwrap();
     assert!(check(&package).is_err());
     fs::write(&lower, original).unwrap();
     check(&package).unwrap();

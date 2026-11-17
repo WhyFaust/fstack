@@ -1,6 +1,2 @@
-interface:
-  display_name: Причина решения
-  short_description: Причины решений по истории и источникам
-  default_prompt: Используй $fstack:why, чтобы восстановить причину прежнего решения по истории изменений и обсуждениям.
 policy:
   allow_implicit_invocation: false

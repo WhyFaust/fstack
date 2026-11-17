@@ -17,6 +17,7 @@
 | `refactor` | Упрощение кода с сохранением контрактов | [Открыть](../skills/refactor/SKILL.md) |
 | `review` | Ревью изменения и повторная проверка замечаний по коммитам | [Открыть](../skills/review/SKILL.md) |
 | `verify` | Проверки и доказательства готовности | [Открыть](../skills/verify/SKILL.md) |
+| `unslop` | Удаление шаблонности ИИ из текста в любом результате работы | [Открыть](../skills/unslop/SKILL.md) |
 
 ## Инженерные решения
 
@@ -69,8 +70,7 @@
 
 | Навык | Когда применять | Инструкция |
 | --- | --- | --- |
-| `write` | Новый авторский текст, комментарий, ответ, идеи, названия, план или адаптация под другую аудиторию, формат или площадку. Вызов [$fstack:write](../skills/write/SKILL.md) | [Открыть](../skills/write/SKILL.md), [English](../skills/write/SKILL_en.md) |
-| `edit` | Вычитка, упрощение или сокращение текста для той же аудитории в прежнем формате. Вызов [$fstack:edit](../skills/edit/SKILL.md) | [Открыть](../skills/edit/SKILL.md), [English](../skills/edit/SKILL_en.md) |
+| `write` | Написание, редактура и адаптация текста для аудитории, формата и площадки | [Открыть](../skills/write/SKILL.md), [English](../skills/write/SKILL_en.md) |
 | `research-text` | Подбор материалов, поиск свежих поводов и проверка фактов с источниками. Вызов [$fstack:research-text](../skills/research-text/SKILL.md) | [Открыть](../skills/research-text/SKILL.md), [English](../skills/research-text/SKILL_en.md) |
 | `deepread` | Разбор присланного материала и выполнение поручения по нему с проверкой данных по источнику. Вызов [$fstack:deepread](../skills/deepread/SKILL.md) | [Открыть](../skills/deepread/SKILL.md) |
 

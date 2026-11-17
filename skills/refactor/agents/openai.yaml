@@ -1,6 +1,2 @@
-interface:
-  display_name: Рефакторинг кода
-  short_description: Упрощение кода с сохранением контрактов
-  default_prompt: Используй $fstack:refactor, чтобы упростить указанную область и подтвердить сохранение поведения.
 policy:
   allow_implicit_invocation: false

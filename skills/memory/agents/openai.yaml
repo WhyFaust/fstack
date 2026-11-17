@@ -1,6 +1,2 @@
-interface:
-  display_name: Память проектов в Obsidian
-  short_description: Поправки проекта и общие предпочтения в Obsidian
-  default_prompt: Используй $fstack:memory из плагина fstack для указанной задачи с проверяемым результатом.
 policy:
   allow_implicit_invocation: false
