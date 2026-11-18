@@ -1,6 +1,7 @@
 """Проверяет обнаружение и явную загрузку всех установленных навыков Codex."""
 import argparse
 import json
+import re
 import subprocess
 import tempfile
 import threading
@@ -9,6 +10,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from app_server import Server, environment
+
+
+def check_mr_route(instruction: str, coordinator: Path, watch_pr: Path) -> None:
+    route = re.search(
+        r"До первого чтения или записи по GitLab MR[^.]*?открой\s+"
+        r"\[\$fstack:watch-pr\]\(([^)]+)\)", instruction,
+    )
+    if not route or (coordinator.parent / route[1]).resolve() != watch_pr:
+        raise RuntimeError("В инструкции координатора нет перехода к установленному watch-pr до первого обращения к MR")
 
 
 class ResponsesHandler(BaseHTTPRequestHandler):
@@ -96,7 +106,9 @@ stream_max_retries = 0
                            or Path(skill["path"]).resolve() != entries[skill["name"]] for skill in discovered)):
                 raise RuntimeError("Codex не обнаружил все включённые навыки по установленным путям")
             cases = [("Проверь изменение.", None)]
-            cases.extend((f"${name} Проверь доступность инструкции.", name) for name in sources)
+            cases.extend((f"${name} Проверь доступность инструкции.", name) for name in sources
+                         if name != "fstack:faust-mode")
+            cases.append(("$fstack:faust-mode Проверь состояние существующего GitLab MR.", "fstack:faust-mode"))
             for prompt, selected in cases:
                 provider.inputs.clear()
                 deadline = time.monotonic() + 60
@@ -124,6 +136,9 @@ stream_max_retries = 0
                         f"Неверная загрузка SKILL.md для {prompt!r}. "
                         f"Ожидалось {sorted(expected)}, получено {sorted(loaded)}."
                     )
+                if selected == "fstack:faust-mode":
+                    instruction = next(text for text in texts if sources[selected] in text)
+                    check_mr_route(instruction, entries[selected], entries["fstack:watch-pr"])
         finally:
             server.close()
             provider.shutdown()
