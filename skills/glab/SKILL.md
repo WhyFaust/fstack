@@ -3,7 +3,7 @@ name: glab
 description: "Работает с GitLab через glab, когда нужная операция недоступна через MCP."
 disable-model-invocation: true
 metadata:
-  version: "2.2.2"
+  version: "2.2.3"
 ---
 
 # GitLab через CLI
@@ -11,6 +11,8 @@ metadata:
 Проверь GitLab MCP. Если операции нет или повторные тайм-ауты мешают работе,
 сверь состояние, область и авторизацию по [$fstack:verify](../verify/SKILL.md),
 затем используй CLI. Отказ политики или прав исключает переход и смену токена.
+При отказе Guardian останови серию записей по
+[$fstack:watch-pr](../watch-pr/SKILL.md#остановить-серию-записей-при-отказе).
 Сверь хост, проект, IID, ветку и ревизию, особенно при
 другом проекте или нескольких remotes. Установленный синтаксис проверь через
 `glab <command> --help`. Сопровождение, замечания и merge ведут
@@ -18,6 +20,10 @@ metadata:
 и [$fstack:merge](../merge/SKILL.md).
 
 ## Чтение и CI
+
+У `get_merge_request` в GitLab MCP передавай одно значение `include` на
+вызов. Для нескольких видов данных сделай отдельные запросы, например
+`["pipelines"]` и `["approvals"]`, и сверь их с тем же MR и ревизией.
 
 Для снимка используй `ci get` (`ci trace` ждёт, `ci view` интерактивен).
 Для `ci retry` возьми ID попытки, для коллекций `glab api --paginate`.
