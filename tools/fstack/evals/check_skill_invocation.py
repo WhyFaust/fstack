@@ -1,4 +1,4 @@
-"""Проверяет, какой текст навыка установленный Codex отправляет провайдеру."""
+"""Проверяет обнаружение и явную загрузку всех установленных навыков Codex."""
 import argparse
 import json
 import subprocess
@@ -69,17 +69,35 @@ stream_max_retries = 0
 ''', encoding="utf-8")
         run("plugin", "marketplace", "add", str(package))
         installed = json.loads(run("plugin", "add", "fstack@fstack", "--json"))
-        source = (package / "skills/review/SKILL.md").read_text(encoding="utf-8").strip()
-        entry = Path(installed["installedPath"]) / "skills/review/SKILL.md"
-        if entry.read_text(encoding="utf-8").strip() != source:
-            raise RuntimeError("Установленная инструкция review отличается от пакета")
+        root = Path(installed["installedPath"]).resolve()
+        sources = {f"fstack:{entry.parent.name}": entry.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+                   for entry in sorted((package / "skills").glob("*/SKILL.md"))}
+        entries = {f"fstack:{entry.parent.name}": entry.resolve()
+                   for entry in (root / "skills").glob("*/SKILL.md")}
+        if not sources or sources.keys() != entries.keys():
+            raise RuntimeError("Набор установленных навыков отличается от пакета")
+        for name, source in sources.items():
+            if entries[name].read_text(encoding="utf-8").replace("\r\n", "\n").strip() != source:
+                raise RuntimeError(f"Установленная инструкция {name} отличается от пакета")
 
         server = Server(codex, home, workspace)
         thread = threading.Thread(target=provider.serve_forever)
         thread.start()
         try:
             server.initialize(time.monotonic() + 60)
-            for prompt, explicit in [("Проверь изменение.", False), ("$fstack:review Проверь изменение.", True)]:
+            groups = server.request("skills/list", {"cwds": [str(workspace)], "forceReload": True},
+                                    time.monotonic() + 60)["data"]
+            if not groups or any(group.get("errors") for group in groups):
+                raise RuntimeError(f"Ошибки обнаружения навыков: {groups}")
+            discovered = [skill for group in groups for skill in group["skills"]
+                          if skill.get("pluginId") == "fstack@fstack"]
+            if (len(discovered) != len(entries) or {skill["name"] for skill in discovered} != entries.keys()
+                    or any(skill.get("enabled") is not True
+                           or Path(skill["path"]).resolve() != entries[skill["name"]] for skill in discovered)):
+                raise RuntimeError("Codex не обнаружил все включённые навыки по установленным путям")
+            cases = [("Проверь изменение.", None)]
+            cases.extend((f"${name} Проверь доступность инструкции.", name) for name in sources)
+            for prompt, selected in cases:
                 provider.inputs.clear()
                 deadline = time.monotonic() + 60
                 started = server.request("thread/start", {
@@ -99,13 +117,20 @@ stream_max_retries = 0
                     raise RuntimeError(f"Ожидался один локальный запрос, получено {len(provider.inputs)}")
                 texts = [part["text"].replace("\r\n", "\n") for item in provider.inputs[0]
                          for part in item.get("content", []) if part.get("type") == "input_text"]
-                if prompt not in texts or any(source in text for text in texts) != explicit:
-                    raise RuntimeError(f"Неверная загрузка полного SKILL.md для запроса {prompt!r}")
+                loaded = {name for name, source in sources.items() if any(source in text for text in texts)}
+                expected = {selected} if selected is not None else set()
+                if prompt not in texts or loaded != expected:
+                    raise RuntimeError(
+                        f"Неверная загрузка SKILL.md для {prompt!r}. "
+                        f"Ожидалось {sorted(expected)}, получено {sorted(loaded)}."
+                    )
         finally:
             server.close()
             provider.shutdown()
             thread.join()
-    print(f"{run('--version').strip()}: два локальных запроса, явная загрузка review подтверждена.")
+    print(f"{run('--version').strip()}: обнаружено {len(sources)} навыков; "
+          f"{len(sources) + 1} локальных запросов подтвердили явную загрузку каждого "
+          "и отсутствие полной инструкции при обычном запросе.")
 
 
 if __name__ == "__main__":
