@@ -950,7 +950,6 @@ fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
     );
     assert!(!vault.join("Codex Memory").exists());
     let issued = event("PostToolUse", "first", post(command, &receipt));
-    assert_eq!(event("Stop", "first", stop())["decision"], "block");
     let instructions = issued["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
@@ -961,7 +960,7 @@ fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
     .captures(instructions)
     .unwrap();
     let rule = "Для проверок этого проекта всегда используй uv run pytest.";
-    let (command, receipt) = if save_correction {
+    if save_correction {
         let command = format!("{} --correction 'Тесты' '{rule}'", &stage[1]);
         let receipt = runtime.call(
             &[
@@ -975,19 +974,18 @@ fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
             ],
             None,
         );
-        (command, receipt)
-    } else {
-        let command = format!("{} --skip", &stage[1]);
-        let receipt = runtime.call(&["memory", "stage", "--turn", &stage[2], "--skip"], None);
-        (command, receipt)
-    };
-    event("PostToolUse", "first", post(&command, &receipt));
+        event("PostToolUse", "first", post(&command, &receipt));
+    }
     assert_eq!(event("Stop", "first", stop()), json!({}));
     let records = runtime.json(&["memory", "search", "pytest"], None);
     if save_correction {
         assert_eq!(records[0]["body"], rule);
     } else {
         assert_eq!(records, json!([]));
+        assert_eq!(
+            runtime.json(&["memory", "diagnostics"], None)["phase"],
+            "skipped"
+        );
     }
     let connected = runtime.json(&["memory", "status"], None);
     assert_eq!(connected["mode"], "auto");

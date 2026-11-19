@@ -1,6 +1,6 @@
 use super::{
     action, codex_task, correction, decode, format, io,
-    pending::{self, Delivery, Pending, Stop},
+    pending::{self, Delivery, Pending},
     report_action, scope as project_scope,
     store::{Binding, Store, WriteOutcome},
     Result,
@@ -527,12 +527,13 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         let instructions = format!(
             concat!(
                 "Память fstack, проект {project}, режим {mode}.{recall} ",
-                "В Plan пропусти запись. Устойчивую поправку пользователя к правилу проекта примени сейчас. ",
-                "Проверь дубликаты и подготовь новую поправку отдельной командой из текущего cwd: ",
+                "В Plan пропусти запись. Если основания для операции нет, ответь на основной запрос. Stop отметит пропуск. ",
+                "Устойчивую поправку пользователя к правилу проекта примени сейчас. ",
+                "Проверь дубликаты и подготовь поправку командой ",
                 "{prefix} stage --turn {token} --correction 'Тема' 'Полное правило и область'. ",
-                "При замене добавь --supersedes ID. Если нового знания нет, замени --correction и оба поля на --skip. ",
+                "При замене добавь --supersedes ID. Передай строку stage целиком в cmd инструмента exec_command из рабочего каталога хода. ",
                 "Для решения, предпочтения, черновика или сложного текста прочитай {skill}. ",
-                "За ход принимается одна операция. Её сохраняет Stop. Не показывай токен."
+                "Stop применит одну операцию за ход. Служебные параметры и квитанцию оставь в вызове инструмента."
             ),
             project = b.project,
             mode = b.mode,
@@ -616,18 +617,18 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         }
     }
     let confirmed = ordinary || pending.confirmed(&key, &scope, &epoch)?;
-    let outcome = pending.claim(
+    let claimed = pending.claim(
         &key,
         &scope,
         session,
         turn,
         &epoch,
         Delivery::Current {
-            review: confirmed && first_stop,
             first_stop,
+            confirmed,
         },
     )?;
-    if !confirmed && outcome != Some(Stop::Claimed) {
+    if !confirmed && !claimed {
         return Ok(json!({}));
     }
     let mut failed = false;
@@ -678,18 +679,10 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             pending.finish(&scope, &claim, "failure", false)?;
         }
     }
-    if outcome == Some(Stop::Review) {
-        return Ok(
-            json!({"decision":"block","reason":"Оценка памяти за ход ещё не принята. Вне Plan используй последнюю команду stage из UserPromptSubmit. Для устойчивой поправки проекта передай --correction, если нового знания нет — --skip. Для остальных операций прочитай fstack:memory. Если подготовка недоступна, сообщи об этом и заверши задачу."}),
-        );
-    }
     if failed {
         return Ok(
             json!({"systemMessage":"Операция памяти fstack пока не применена. Очередь проверит следующий обычный Stop в этом чате. Техническое состояние доступно через memory diagnostics."}),
         );
-    }
-    if outcome == Some(Stop::Missing) {
-        return Ok(json!({"systemMessage":"Оценка памяти fstack для этого хода не подтверждена."}));
     }
     Ok(json!({}))
 }

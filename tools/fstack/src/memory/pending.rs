@@ -5,16 +5,10 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-pub const REVIEW: &str = "{\"review_required\":true}";
+const LEGACY_REVIEW: &str = "{\"review_required\":true}";
 const REPORT: &str = "{\"report_requested\":true}";
-#[derive(Debug, PartialEq)]
-pub enum Stop {
-    Review,
-    Missing,
-    Claimed,
-}
 pub enum Delivery {
-    Current { review: bool, first_stop: bool },
+    Current { first_stop: bool, confirmed: bool },
     Replay,
 }
 enum Capture {
@@ -456,7 +450,7 @@ impl Pending {
         conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM pending WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND (action NOT IN (?5,?6) OR EXISTS(SELECT 1 FROM ordinary_turns o WHERE o.turn=pending.turn AND o.nonce=pending.nonce)))
               OR EXISTS(SELECT 1 FROM claimed WHERE turn=?1 AND nonce=?2 AND scope=?3 AND expires>=?4 AND epoch=?7)",
-            params![key, nonce, scope, now(), REVIEW, REPORT, epoch], |row| row.get(0)
+            params![key, nonce, scope, now(), LEGACY_REVIEW, REPORT, epoch], |row| row.get(0)
         ).map_err(io::err)
     }
     pub fn stage(&self, key: &str, token: &str, scope: &str, action: &Value) -> Result<bool> {
@@ -473,7 +467,7 @@ impl Pending {
             return Ok(false);
         }
         let serialized = action.to_string();
-        let changed=conn.execute("UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? AND expires>=? AND (action IS NULL OR action=? OR action=?)",params![serialized,key,nonce,scope,now(),serialized,REVIEW]).map_err(io::err)?;
+        let changed=conn.execute("UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? AND expires>=? AND (action IS NULL OR action=? OR action=?)",params![serialized,key,nonce,scope,now(),serialized,LEGACY_REVIEW]).map_err(io::err)?;
         let conflict = if changed == 0 {
             conn.query_row("SELECT 1 FROM pending WHERE turn=? AND nonce=? AND scope=? AND expires>=? AND action<>?",params![key,nonce,scope,now(),serialized],|_|Ok(())).optional().map_err(io::err)?.is_some()&&self.current(key,nonce)?
         } else {
@@ -514,16 +508,16 @@ impl Pending {
         turn: &str,
         epoch: &str,
         delivery: Delivery,
-    ) -> Result<Option<Stop>> {
+    ) -> Result<bool> {
         let _turn_lock = self.lock_turn(key)?;
         let Some(nonce) = self.generation(key)? else {
-            return Ok(None);
+            return Ok(false);
         };
         let Some(conn) = self.connection(false, false)? else {
-            return Ok(None);
+            return Ok(false);
         };
         if !self.current(key, &nonce)? {
-            return Ok(None);
+            return Ok(false);
         }
         let replay = matches!(delivery, Delivery::Replay);
         if digest(&[session, turn]) != key {
@@ -544,7 +538,7 @@ impl Pending {
                     replay,
                     session,
                     turn,
-                    REVIEW,
+                    LEGACY_REVIEW,
                     REPORT
                 ],
                 |r| r.get(0),
@@ -552,7 +546,7 @@ impl Pending {
             .optional()
             .map_err(io::err)?;
         let Some(action) = row else {
-            return Ok(None);
+            return Ok(false);
         };
         if action.as_deref() == Some(REPORT)
             && matches!(
@@ -563,32 +557,29 @@ impl Pending {
                 }
             )
         {
-            return Ok(None);
+            return Ok(false);
         }
-        if action.is_none() && matches!(delivery, Delivery::Current { review: true, .. }) {
-            conn.execute(
-                "UPDATE pending SET action=? WHERE turn=?",
-                params![REVIEW, key],
-            )
-            .map_err(io::err)?;
-            Self::phase(&conn, scope, "review")?;
-            conn.execute_batch("COMMIT").map_err(io::err)?;
-            return Ok(Some(Stop::Review));
-        }
-        let outcome = if action
+        let claimed = action
             .as_deref()
-            .is_some_and(|s| !matches!(s, REVIEW | REPORT))
-        {
+            .is_some_and(|s| !matches!(s, LEGACY_REVIEW | REPORT));
+        if claimed {
             conn.execute(
                 "INSERT INTO claimed SELECT turn,nonce,scope,expires,action,?,?,?,0 FROM pending WHERE turn=?",
                 params![session,turn,epoch,key],
             ).map_err(io::err)?;
             Self::phase(&conn, scope, "pending")?;
-            Stop::Claimed
         } else {
-            Self::phase(&conn, scope, "unconfirmed")?;
-            Stop::Missing
-        };
+            let phase = match (action.as_deref(), delivery) {
+                (
+                    None | Some(LEGACY_REVIEW),
+                    Delivery::Current {
+                        confirmed: true, ..
+                    },
+                ) => "skipped",
+                _ => "unconfirmed",
+            };
+            Self::phase(&conn, scope, phase)?;
+        }
         conn.execute("DELETE FROM pending WHERE turn=?", [key])
             .map_err(io::err)?;
         conn.execute("DELETE FROM ordinary_turns WHERE turn=?", [key])
@@ -596,7 +587,7 @@ impl Pending {
         conn.execute("DELETE FROM issued_modes WHERE turn=?", [key])
             .map_err(io::err)?;
         conn.execute_batch("COMMIT").map_err(io::err)?;
-        Ok(Some(outcome))
+        Ok(claimed)
     }
 
     pub fn due(
@@ -634,7 +625,7 @@ impl Pending {
                     epoch,
                     now(),
                     key,
-                    REVIEW,
+                    LEGACY_REVIEW,
                     REPORT
                 ],
                 |row| {
@@ -758,15 +749,18 @@ impl Pending {
             )
             .map_err(io::err)?;
         let rows = stmt
-            .query_map(params![scope, now(), REVIEW, REPORT, scope, now()], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, bool>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            })
+            .query_map(
+                params![scope, now(), LEGACY_REVIEW, REPORT, scope, now()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, bool>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
             .map_err(io::err)?;
         for row in rows {
             let (key, nonce, claimed, session, epoch) = row.map_err(io::err)?;
