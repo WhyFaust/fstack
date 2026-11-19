@@ -55,10 +55,12 @@ python tools/fstack/evals/check_skill_invocation.py /absolute/path/to/package --
 и доступный только для чтения снимок MR. Попроси сообщить состояние MR. В журнале
 вызовов чтение установленного `watch-pr/SKILL.md` должно предшествовать чтению снимка.
 
-Для проверки записи в Codex Desktop отправь поправку из поля ввода нового
-чата проекта в обычном режиме. Убедись, что `UserPromptSubmit` выдал команду
-`memory stage`, а после завершения хода `memory search` находит заметку
-в Obsidian с `session_id` этого чата. В проверенном Codex 0.169.0-alpha.11.1
+Для проверки памяти в Codex Desktop начни новый чат проекта в обычном режиме.
+После запроса без нового знания чат заканчивает ход первым ответом, а
+`memory diagnostics` показывает `phase: skipped`. Затем отправь поправку из
+поля ввода. Убедись, что `UserPromptSubmit` выдал команду `memory stage`, а
+после завершения хода `memory search` находит заметку в Obsidian с `session_id`
+этого чата. В проверенном Codex 0.169.0-alpha.11.1
 поручения `create_thread` и `send_message_to_thread` приходят как результаты
 инструментов. `UserPromptSubmit` запускается при пользовательском вводе.
 [Обработка входа в Codex](https://github.com/openai/codex/blob/rust-v0.169.0-alpha.11/codex-rs/core/src/hook_runtime.rs#L708-L748).

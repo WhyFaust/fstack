@@ -745,7 +745,33 @@ fn post(f: &Fixture, turn: &str, command: String, extra: Value) -> Value {
     f.hook("PostToolUse", turn, v)
 }
 #[test]
-fn hook_reminder_skip_exact_invocation_and_once_only_commit() {
+fn auto_memory_finishes_empty_turn_on_first_stop() {
+    let f = Fixture::new("auto", "pilot");
+    let issued = f.hook(
+        "UserPromptSubmit",
+        "question",
+        json!({"prompt":"Объясни результат"}),
+    );
+    let context = issued["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("stage --turn"));
+    assert!(!context.contains("--skip"));
+
+    assert_eq!(f.hook("Stop", "question", json!({})), json!({}));
+    assert_eq!(
+        f.hook("Stop", "question", json!({"stop_hook_active":true})),
+        json!({})
+    );
+
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    assert_eq!(
+        f.pending().diagnostics(&scope).unwrap(),
+        json!({"phase":"skipped","staged":0,"pending":0})
+    );
+}
+#[test]
+fn hook_requires_exact_invocation_and_applies_only_one_operation() {
     let f = Fixture::new("auto", "pilot");
     let token = f.token("one");
     let request = json!({"action":"remember","candidate":candidate("Keep heliotrope")});
@@ -762,7 +788,6 @@ fn hook_reminder_skip_exact_invocation_and_once_only_commit() {
         f.store.search(&f.binding, "heliotrope", 5).unwrap(),
         json!([])
     );
-    assert_eq!(f.hook("Stop", "one", json!({}))["decision"], "block");
     for overrides in [
         json!({"tool_name":"exec_command"}),
         json!({"agent_id":"child"}),
@@ -772,13 +797,12 @@ fn hook_reminder_skip_exact_invocation_and_once_only_commit() {
     ] {
         assert_eq!(post(&f, "one", command.clone(), overrides), json!({}));
     }
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["staged"], 0);
     assert_eq!(post(&f, "one", command.clone(), json!({})), json!({}));
     let different = stage_command(&token, &json!({"action":"skip"}));
     assert_eq!(post(&f, "one", different, json!({}))["decision"], "block");
-    assert_eq!(
-        f.hook("Stop", "one", json!({"stop_hook_active":true})),
-        json!({})
-    );
+    assert_eq!(f.hook("Stop", "one", json!({})), json!({}));
     assert_eq!(
         f.store
             .search(&f.binding, "heliotrope", 5)
@@ -797,13 +821,6 @@ fn hook_reminder_skip_exact_invocation_and_once_only_commit() {
         json!({}),
     );
     assert_eq!(f.hook("Stop", "skip", json!({})), json!({}));
-    f.token("empty");
-    assert_eq!(f.hook("Stop", "empty", json!({}))["decision"], "block");
-    assert!(f
-        .hook("Stop", "empty", json!({"stop_hook_active":true}))
-        .get("systemMessage")
-        .is_some());
-    assert_eq!(f.hook("Stop", "empty", json!({})), json!({}));
 }
 #[test]
 fn hook_guards_binding_changes_and_expired_turns() {
@@ -835,7 +852,7 @@ fn hook_guards_binding_changes_and_expired_turns() {
     let new = f.token("steered");
     assert_ne!(old, new);
     post(&f, "steered", stage_command(&old, &request), json!({}));
-    assert_eq!(f.hook("Stop", "steered", json!({}))["decision"], "block");
+    assert_eq!(f.hook("Stop", "steered", json!({})), json!({}));
     let token = f.token("rebound");
     post(&f, "rebound", stage_command(&token, &request), json!({}));
     f.store
@@ -850,16 +867,23 @@ fn hook_guards_binding_changes_and_expired_turns() {
 #[test]
 fn inbox_hooks_approval_forget_and_readonly_stage() {
     let f = Fixture::new("inbox", "pilot");
-    let token = f.token("draft");
     let request = json!({"action":"remember","candidate":candidate("Review heliotrope")});
+    f.token("unstaged");
+    assert_eq!(
+        f.hook(
+            "Stop",
+            "unstaged",
+            json!({"last_assistant_message":request.to_string()})
+        ),
+        json!({})
+    );
+    assert_eq!(f.store.inbox(&f.binding).unwrap(), json!([]));
+
+    let token = f.token("draft");
     let scope = hooks::scope_id(&f.binding, &f.repo);
     assert!(f.pending().is_current(&token, &scope).unwrap());
-    assert_eq!(
-        f.hook("Stop", "draft", json!({"last_assistant_message":request}))["decision"],
-        "block"
-    );
     post(&f, "draft", stage_command(&token, &request), json!({}));
-    f.hook("Stop", "draft", json!({"stop_hook_active":true}));
+    assert_eq!(f.hook("Stop", "draft", json!({})), json!({}));
     let inbox = f.store.inbox(&f.binding).unwrap();
     let id = inbox[0]["id"].as_str().unwrap();
     assert_eq!(inbox[0]["status"], "inbox");
@@ -894,22 +918,20 @@ fn steering_revocation_survives_locked_database_and_failed_generation_replace() 
     assert!(next.is_some());
     conn.execute_batch("ROLLBACK").unwrap();
     assert!(!f.pending().is_current(&token, &scope).unwrap());
-    assert_eq!(
-        f.pending()
-            .claim(
-                &key,
-                &scope,
-                "session",
-                "one",
-                "",
-                pending::Delivery::Current {
-                    review: false,
-                    first_stop: true,
-                }
-            )
-            .unwrap(),
-        None
-    );
+    assert!(!f
+        .pending()
+        .claim(
+            &key,
+            &scope,
+            "session",
+            "one",
+            "",
+            pending::Delivery::Current {
+                first_stop: true,
+                confirmed: false
+            }
+        )
+        .unwrap());
     let token = f.token("blocked");
     let dir = f.store.state.join("pending-revocations");
     fs::remove_dir_all(&dir).unwrap();
@@ -1227,22 +1249,20 @@ fn revocation_marker_survives_failed_generation_replace() {
         .join("pending-revocations")
         .join(&token)
         .is_file());
-    assert_eq!(
-        f.pending()
-            .claim(
-                &key,
-                &scope,
-                "session",
-                "one",
-                "",
-                pending::Delivery::Current {
-                    review: false,
-                    first_stop: true,
-                }
-            )
-            .unwrap(),
-        None
-    );
+    assert!(!f
+        .pending()
+        .claim(
+            &key,
+            &scope,
+            "session",
+            "one",
+            "",
+            pending::Delivery::Current {
+                first_stop: true,
+                confirmed: false
+            }
+        )
+        .unwrap());
 }
 #[cfg(unix)]
 #[test]
@@ -1497,22 +1517,20 @@ fn uncertain_stop_commit_is_idempotent_across_concurrent_retries() {
     let original = "original";
     let key = pending::digest(&["session", original]);
     let epoch = read_memory_epoch_after_stage(&f, original);
-    assert_eq!(
-        f.pending()
-            .claim(
-                &key,
-                &scope,
-                "session",
-                original,
-                &epoch,
-                pending::Delivery::Current {
-                    review: false,
-                    first_stop: true,
-                }
-            )
-            .unwrap(),
-        Some(pending::Stop::Claimed)
-    );
+    assert!(f
+        .pending()
+        .claim(
+            &key,
+            &scope,
+            "session",
+            original,
+            &epoch,
+            pending::Delivery::Current {
+                first_stop: true,
+                confirmed: true
+            }
+        )
+        .unwrap());
     let committed = f
         .store
         .save(
@@ -1561,22 +1579,20 @@ fn an_accepted_action_cannot_cross_revocation_or_binding_generation() {
         let epoch = read_memory_epoch_after_stage(&f, "original");
         let key = pending::digest(&["session", "original"]);
         if claimed {
-            assert_eq!(
-                f.pending()
-                    .claim(
-                        &key,
-                        &scope,
-                        "session",
-                        "original",
-                        &epoch,
-                        pending::Delivery::Current {
-                            review: false,
-                            first_stop: true,
-                        }
-                    )
-                    .unwrap(),
-                Some(pending::Stop::Claimed)
-            );
+            assert!(f
+                .pending()
+                .claim(
+                    &key,
+                    &scope,
+                    "session",
+                    "original",
+                    &epoch,
+                    pending::Delivery::Current {
+                        first_stop: true,
+                        confirmed: true
+                    }
+                )
+                .unwrap());
         }
         match revoke {
             "steer" => {
@@ -1628,22 +1644,20 @@ fn interrupted_approval_or_write_cannot_restore_forgotten_content() {
         stage_action(&f, "original", &operation);
         let epoch = read_memory_epoch(&f);
         let key = pending::digest(&["session", "original"]);
-        assert_eq!(
-            f.pending()
-                .claim(
-                    &key,
-                    &scope,
-                    "session",
-                    "original",
-                    &epoch,
-                    pending::Delivery::Current {
-                        review: false,
-                        first_stop: true,
-                    }
-                )
-                .unwrap(),
-            Some(pending::Stop::Claimed)
-        );
+        assert!(f
+            .pending()
+            .claim(
+                &key,
+                &scope,
+                "session",
+                "original",
+                &epoch,
+                pending::Delivery::Current {
+                    first_stop: true,
+                    confirmed: true
+                }
+            )
+            .unwrap());
         if action == "approve" {
             f.store.approve(&f.binding, id(&saved)).unwrap();
         }
@@ -1864,10 +1878,7 @@ fn later_stop_recovers_trusted_stage_when_original_stop_never_committed_claim() 
             f.pending().diagnostics(&scope).unwrap(),
             json!({"phase":"applied","staged":0,"pending":0})
         );
-        assert_eq!(
-            f.hook("Stop", "capture-only", json!({}))["decision"],
-            "block"
-        );
+        assert_eq!(f.hook("Stop", "capture-only", json!({})), json!({}));
         assert_eq!(f.hook("Stop", "original", json!({})), json!({}));
         assert_eq!(
             f.store.search(&f.binding, "heliotrope", 5).unwrap(),
@@ -2111,9 +2122,10 @@ fn correction_requires_a_single_literal_command_in_an_authorized_turn() {
     ] {
         post(&f, "fix", cmd.clone(), overrides);
     }
-    assert_eq!(f.hook("Stop", "fix", json!({}))["decision"], "block");
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["staged"], 0);
     post(&f, "fix", cmd, json!({}));
-    f.hook("Stop", "fix", json!({"stop_hook_active":true}));
+    assert_eq!(f.hook("Stop", "fix", json!({})), json!({}));
     assert_eq!(f.store.search(&f.binding, "pytest", 5).unwrap(), json!([]));
     let inbox = f.store.inbox(&f.binding).unwrap();
     assert_eq!(inbox.as_array().unwrap().len(), 1);
