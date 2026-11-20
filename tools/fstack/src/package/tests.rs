@@ -472,6 +472,22 @@ fn complete_package_rejects_broken_release_contracts() {
         assert!(check(&package).is_err(), "{relative}:{key}");
         fs::write(&path, original).unwrap();
     }
+    let hooks = json_file(&package.join("hooks/hooks.json")).unwrap();
+    for event in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
+        let mut handler = hooks["hooks"][event][0]["hooks"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        handler
+            .as_object_mut()
+            .unwrap()
+            .remove("additionalContextLimit");
+        assert!(check_hook_command(event, &handler)
+            .unwrap_err()
+            .contains("additionalContextLimit"));
+    }
     let stamp = package.join("launchers/package-version");
     let original = fs::read(&stamp).unwrap();
     fs::write(&stamp, "0.0.0\n").unwrap();

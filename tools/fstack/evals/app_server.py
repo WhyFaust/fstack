@@ -35,12 +35,17 @@ def agent_settings(thread: dict) -> dict:
     return {key: thread[key] for key in ("id", "model", "reasoningEffort") if key in thread}
 
 
-def environment(home: Path) -> dict[str, str]:
+def environment(home: Path, *, isolated_user: bool = False) -> dict[str, str]:
     # Не передавать исполняемому решению ключи сервисов из окружения разработчика.
     keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
             "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "LANG", "LC_ALL"}
     env = {k: v for k, v in os.environ.items() if k.upper() in keep}
     env.update(CODEX_HOME=str(home), PYTHONIOENCODING="utf-8", NO_COLOR="1")
+    if isolated_user:
+        user = home.parent / "user"
+        user.mkdir(exist_ok=True)
+        env.update(HOME=str(user), USERPROFILE=str(user), XDG_CONFIG_HOME=str(user / ".config"),
+                   APPDATA=str(user / "AppData/Roaming"), LOCALAPPDATA=str(user / "AppData/Local"))
     return env
 
 
@@ -106,10 +111,10 @@ def authentication(home: Path, auth_home: Path):
 
 
 class Server:
-    def __init__(self, executable: str, home: Path, cwd: Path):
+    def __init__(self, executable: str, home: Path, cwd: Path, *, isolated_user: bool = False):
         self.process = subprocess.Popen(
             [executable, "app-server", "--listen", "stdio://"], cwd=cwd,
-            env=environment(home), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            env=environment(home, isolated_user=isolated_user), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
             start_new_session=os.name != "nt",
         )
@@ -187,6 +192,30 @@ class Server:
         for stream in (self.process.stdin, self.process.stdout):
             if stream:
                 stream.close()
+
+
+def trust_fixture_hooks(codex: str, home: Path, project: Path) -> dict[str, list[str]]:
+    """Доверить точным хешам установленных хуков в одноразовом профиле проверки."""
+    server = Server(codex, home, project, isolated_user=True)
+    try:
+        deadline = time.monotonic() + 45
+        server.initialize(deadline)
+        groups = server.request("hooks/list", {"cwds": [str(project)]}, deadline)["data"]
+    finally:
+        server.close()
+    hooks = [hook for group in groups for hook in group["hooks"] if hook.get("pluginId") == "fstack@fstack"]
+    if not hooks:
+        raise ClientError("Codex не обнаружил хуки установленного fstack")
+    expected: dict[str, list[str]] = {}
+    with (home / "config.toml").open("a", encoding="utf-8") as stream:
+        for hook in hooks:
+            assert hook["trustStatus"] == "untrusted" and hook["enabled"] is True, hook
+            expected.setdefault(hook["eventName"], []).append("untrusted")
+            declaration, separator, content = hook["currentHash"].partition("/")
+            stream.write(f'\n[hooks.state.{json.dumps(hook["key"])}]\ntrusted_hash = {json.dumps(declaration)}\n')
+            if separator:
+                stream.write(f'trusted_content_hash = {json.dumps(content)}\n')
+    return expected
 
 
 def observe(result: dict, message: dict) -> None:

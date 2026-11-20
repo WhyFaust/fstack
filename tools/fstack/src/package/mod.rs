@@ -534,6 +534,14 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
 }
 
 fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
+    if matches!(event, "SessionStart" | "UserPromptSubmit" | "PostToolUse") {
+        require(
+            handler["additionalContextLimit"].as_u64() == Some(0),
+            format!(
+                "{event}: additionalContextLimit должен сохранять полный контекст хука в запросе"
+            ),
+        )?;
+    }
     let timeout = match event {
         "Bootstrap" => 420,
         "SessionStart" => 10,
@@ -574,8 +582,8 @@ pub(crate) fn skill_names(root: &Path) -> Result<BTreeSet<String>> {
         .collect()
 }
 
-fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
-    let mut listed = BTreeSet::new();
+fn catalog_rows(listing: &str) -> Result<Vec<(String, String)>> {
+    let mut rows = Vec::new();
     for row in rx!(r"(?m)^\| ([^|\n]+) \|([^\n]*)").captures_iter(listing) {
         let first = &row[1];
         let (name, target) =
@@ -603,8 +611,30 @@ fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
             target == entry,
             format!("Каталог: основная ссылка {name} должна вести на {entry}"),
         )?;
+        let signal = row[2].split('|').next().unwrap_or("").trim();
+        let signal = rx!(r",? \[[^\]]+\]\([^)]+\)$").replace(signal, "");
+        require(!signal.is_empty(), format!("Каталог: нет описания {name}"))?;
+        rows.push((name, signal.into_owned()));
+    }
+    Ok(rows)
+}
+
+pub(crate) fn skill_index(package: &Path) -> Result<String> {
+    let catalog = contained(package, package, "docs/skills.md", false)?;
+    let rows = catalog_rows(&read(&catalog)?)?;
+    require(!rows.is_empty(), "Каталог навыков пуст")?;
+    Ok(rows
+        .into_iter()
+        .map(|(name, signal)| format!("{name} — {signal}"))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+fn check_catalog(listing: &str, skills: &BTreeSet<String>) -> Result<()> {
+    let mut listed = BTreeSet::new();
+    for (name, _) in catalog_rows(listing)? {
         require(
-            listed.insert(name.to_owned()),
+            listed.insert(name.clone()),
             format!("Каталог: повтор {name}"),
         )?;
     }

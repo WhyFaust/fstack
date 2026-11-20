@@ -77,15 +77,18 @@ jobs:
       - name: Проверить установленный пакет и вызов навыка в Codex
         if: runner.os == 'Linux'
         run: |
-          npm install --prefix "$RUNNER_TEMP/fstack-cli" --no-save --no-audit --no-fund @openai/codex@0.169.0
-          codex="$RUNNER_TEMP/fstack-cli/node_modules/.bin/codex"
           package="$RUNNER_TEMP/fstack-plugin"
           mkdir -p "$package/bin"
           git archive HEAD | tar -x -C "$package"
           cp "$BINARY" "$package/bin/fstack"
-          "$BINARY" --package "$package" check-installation --codex "$codex"
-          python tools/fstack/evals/check_doctor.py "$package" --codex "$codex"
-          python tools/fstack/evals/check_skill_invocation.py "$package" --codex "$codex"
+          for version in 0.169.0 0.171.0; do
+            cli_dir="$RUNNER_TEMP/fstack-cli-$version"
+            npm install --prefix "$cli_dir" --no-save --no-audit --no-fund "@openai/codex@$version"
+            codex="$cli_dir/node_modules/.bin/codex"
+            "$BINARY" --package "$package" check-installation --codex "$codex"
+            python tools/fstack/evals/check_doctor.py "$package" --codex "$codex"
+            python tools/fstack/evals/check_skill_invocation.py "$package" --codex "$codex"
+          done
       - name: Проверить зависимости Linux
         if: runner.os == 'Linux'
         run: |
