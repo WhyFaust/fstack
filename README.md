@@ -15,7 +15,7 @@
 ## Быстрый старт
 
 ```bash
-codex plugin marketplace add WhyFaust/fstack --ref stable
+codex plugin marketplace add WhyFaust/fstack --ref main
 codex plugin add fstack@fstack
 ```
 

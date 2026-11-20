@@ -6,13 +6,13 @@
 Платформы — Linux x64 (glibc 2.35+), Windows x64 и macOS Intel/Apple Silicon.
 
 ```bash
-codex plugin marketplace add WhyFaust/fstack --ref stable
+codex plugin marketplace add WhyFaust/fstack --ref main
 codex plugin add fstack@fstack --json
 ```
 
 Одобри хуки и открой чат. При старте fstack скачивает бинарник своей версии
 и платформы, проверяет SHA-256 и сохраняет его в кэше профиля. При сбое
-посмотри журнал `SessionStart`. Ветка `stable` получает новую версию после проверки
+посмотри журнал `SessionStart`. Новая версия попадает в `main` после публикации
 бинарников, ZIP и контрольных сумм для всех четырёх платформ.
 
 Для автономной установки скачай ZIP платформы и `.zip.sha256` из
@@ -35,13 +35,6 @@ fstack doctor --codex /absolute/path/to/codex --json
 Профиль задаёт `CODEX_HOME`.
 
 ## Обновление
-
-Если источник раньше был зарегистрирован с `--ref main`, один раз переключи его:
-
-```bash
-codex plugin marketplace remove fstack
-codex plugin marketplace add WhyFaust/fstack --ref stable
-```
 
 Клиент с автообновлением получает marketplace при старте. Для ручного обновления:
 
