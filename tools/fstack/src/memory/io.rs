@@ -381,6 +381,12 @@ pub fn home() -> Result<PathBuf> {
         .map(PathBuf::from)
         .ok_or("Home directory unavailable".into())
 }
+pub(super) fn configured_directory(variable: &str, fallback: &str) -> Result<PathBuf> {
+    match std::env::var_os(variable).filter(|value| !value.is_empty()) {
+        Some(path) => Ok(path.into()),
+        None => Ok(home()?.join(fallback)),
+    }
+}
 pub fn lock(project: &Path, vault: &Path) -> Result<File> {
     directory(project, false, false)?;
     #[cfg(unix)]
@@ -401,13 +407,14 @@ pub fn lock_key(key: &str, forbidden: Option<&Path>) -> Result<File> {
     #[cfg(test)]
     let cache = super::tests::cache();
     #[cfg(not(test))]
-    let cache = std::env::var_os(if cfg!(windows) {
-        "LOCALAPPDATA"
-    } else {
-        "XDG_CACHE_HOME"
-    })
-    .map(PathBuf::from)
-    .unwrap_or(home()?.join(".cache"));
+    let cache = configured_directory(
+        if cfg!(windows) {
+            "LOCALAPPDATA"
+        } else {
+            "XDG_CACHE_HOME"
+        },
+        ".cache",
+    )?;
     if !cache.is_absolute() {
         return Err("Memory locks require an absolute cache directory".into());
     }

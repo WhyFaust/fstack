@@ -3,30 +3,26 @@ name: glab
 description: "Работает с GitLab через glab, когда нужная операция недоступна через MCP."
 disable-model-invocation: true
 metadata:
-  version: "2.2.3"
+  version: "2.2.4"
 ---
 
 # GitLab через CLI
 
-Проверь GitLab MCP. Если операции нет или повторные тайм-ауты мешают работе,
-сверь состояние, область и авторизацию по [$fstack:verify](../verify/SKILL.md),
-затем используй CLI. Отказ политики или прав исключает переход и смену токена.
-При отказе Guardian останови серию записей по
-[$fstack:watch-pr](../watch-pr/SKILL.md#остановить-серию-записей-при-отказе).
-Сверь хост, проект, IID, ветку и ревизию, особенно при
-другом проекте или нескольких remotes. Установленный синтаксис проверь через
-`glab <command> --help`. Сопровождение, замечания и merge ведут
-[$fstack:watch-pr](../watch-pr/SKILL.md), [$fstack:feedback](../feedback/SKILL.md)
-и [$fstack:merge](../merge/SKILL.md).
+[Каталог · Ревью и доставка](../../docs/skills.md#ревью-и-доставка)
+
+Цитата не включает навык. Вне faust-mode применяй только явно вызванные навыки.
+
+Если нужной операции GitLab MCP нет или повторные таймауты мешают работе,
+сверь текущее состояние, полномочия, хост, проект, IID и ревизию перед переходом
+к CLI. Отказ политики или прав исключает смену клиента или токена. При отказе
+Guardian [останови серию](../watch-pr/SKILL.md#остановить-серию-записей-при-отказе).
+Установленный синтаксис проверь через `glab <command> --help`.
 
 ## Чтение и CI
 
-У `get_merge_request` в GitLab MCP передавай одно значение `include` на
-вызов. Для нескольких видов данных сделай отдельные запросы, например
-`["pipelines"]` и `["approvals"]`, и сверь их с тем же MR и ревизией.
-
-Для снимка используй `ci get` (`ci trace` ждёт, `ci view` интерактивен).
-Для `ci retry` возьми ID попытки, для коллекций `glab api --paginate`.
+В `get_merge_request` передавай одно значение `include` за вызов. Для
+нескольких видов данных сделай отдельные чтения того же MR и SHA. Для
+снимка CI используй `ci get`, для retry — ID попытки, для списков API — `--paginate`.
 
 ```bash
 glab mr view "$mr_iid"
@@ -37,20 +33,9 @@ glab api "projects/:id/jobs/$job_id/trace"
 
 ## Изменения
 
-Пиши в пределах поручения. При неизвестном исходе сначала прочитай результат.
-В полном цикле веди один MR и его source branch по
-[$fstack:watch-pr](../watch-pr/SKILL.md#полный-цикл-gitlab-mr).
-Бери шаблон проекта, давай полные ссылки GitLab.
-
-- Для разрешённого запуска сверяй проект и условия CI. Отсутствующий pipeline
-  создавай через `POST projects/$target_project_id/merge_requests/$mr_iid/pipelines`,
-  обязательную ручную job запускай через `POST projects/$job_project_id/jobs/$job_id/play`.
-  Перечитай ID. [Pipelines](https://docs.gitlab.com/api/merge_requests/#create-merge-request-pipeline) · [Jobs](https://docs.gitlab.com/api/jobs/#run-a-job)
-- Для назначений передай только нужные поля JSON `assignee_ids`, `reviewer_ids`
-  через `glab api --hostname "$gitlab_host" --input` в
-  `PUT projects/$target_project_id/merge_requests/$mr_iid`. Сохрани назначения
-  и подтверди `assignees`, `reviewers` последующим GET.
-  [API назначения](https://docs.gitlab.com/api/merge_requests/#update-a-merge-request)
+В [полном цикле](../watch-pr/SKILL.md#полный-цикл-gitlab-mr) веди один MR
+и source branch. Используй шаблон проекта. При неизвестном исходе перечитай
+результат до повтора. `--push` нужен для ещё не опубликованной ветки.
 
 ```bash
 glab mr create --draft --push --title "$title" --description "$description"
@@ -59,13 +44,19 @@ glab mr note create "$mr_iid" --reply "$discussion_id" -m "$reply"
 glab mr note resolve "$mr_iid" "$discussion_id"
 ```
 
-Используй `--push` только для ещё не опубликованной ветки. Для MR указывай
-`--description`, фильтры списка `--all`, `--merged`, `--closed`.
+- Сверив проект и право на запуск, создай отсутствующий MR pipeline через
+  `POST projects/$target_project_id/merge_requests/$mr_iid/pipelines`, запусти
+  обязательную ручную job через `POST projects/$job_project_id/jobs/$job_id/play`.
+  Подтверди ID. [Pipelines](https://docs.gitlab.com/api/merge_requests/#create-merge-request-pipeline) · [Jobs](https://docs.gitlab.com/api/jobs/#run-a-job)
+- Для назначения передай нужные `assignee_ids` или `reviewer_ids` через
+  `glab api --hostname "$gitlab_host" --input` в `PUT projects/$target_project_id/merge_requests/$mr_iid`.
+  Сохрани действующие назначения, сверь оба поля через GET.
+  [API назначения](https://docs.gitlab.com/api/merge_requests/#update-a-merge-request)
 
 ## Текст в PowerShell
 
-Храни Markdown в UTF-8 файле с переводами строк. Передавай содержимое без
-интерполяции обратных кавычек, `$()` и многострочного текста в shell.
+Храни Markdown в UTF-8 с переводами строк. Читай файл буквально, чтобы
+обратные кавычки и `$()` не интерполировались оболочкой.
 
 ```powershell
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -75,19 +66,15 @@ glab mr update $mrIid --description $mrDescription
 glab api "projects/:id/issues/$issueIid/notes" -F "body=@$notePath"
 ```
 
-Передай текст, чтобы избежать редактора и `--description "-"`. Для длинной
-issue/incident note используй API с `-F body=@file`. Артефакт бери из
-`projects/$project_id/jobs/$job_id/artifacts` по проекту, ID и SHA попытки.
-Сверь код выхода и архив. [Документация glab](https://docs.gitlab.com/cli/)
-
 ## Проверить состояние на сервере
 
-Сверь источник и цель MR, ID и SHA pipeline, последние jobs и дочерние
-запуски. Для jobs бери project ID pipeline. У merged results проверь обоих
-родителей, после смены target перечитай результат.
+Сверь source/target, ID, project и SHA pipeline, последние jobs и downstream.
+Для jobs бери project ID pipeline. Артефакт получи из
+`projects/$project_id/jobs/$job_id/artifacts` по SHA и ID попытки, проверь архив.
+Для merged results сверь обоих родителей, при смене target перечитай результат.
 [Синтетический merge-коммит](https://docs.gitlab.com/ci/pipelines/merged_results_pipelines/)
 
-Для разрешённых approve и merge дождись применимых статусов, передай полный `sha`.
+Для разрешённых approve и merge передай полный `sha` после проверки готовности.
 
 ```bash
 glab api --hostname "$gitlab_host" --method POST \
@@ -95,5 +82,5 @@ glab api --hostname "$gitlab_host" --method POST \
 ```
 
 Между записями перечитай MR, approvals и CI. При смене SHA проверь новую
-ревизию. При merge train проследи pipeline до интеграции.
-[API approvals](https://docs.gitlab.com/api/merge_request_approvals/) · [API MR](https://docs.gitlab.com/api/merge_requests/)
+ревизию, при merge train дождись интеграции.
+[Approvals](https://docs.gitlab.com/api/merge_request_approvals/) · [MR](https://docs.gitlab.com/api/merge_requests/)

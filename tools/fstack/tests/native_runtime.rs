@@ -178,6 +178,41 @@ impl Runtime {
     }
 }
 
+#[test]
+fn explicit_profile_and_cache_work_without_a_home_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let profile = root.join("profile");
+    let cache = root.join("cache");
+    let vault = root.join("vault");
+    fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_fstack"))
+        .arg("--package")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .args(["memory", "vault", "--set"])
+        .arg(&vault)
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env("CODEX_HOME", &profile)
+        .env(
+            if cfg!(windows) {
+                "LOCALAPPDATA"
+            } else {
+                "XDG_CACHE_HOME"
+            },
+            &cache,
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(profile.join("fstack/memory/vault.json").is_file());
+    assert!(cache.join("fstack/memory-locks").is_dir());
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_shells_preserve_hook_directory_and_utf8() {
@@ -520,22 +555,8 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
         .as_str()
         .unwrap();
     assert!(context.contains(" show ID"));
-    let installed_skill = regex::Regex::new(
-        r#"((?:[A-Za-z]:[\\/]|\\\\|/)[^"\n]*?[\\/]skills[\\/]memory[\\/]SKILL\.md)"#,
-    )
-    .unwrap()
-    .captures(context)
-    .and_then(|m| m.get(1))
-    .expect("the hook supplies a path to the installed memory skill")
-    .as_str();
-    assert_eq!(
-        Path::new(installed_skill).canonicalize().unwrap(),
-        runtime
-            .root
-            .join("skills/memory/SKILL.md")
-            .canonicalize()
-            .unwrap()
-    );
+    assert!(context.contains("Faust-mode выключен"));
+    assert!(!context.contains("SKILL.md"));
     let (command, token) = regex::Regex::new(
         r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
     )
@@ -614,6 +635,7 @@ fn codex_task_records_a_verified_project_decision_without_user_input() {
     assert_eq!(initial["decision"], "block");
     let reason = initial["reason"].as_str().unwrap();
     assert!(!reason.contains("--turn"));
+    assert!(!reason.contains("SKILL.md"));
     let prefix =
         regex::Regex::new(r#"((?:& )?"[^"\n]+"(?: --package "[^"\n]+")? memory report) --payload"#)
             .unwrap()
@@ -905,14 +927,16 @@ fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
         runtime.json(&["memory", "hook", name], Some(payload))
     };
     let prompt = json!({"prompt":"Для проверок этого проекта всегда используй uv run pytest."});
-    assert_eq!(
-        event(
-            "UserPromptSubmit",
-            "explicit-plan",
-            json!({"prompt":"План","collaboration_mode":"plan"})
-        ),
-        json!({})
+    let plan = event(
+        "UserPromptSubmit",
+        "explicit-plan",
+        json!({"prompt":"План","collaboration_mode":"plan"}),
     );
+    let plan = plan["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(plan.contains("Faust-mode выключен"));
+    assert!(!plan.contains("--turn"));
     assert!(!vault.join("Codex Memory").exists());
     let stop = || json!({"stop_hook_active":false,"last_assistant_message":"Готово."});
     let steps = event("UserPromptSubmit", "implicit-plan", prompt.clone());
@@ -953,6 +977,7 @@ fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
     let instructions = issued["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
+    assert!(!instructions.contains("SKILL.md"));
     let stage = regex::Regex::new(
         r#"((?:& )?"[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
     )
@@ -1075,13 +1100,29 @@ fn prompt_hook_reports_cold_runtime_and_accepts_activation_after_installation() 
     }
     fs::write(&id_file, original_id).unwrap();
     let skill = runtime.root.join("skills/faust-mode/SKILL.md");
+    let catalog = runtime.root.join("docs/skills.md");
+    let description = "Сигнал из перемещённой копии";
+    let original = fs::read_to_string(&catalog).unwrap();
+    let edited = original.replace(
+        "[model-check](../skills/model-check/SKILL.md) | ",
+        &format!("[model-check](../skills/model-check/SKILL.md) | {description}. "),
+    );
+    fs::write(&catalog, edited).unwrap();
     for (turn, text) in [("retry", "/faust-mode"), ("next", "continue")] {
         let result = prompt(turn, text);
-        assert!(result["hookSpecificOutput"]["additionalContext"]
+        let context = result["hookSpecificOutput"]["additionalContext"]
             .as_str()
-            .unwrap()
-            .contains(skill.to_str().unwrap()));
+            .unwrap();
+        assert!(context.contains(skill.to_str().unwrap()));
+        assert_eq!(context.contains(description), turn == "retry");
     }
+    fs::remove_file(&catalog).unwrap();
+    let result = prompt("missing-catalog", "/faust-mode");
+    let context = result["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("Хук не смог прочитать индекс"));
+    assert!(context.contains(catalog.to_str().unwrap()));
 }
 
 #[cfg(unix)]
@@ -1158,6 +1199,10 @@ cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
 
     fs::write(&checksum, format!("{:x}  {asset}\n", Sha256::digest(bytes))).unwrap();
+    let occupied = cache.join("fstack");
+    fs::create_dir(&occupied).unwrap();
+    assert!(!install(&asset, fixtures.as_os_str()).status.success());
+    fs::remove_dir(occupied).unwrap();
     assert!(install(&asset, fixtures.as_os_str()).status.success());
     assert_eq!(fs::read(cache.join("fstack")).unwrap(), bytes);
     fs::write(&id_file, format!("{second_id}\n")).unwrap();

@@ -48,7 +48,7 @@ def inputs():
 
 
 def summary(samples):
-    if not samples or any(not math.isfinite(v) or v < 0 for v in samples):
+    if not samples or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in samples):
         raise ValueError("Замеры должны быть непустыми, конечными и неотрицательными")
     return {
         "median_ms": round(statistics.median(samples), 3),
@@ -177,14 +177,16 @@ def read_result(path):
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("schema") != 1 or data.get("kind") != "runtime":
         raise ValueError("Неизвестный формат результата")
-    if data["settings"]["samples"] < 5 or data["settings"]["records"] < 2:
+    samples, records = data["settings"]["samples"], data["settings"]["records"]
+    if type(samples) is not int or type(records) is not int or samples < 5 or records < 2:
         raise ValueError("Недостаточно замеров или записей")
     if set(data["results"]) != set(LABELS):
         raise ValueError("Неполный набор сценариев")
     for result in data["results"].values():
-        if result["verified"] is not True or len(result["samples_ms"]) != data["settings"]["samples"]:
+        if result["verified"] is not True or len(result["samples_ms"]) != samples:
             raise ValueError("Отсутствуют успешные проверки или сырые замеры")
-        if any(result[k] != v for k, v in summary(result["samples_ms"]).items()):
+        if any(type(result[k]) not in (int, float) or result[k] != v
+               for k, v in summary(result["samples_ms"]).items()):
             raise ValueError("Агрегаты не соответствуют сырым замерам")
     return data
 

@@ -5,9 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-import time
 
-from app_server import Server, environment
+from app_server import environment, trust_fixture_hooks
 
 
 def check(package: Path, codex: str, scratch: Path) -> None:
@@ -18,7 +17,7 @@ def check(package: Path, codex: str, scratch: Path) -> None:
     config = home / "config.toml"
     config.write_text("[features]\napps = false\nremote_plugin = false\nhooks = true\n", encoding="utf-8")
     binary = package / "bin" / ("fstack.exe" if os.name == "nt" else "fstack")
-    env = environment(home)
+    env = environment(home, isolated_user=True)
 
     def run(*args: str | Path, code: int = 0, cwd: Path = project) -> str:
         result = subprocess.run(args, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
@@ -44,23 +43,7 @@ def check(package: Path, codex: str, scratch: Path) -> None:
     assert initial["runtime_present"] is True and Path(initial["runtime"]).samefile(root / "bin" / binary.name), initial
     assert initial["enabled_skills"] == len(list((package / "skills").glob("*/SKILL.md"))), initial
 
-    server = Server(codex, home, project)
-    try:
-        deadline = time.monotonic() + 45
-        server.initialize(deadline)
-        groups = server.request("hooks/list", {"cwds": [str(project)]}, deadline)["data"]
-    finally:
-        server.close()
-    hooks = [hook for group in groups for hook in group["hooks"] if hook.get("pluginId") == "fstack@fstack"]
-    expected: dict[str, list[str]] = {}
-    with config.open("a", encoding="utf-8") as stream:
-        for hook in hooks:
-            assert hook["trustStatus"] == "untrusted" and hook["enabled"] is True, hook
-            expected.setdefault(hook["eventName"], []).append("untrusted")
-            declaration, separator, content = hook["currentHash"].partition("/")
-            stream.write(f'\n[hooks.state.{json.dumps(hook["key"])}]\ntrusted_hash = {json.dumps(declaration)}\n')
-            if separator:
-                stream.write(f'trusted_content_hash = {json.dumps(content)}\n')
+    expected = trust_fixture_hooks(codex, home, project)
     assert expected and initial["hooks"] == expected, initial
     healthy = doctor(0)
     assert healthy["issues"] == [] and healthy["hooks"] == {

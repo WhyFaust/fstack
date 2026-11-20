@@ -97,6 +97,7 @@ class EvaluationTests(unittest.TestCase):
                     "patch_sha256": corpus.digest(""), "artifact_sha256": corpus.digest(corpus.snapshot(target / "artifact"))})
             for target, name, options in [
                 (evaluate, "check_plan", {}), (evaluate, "report", {}),
+                (Path, "home", {"return_value": root}),
                 (evaluate, "calibration_ready", {"return_value": True}),
                 (evaluate.subprocess, "check_output", {"return_value": "fixture"}),
                 (corpus, "cases", {"return_value": [{"id": "one", "prompt": "Task", "criteria": ["Correct"]}]}),
@@ -187,6 +188,7 @@ class MemoryStoreTests(unittest.TestCase):
                                       "effort": "low", "timeout_seconds": 30})
             for target, name, options in [
                 (evaluate, "check_plan", {}), (evaluate, "report", {}),
+                (Path, "home", {"return_value": root}),
                 (evaluate, "schedule", {"return_value": [{"case": "cache", "repeat": 0, "variant": "candidate"}]}),
                 (evaluate, "isolation", {"return_value": {"passed": True}}),
                 (evaluate, "sandbox_prefix", {"return_value": []}),
@@ -226,7 +228,9 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.decide(self.fixture()), "accept")
         self.assertEqual(self.decide(self.fixture(1)), "inconclusive")
         self.assertEqual(self.decide(self.fixture(), calibrated=False), "inconclusive")
-        self.assertEqual(self.decide(self.fixture(), stale=True), "inconclusive")
+        changed_bank = self.fixture()
+        changed_bank[1].clear()
+        self.assertEqual(self.decide(changed_bank, stale=True), "inconclusive")
 
     def test_regression_and_missing_runs_cannot_be_compensated_by_other_wins(self):
         data = self.fixture()
@@ -234,6 +238,32 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.decide(data), "revise")
         data[2][-1].update(status="timeout", check={})
         self.assertEqual(self.decide(data), "inconclusive")
+
+    def test_unassessed_comparator_cannot_support_a_win(self):
+        data = self.fixture()
+        data[3][0]["verdict"]["criteria"][0]["A"] = "unknown"
+        self.assertEqual(self.decide(data), "inconclusive")
+
+    def test_changed_corpus_and_mislabeled_result_still_produce_a_stale_report(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(directory)
+            args = SimpleNamespace(plan=root / "plan.json", bank=root / "bank.json")
+            evaluate.write(args.bank, {"cases": []})
+            plan = {"cases": ["removed"], "variants": [{"id": "a"}, {"id": "b"}],
+                    "repetitions": 1, "seed": 1, "hypothesis": "fixture",
+                    "harness_sha256": evaluate.fingerprint(), "bank_sha256": "old"}
+            evaluate.write(args.plan, plan)
+            evaluate.write(root / "attempts/removed-1-a/result.json", {
+                "case": "wrong", "repeat": 0, "variant": "a", "status": "interrupted"})
+            evaluate.report(args)
+            report = evaluate.read(root / "report.json")
+            self.assertTrue(report["stale"])
+            self.assertEqual(report["decisions"][0]["decision"], "inconclusive")
+
+    def test_partial_calibration_budget_never_starts_an_attempt(self):
+        for limit in (1, 2):
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, "три попытки"):
+                evaluate.calibrate(SimpleNamespace(max_attempts=limit))
 
     def test_ties_reject_an_unproven_change(self):
         data = self.fixture()
@@ -250,7 +280,7 @@ class MemoryStoreTests(unittest.TestCase):
 
     def test_executable_does_not_grant_read_access_to_its_parent(self):
         import tomllib
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(prefix="eval-🧪-") as directory:
             root = Path(directory)
             binary = root / "codex"
             binary.write_bytes(b"fixture")

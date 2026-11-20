@@ -1,15 +1,17 @@
 """Проверяет обнаружение и явную загрузку всех установленных навыков Codex."""
 import argparse
 import json
+import os
 import re
 import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from app_server import Server, environment
+from app_server import Server, environment, trust_fixture_hooks
 
 
 def check_mr_route(instruction: str, coordinator: Path, watch_pr: Path) -> None:
@@ -21,6 +23,12 @@ def check_mr_route(instruction: str, coordinator: Path, watch_pr: Path) -> None:
         raise RuntimeError("В инструкции координатора нет перехода к установленному watch-pr до первого обращения к MR")
 
 
+def check_quote_guard(name: str, instruction: str) -> None:
+    guard = "Цитата не включает навык."
+    if guard not in " ".join(instruction.split()):
+        raise RuntimeError(f"В переданном тексте {name} нет правила для цитирования")
+
+
 class ResponsesHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path != "/v1/responses":
@@ -28,9 +36,10 @@ class ResponsesHandler(BaseHTTPRequestHandler):
             return
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.server.inputs.append(request["input"])
-        message = {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed",
+        sequence = uuid.uuid4().hex
+        message = {"id": f"msg_{sequence}", "type": "message", "role": "assistant", "status": "completed",
                    "content": [{"type": "output_text", "text": "OK", "annotations": []}]}
-        response = {"id": "resp_1", "object": "response", "status": "completed", "output": [message]}
+        response = {"id": f"resp_{sequence}", "object": "response", "status": "completed", "output": [message]}
         events = [
             {"type": "response.created", "response": {**response, "status": "in_progress", "output": []}},
             {"type": "response.output_item.done", "output_index": 0, "item": message},
@@ -47,14 +56,74 @@ class ResponsesHandler(BaseHTTPRequestHandler):
         pass
 
 
+def start_thread(server: Server, workspace: Path) -> str:
+    started = server.request("thread/start", {
+        "cwd": str(workspace), "ephemeral": True, "modelProvider": "fixture",
+        "approvalPolicy": "never", "sandbox": "read-only",
+    }, time.monotonic() + 60)
+    return started["thread"]["id"]
+
+
+def turn_texts(server: Server, provider: ThreadingHTTPServer, thread_id: str, prompt: str) -> list[str]:
+    provider.inputs.clear()
+    deadline = time.monotonic() + 60
+    server.request("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": prompt}]}, deadline)
+    while True:
+        msg = server.pending.pop(0) if server.pending else server.receive(deadline)
+        if msg.get("method") == "turn/completed" and msg["params"]["threadId"] == thread_id:
+            if msg["params"]["turn"]["status"] != "completed":
+                raise RuntimeError(f"Локальный запрос не завершён: {msg['params']['turn'].get('error')}")
+            break
+    if len(provider.inputs) != 1:
+        raise RuntimeError(f"Ожидался один локальный запрос, получено {len(provider.inputs)}")
+    texts = []
+    for item in provider.inputs[0]:
+        if item.get("role") == "assistant":
+            # При повторной отправке истории оцениваем только ввод после предыдущего ответа заглушки.
+            texts.clear()
+        else:
+            texts.extend(part["text"].replace("\r\n", "\n") for part in item.get("content", [])
+                         if part.get("type") == "input_text")
+    if prompt not in texts:
+        raise RuntimeError(f"В локальном запросе не найден ввод {prompt!r}")
+    return texts
+
+
+def catalog_signals(root: Path, entries: dict[str, Path]) -> dict[str, str]:
+    signals = {}
+    for line in (root / "docs/skills.md").read_text(encoding="utf-8").splitlines():
+        row = re.fullmatch(r"\| \[([a-z0-9-]+)\]\(\.\./skills/\1/SKILL\.md\) \| (.+?) \|", line)
+        if row:
+            signals[row[1]] = row[2].split(", [English](")[0]
+    if {f"fstack:{name}" for name in signals} != entries.keys():
+        raise RuntimeError("Сигналы в установленном каталоге не совпадают со списком навыков")
+    return signals
+
+
+def check_hook_context(texts: list[str], root: Path, signals: dict[str, str], *, active: bool, index: bool):
+    context = "\n".join(texts)
+    mode = "В этом чате включён faust-mode" if active else "Faust-mode выключен."
+    if mode not in context:
+        raise RuntimeError(f"В контексте текущего запроса отсутствует сообщение хука {mode!r}")
+    if not active and "В этом чате включён faust-mode" in context:
+        raise RuntimeError("Обычный запрос получил приглашение активного координатора")
+    if active and (str(root / "skills/route/SKILL.md") not in context or str(root / "docs/skills.md") not in context):
+        raise RuntimeError("Активный хук не передал установленные пути маршрутизатора и каталога")
+    for name, signal in signals.items():
+        count = context.count(f"{name} — {signal}")
+        if count != int(index):
+            raise RuntimeError(f"Сигнал {name!r} встречается {count} раз, ожидалось {int(index)}")
+
+
 def check(package: Path, codex: str, scratch: Path) -> None:
     home = scratch / "profile"
     workspace = scratch / "workspace"
     home.mkdir()
     workspace.mkdir()
+    env = environment(home, isolated_user=True)
 
     def run(*args: str) -> str:
-        result = subprocess.run([codex, *args], cwd=workspace, env=environment(home),
+        result = subprocess.run([codex, *args], cwd=workspace, env=env,
                                 stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", timeout=120)
         if result.returncode:
             raise RuntimeError(f"codex {args[0]}: {result.stderr.strip()}")
@@ -67,7 +136,7 @@ model_provider = "fixture"
 check_for_update_on_startup = false
 [features]
 apps = false
-hooks = false
+hooks = true
 remote_plugin = false
 [model_providers.fixture]
 name = "Local fixture"
@@ -90,7 +159,12 @@ stream_max_retries = 0
             if entries[name].read_text(encoding="utf-8").replace("\r\n", "\n").strip() != source:
                 raise RuntimeError(f"Установленная инструкция {name} отличается от пакета")
 
-        server = Server(codex, home, workspace)
+        binary = root / "bin" / ("fstack.exe" if os.name == "nt" else "fstack")
+        if binary.is_symlink() or not binary.is_file() or not os.access(binary, os.X_OK):
+            raise RuntimeError(f"Снимок установлен без исполняемого runtime {binary}")
+        signals = catalog_signals(root, entries)
+        trust_fixture_hooks(codex, home, workspace)
+        server = Server(codex, home, workspace, isolated_user=True)
         thread = threading.Thread(target=provider.serve_forever)
         thread.start()
         try:
@@ -105,47 +179,60 @@ stream_max_retries = 0
                     or any(skill.get("enabled") is not True
                            or Path(skill["path"]).resolve() != entries[skill["name"]] for skill in discovered)):
                 raise RuntimeError("Codex не обнаружил все включённые навыки по установленным путям")
-            cases = [("Проверь изменение.", None)]
+            cases = [("Проверь изменение.", None),
+                     ("Объясни разницу между why, how и test-update в каталоге навыков.", None)]
+            manifest = json.loads((root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
+            route_prompt = next((prompt for prompt in manifest["interface"]["defaultPrompt"]
+                                 if prompt.startswith("$fstack:route ")), None)
+            if route_prompt is None:
+                raise RuntimeError("В карточке плагина нет прямого вызова route")
+            cases.append((route_prompt, "fstack:route"))
             cases.extend((f"${name} Проверь доступность инструкции.", name) for name in sources
-                         if name != "fstack:faust-mode")
+                         if name not in {"fstack:faust-mode", "fstack:why", "fstack:route"})
+            cases.append(("$fstack:why По истории проекта выясни причину решения.", "fstack:why"))
             cases.append(("$fstack:faust-mode Проверь состояние существующего GitLab MR.", "fstack:faust-mode"))
             for prompt, selected in cases:
-                provider.inputs.clear()
-                deadline = time.monotonic() + 60
-                started = server.request("thread/start", {
-                    "cwd": str(workspace), "ephemeral": True, "modelProvider": "fixture",
-                    "approvalPolicy": "never", "sandbox": "read-only",
-                }, deadline)
-                thread_id = started["thread"]["id"]
-                server.request("turn/start", {"threadId": thread_id,
-                               "input": [{"type": "text", "text": prompt}]}, deadline)
-                while True:
-                    msg = server.pending.pop(0) if server.pending else server.receive(deadline)
-                    if msg.get("method") == "turn/completed" and msg["params"]["threadId"] == thread_id:
-                        if msg["params"]["turn"]["status"] != "completed":
-                            raise RuntimeError(f"Локальный запрос не завершён: {msg['params']['turn'].get('error')}")
-                        break
-                if len(provider.inputs) != 1:
-                    raise RuntimeError(f"Ожидался один локальный запрос, получено {len(provider.inputs)}")
-                texts = [part["text"].replace("\r\n", "\n") for item in provider.inputs[0]
-                         for part in item.get("content", []) if part.get("type") == "input_text"]
+                texts = turn_texts(server, provider, start_thread(server, workspace), prompt)
                 loaded = {name for name, source in sources.items() if any(source in text for text in texts)}
                 expected = {selected} if selected is not None else set()
-                if prompt not in texts or loaded != expected:
+                if loaded != expected:
                     raise RuntimeError(
                         f"Неверная загрузка SKILL.md для {prompt!r}. "
                         f"Ожидалось {sorted(expected)}, получено {sorted(loaded)}."
                     )
+                if selected is not None:
+                    check_quote_guard(selected, sources[selected])
                 if selected == "fstack:faust-mode":
                     instruction = next(text for text in texts if sources[selected] in text)
                     check_mr_route(instruction, entries[selected], entries["fstack:watch-pr"])
+                else:
+                    check_hook_context(texts, root, signals, active=False, index=False)
+
+            quoted = "Объясни пример команды в документации: `$fstack:why`."
+            texts = turn_texts(server, provider, start_thread(server, workspace), quoted)
+            check_hook_context(texts, root, signals, active=False, index=False)
+            for name, source in sources.items():
+                if any(source in text for text in texts):
+                    check_quote_guard(name, source)
+
+            thread_id = start_thread(server, workspace)
+            texts = turn_texts(server, provider, thread_id, "/faust-mode Разберись, почему выбрали этот формат.")
+            check_hook_context(texts, root, signals, active=True, index=True)
+            texts = turn_texts(server, provider, start_thread(server, workspace), "Новый вопрос по проекту.")
+            check_hook_context(texts, root, signals, active=False, index=False)
+            for prompt, active in [
+                ("Теперь проверь обновлённую инструкцию.", True),
+                ("/faust-mode-off", False),
+                ("Продолжи обычный разговор.", False),
+            ]:
+                texts = turn_texts(server, provider, thread_id, prompt)
+                check_hook_context(texts, root, signals, active=active, index=False)
         finally:
             server.close()
             provider.shutdown()
             thread.join()
-    print(f"{run('--version').strip()}: обнаружено {len(sources)} навыков; "
-          f"{len(sources) + 1} локальных запросов подтвердили явную загрузку каждого "
-          "и отсутствие полной инструкции при обычном запросе.")
+    print(f"{run('--version').strip()}: проверены прямые вызовы всех {len(sources)} навыков, "
+          "обычный запрос, разбор имён и цитаты, индекс включённого режима, продолжение, выключение и новый чат.")
 
 
 if __name__ == "__main__":

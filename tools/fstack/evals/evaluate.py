@@ -327,6 +327,8 @@ def assess(args, plan: dict, evidence: dict, sources: dict[str, Path], artifact_
 
 
 def calibrate(args):
+    if args.max_attempts < 3:
+        raise ValueError("Для полной калибровки нужны три попытки")
     plan = read(args.plan)
     check_plan(plan, args.bank)
     case = next(c for c in corpus.cases(args.bank) if c["id"] == args.case)
@@ -354,7 +356,7 @@ def calibrate(args):
             raise ValueError("Калибровочный оракул не подтверждает заявленный исходный отказ и исправление")
         checks = {name: value["status"] for name, value in checks.items()}
         patch = diff(source["base"], source["reference"])
-        for left, right, expected in [("base", "reference", "B"), ("reference", "base", "A"), ("reference", "reference", "tie")][:args.max_attempts]:
+        for left, right, expected in [("base", "reference", "B"), ("reference", "base", "A"), ("reference", "reference", "tie")]:
             evidence = {"prompt": case["prompt"], "criteria": case["criteria"]}
             for label, name in [("A", left), ("B", right)]:
                 evidence[label] = {"answer": "Проверь результат по исходникам.",
@@ -467,6 +469,7 @@ def report(args):
         value = read(path) if path.exists() else {**item, "status": "not_run"}
         if path.exists() and (value.get("plan_sha256") != corpus.digest(plan) or any(value.get(k) != v for k, v in item.items())):
             stale = True
+            value = {**value, **item}
         if value["status"] == "completed":
             try:
                 checked_artifact(path.parent, value)

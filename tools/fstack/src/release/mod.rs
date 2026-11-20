@@ -1,3 +1,5 @@
+mod assets;
+
 use crate::{
     package::{self, PACKAGE_VERSION},
     version::parse as version,
@@ -7,7 +9,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     ffi::OsString,
     fs,
     io::{Seek, Write},
@@ -19,7 +21,7 @@ const MANIFEST: &str = ".codex-plugin/plugin.json";
 const RUNTIME_ID: &str = "launchers/runtime-id";
 const RELEASE_BY_TAG: &str = "query($owner:String!,$name:String!,$tag:String!){
   repository(owner:$owner,name:$name){release(tagName:$tag){
-    node_id:id tag_name:tagName draft:isDraft prerelease:isPrerelease body:description author{login}
+    node_id:id id:databaseId tag_name:tagName draft:isDraft prerelease:isPrerelease body:description author{login}
   }}
 }";
 const BUILD_INPUTS: &[&str] = &[
@@ -86,6 +88,11 @@ struct Release<'a> {
     runner: &'a dyn Runner,
     artifacts: Option<&'a Path>,
 }
+struct PullRelease<'a> {
+    number: u64,
+    head: &'a str,
+    base: &'a str,
+}
 impl Release<'_> {
     fn bytes(&self, args: &[&str]) -> Result<Vec<u8>> {
         self.runner.run(self.root, args, None)
@@ -116,6 +123,35 @@ impl Release<'_> {
             return Err("main изменился перед публикацией релиза".into());
         }
         Ok(())
+    }
+    fn pull_at(&self, repo: &str, pull: &PullRelease<'_>) -> Result<Value> {
+        self.check_live_main(pull.base)?;
+        let data: Value = serde_json::from_slice(&self.bytes(&[
+            "gh",
+            "api",
+            &format!("repos/{repo}/pulls/{}", pull.number),
+        ])?)
+        .map_err(|e| e.to_string())?;
+        if data["number"].as_u64() != Some(pull.number)
+            || data["state"] != "open"
+            || data["draft"] != false
+            || !data["base"]["repo"]["full_name"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(repo))
+            || data["base"]["ref"] != "main"
+            || data["base"]["sha"] != pull.base
+            || data["head"]["sha"] != pull.head
+        {
+            return Err("Ревизии или состояние PR изменились перед публикацией".into());
+        }
+        Ok(data)
+    }
+    fn check_source(&self, repo: &str, head: &str, pull: Option<&PullRelease<'_>>) -> Result<()> {
+        if let Some(pull) = pull {
+            self.pull_at(repo, pull).map(|_| ())
+        } else {
+            self.check_live_main(head)
+        }
     }
     fn records(&self, repo: &str) -> Result<Vec<Value>> {
         let (owner, name) = repo.split_once('/').ok_or("Некорректное имя репозитория")?;
@@ -192,6 +228,62 @@ impl Release<'_> {
         };
         Ok(tree(base)? == tree(head)?)
     }
+    fn tree(&self, revision: &str) -> Result<String> {
+        self.cmd(&[
+            "git",
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{revision}^{{tree}}"),
+        ])
+    }
+    fn has_pull_source(&self, record: &Value, sha: &str) -> Result<bool> {
+        let footer = format!(
+            "<!-- release-tree:{} -->\n<!-- release-source:{sha} -->",
+            self.tree(sha)?
+        );
+        Ok(record["author"]["login"] == "github-actions[bot]"
+            && record["body"]
+                .as_str()
+                .is_some_and(|s| s.trim_end().ends_with(&footer)))
+    }
+    fn contains_release(&self, tag: &str, head: &str, record: &Value) -> Result<bool> {
+        let tag_sha = self.cmd(&["git", "rev-parse", &format!("{tag}^{{commit}}")])?;
+        if !self.has_pull_source(record, &tag_sha)? {
+            return Ok(self.cmd(&["git", "merge-base", &tag_sha, head])? == tag_sha);
+        }
+        let tree = self.tree(tag)?;
+        Ok(self
+            .cmd(&["git", "log", "--first-parent", "--format=%T", head])?
+            .lines()
+            .any(|candidate| candidate == tree))
+    }
+    fn check_remote_tag(&self, tag: &str, sha: &str) -> Result<()> {
+        let reference = format!("refs/tags/{tag}");
+        let peeled = format!("{reference}^{{}}");
+        let remote = self.cmd(&[
+            "git",
+            "ls-remote",
+            "--exit-code",
+            "origin",
+            &reference,
+            &peeled,
+        ])?;
+        let refs: BTreeMap<_, _> = remote
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(sha, name)| (name, sha))
+            .collect();
+        if refs
+            .get(peeled.as_str())
+            .or_else(|| refs.get(reference.as_str()))
+            .copied()
+            != Some(sha)
+        {
+            return Err(format!("Удалённый тег {tag} указывает на другую ревизию"));
+        }
+        Ok(())
+    }
     fn plan(&self, records: &[Value]) -> Result<Value> {
         let number = check_versions(self.root)?;
         let tag = format!("v{number}");
@@ -208,14 +300,21 @@ impl Release<'_> {
                 if self.cmd(&["git", "tag", "--list", &tag])?.is_empty() {
                     return Err(format!("GitHub Release {tag} уже опубликован, но Git-тег отсутствует. Проверьте теги или выберите свободную версию."));
                 }
-                self.cmd(&["git", "merge-base", "--is-ancestor", &tag, "HEAD"])?;
-                if record["prerelease"] != false || !self.same_package(&tag, "HEAD")? {
+                if record["prerelease"] != false
+                    || !self.contains_release(&tag, "HEAD", record)?
+                    || !self.same_package(&tag, "HEAD")?
+                {
                     return Err(format!(
                         "Версия {number} уже опубликована с другими исходниками"
                     ));
                 }
                 return Ok(json!({"version":number,"tag":tag,"publish":false}));
             }
+        }
+        if record.is_none() && !self.cmd(&["git", "tag", "--list", &tag])?.is_empty() {
+            return Err(format!(
+                "Версия {number} уже занята тегом без соответствующего выпуска"
+            ));
         }
         Ok(json!({"version":number,"tag":tag,"publish":true}))
     }
@@ -245,6 +344,7 @@ impl Release<'_> {
         } else if !self
             .cmd(&["git", "tag", "--list", &format!("v{current}")])?
             .is_empty()
+            && self.tree(&format!("v{current}"))? != self.tree("HEAD")?
         {
             return Err(format!("Версия {current} уже занята"));
         }
@@ -271,76 +371,12 @@ impl Release<'_> {
         serde_json::from_slice(&self.bytes(&["git", "show", &format!("{revision}:{MANIFEST}")])?)
             .map_err(|e| e.to_string())
     }
-    fn artifacts(&self, sha: &str) -> Result<Vec<(String, Vec<u8>)>> {
-        let directory = self.artifacts.ok_or("Публикация требует --artifacts DIR")?;
-        let mut found = BTreeMap::new();
-        for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            if !path.is_dir()
-                || fs::symlink_metadata(&path)
-                    .map_err(|e| e.to_string())?
-                    .file_type()
-                    .is_symlink()
-            {
-                return Err("Некорректный каталог артефакта".into());
-            }
-            let descriptor = path.join("artifact.json");
-            if fs::symlink_metadata(&descriptor)
-                .map_err(|e| e.to_string())?
-                .file_type()
-                .is_symlink()
-            {
-                return Err("Ссылка вместо описания артефакта".into());
-            }
-            let data: Value =
-                serde_json::from_slice(&fs::read(descriptor).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?;
-            let target = data["target"].as_str().ok_or("Нет target артефакта")?;
-            if !TARGETS.contains(&target)
-                || path.file_name().and_then(|v| v.to_str()) != Some(target)
-                || found.contains_key(target)
-            {
-                return Err("Неизвестный или повторный target артефакта".into());
-            }
-            let source = data["source_sha"]
-                .as_str()
-                .ok_or("Нет source_sha артефакта")?;
-            if !rx(r"\A[a-f0-9]{40}\z").is_match(source) {
-                return Err("Некорректный source_sha артефакта".into());
-            }
-            if source != sha {
-                return Err("Исходная ревизия бинарного артефакта не совпадает с релизом".into());
-            }
-            let binary = binary_name(target);
-            if data["binary"] != binary {
-                return Err("Некорректное имя бинарного артефакта".into());
-            }
-            let file = path.join(binary);
-            if fs::symlink_metadata(&file)
-                .map_err(|e| e.to_string())?
-                .file_type()
-                .is_symlink()
-            {
-                return Err("Ссылка вместо бинарного артефакта".into());
-            }
-            let bytes = fs::read(file).map_err(|e| e.to_string())?;
-            if bytes.is_empty() || data["sha256"] != format!("{:x}", Sha256::digest(&bytes)) {
-                return Err("Контрольная сумма бинарного артефакта не совпадает".into());
-            }
-            found.insert(target.to_owned(), bytes);
-        }
-        if found.keys().map(String::as_str).collect::<BTreeSet<_>>()
-            != TARGETS.into_iter().collect()
-        {
-            return Err("Требуется полный набор поддерживаемых платформ".into());
-        }
-        Ok(found.into_iter().collect())
-    }
     fn archive(
         &self,
         number: &str,
         sha: &str,
         artifacts: &[(String, Vec<u8>)],
+        directory: &Path,
     ) -> Result<Vec<PathBuf>> {
         let data = manifest(self.root)?;
         let name = data["name"].as_str().ok_or("Нет имени пакета")?;
@@ -350,10 +386,7 @@ impl Release<'_> {
         let runtime_id = self.check_runtime_id(sha)?;
         let mut outputs = Vec::new();
         for (target, bytes) in artifacts {
-            let output = self
-                .root
-                .join("dist")
-                .join(format!("{name}-{number}-{target}.zip"));
+            let output = directory.join(format!("{name}-{number}-{target}.zip"));
             fs::create_dir_all(output.parent().unwrap()).map_err(|e| e.to_string())?;
             self.cmd(&[
                 "git",
@@ -495,14 +528,28 @@ impl Release<'_> {
                 }
             }
         }
+        Ok(Self::notes(number, sha, &sections, None))
+    }
+    fn notes(number: &str, sha: &str, sections: &[String], tree: Option<&str>) -> String {
         let mut notes = format!("Пакет fstack {number}. Архивы, бинарники и SHA-256.");
         if !sections.is_empty() {
             notes.push_str("\n\n## При обновлении\n\n");
             notes.push_str(&sections.join("\n\n"));
         }
-        Ok(format!("{notes}\n\n<!-- release-source:{sha} -->"))
+        notes.push_str("\n\n");
+        if let Some(tree) = tree {
+            notes.push_str(&format!("<!-- release-tree:{tree} -->\n"));
+        }
+        format!("{notes}<!-- release-source:{sha} -->")
     }
-    fn finish(&self, repo: &str, number: &str, records: &[Value], head: &str) -> Result<()> {
+    fn finish(
+        &self,
+        repo: &str,
+        number: &str,
+        records: &[Value],
+        head: &str,
+        pull: Option<&PullRelease<'_>>,
+    ) -> Result<()> {
         version(number)?;
         let tag = format!("v{number}");
         let existing = records.iter().find(|r| r["tag_name"] == tag);
@@ -513,16 +560,31 @@ impl Release<'_> {
             .map(|r| self.draft_target(r, head, number))
             .transpose()?;
         let sha = target.as_deref().unwrap_or(head);
+        if pull.is_some() && sha != head {
+            return Err("Черновик подготовлен для другой ревизии PR".into());
+        }
         if !self.cmd(&["git", "tag", "--list", &tag])?.is_empty()
             && self.cmd(&["git", "rev-parse", &format!("{tag}^{{commit}}")])? != sha
         {
             return Err(format!("Тег {tag} указывает на другую ревизию"));
         }
-        self.check_live_main(head)?;
+        self.check_source(repo, head, pull)?;
         let artifacts = self.artifacts(head)?;
-        let outputs = self.archive(number, sha, &artifacts)?;
+        let temporary = pull
+            .map(|_| tempfile::tempdir())
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let dist = self.root.join("dist");
+        let directory = temporary.as_ref().map_or(dist.as_path(), |dir| dir.path());
+        let outputs = self.archive(number, sha, &artifacts, directory)?;
         if existing.is_none() {
-            let notes = self.release_notes(repo, number, sha)?;
+            let notes = if let Some(pull) = pull {
+                let data = self.pull_at(repo, pull)?;
+                let section = data["body"].as_str().and_then(upgrade_section);
+                Self::notes(number, sha, section.as_slice(), Some(&self.tree(sha)?))
+            } else {
+                self.release_notes(repo, number, sha)?
+            };
             self.command(
                 &[
                     "gh",
@@ -542,6 +604,20 @@ impl Release<'_> {
                 Some(notes.as_bytes()),
             )?;
         }
+        let draft_id = if pull.is_some() {
+            let drafts = self.records(repo)?;
+            let [record] = drafts.as_slice() else {
+                return Err("GitHub не подтвердил единственный черновик выпуска".into());
+            };
+            if self.draft_target(record, head, number)? != sha
+                || !self.has_pull_source(record, sha)?
+            {
+                return Err("Черновик принадлежит другой ревизии PR".into());
+            }
+            Some(record["id"].as_u64().ok_or("Нет ID черновика выпуска")?)
+        } else {
+            None
+        };
         let output_names: Vec<_> = outputs
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -550,7 +626,23 @@ impl Release<'_> {
         upload.extend(output_names.iter().map(String::as_str));
         upload.extend(["--repo", repo, "--clobber"]);
         self.cmd(&upload)?;
-        self.check_live_main(head)?;
+        if let Some(id) = draft_id {
+            let draft: Value = serde_json::from_slice(&self.bytes(&[
+                "gh",
+                "api",
+                &format!("repos/{repo}/releases/{id}"),
+            ])?)
+            .map_err(|e| e.to_string())?;
+            if draft["id"].as_u64() != Some(id)
+                || draft["tag_name"] != tag
+                || self.draft_target(&draft, head, number)? != sha
+                || !self.has_pull_source(&draft, sha)?
+            {
+                return Err("Источник загруженного черновика не совпадает с ревизией PR".into());
+            }
+            self.verify_inventory(repo, number, sha, Some(&outputs), id)?;
+        }
+        self.check_source(repo, head, pull)?;
         self.cmd(&[
             "gh",
             "release",
@@ -562,21 +654,53 @@ impl Release<'_> {
             sha,
             "--draft=false",
             "--prerelease=false",
-            "--latest",
+            if pull.is_some() {
+                "--latest=false"
+            } else {
+                "--latest"
+            },
         ])?;
+        if pull.is_some() {
+            self.check_remote_tag(&tag, sha)?;
+            self.verify_assets(repo, number, sha, Some(&outputs))?;
+        }
         println!("{}", json!({"published":tag,"sha":sha}));
         Ok(())
     }
     fn publish(&self, repo: &str, event: &BTreeMap<String, String>) -> Result<()> {
-        if event.get("GITHUB_ACTIONS").map(String::as_str) != Some("true")
-            || event.get("GITHUB_REF").map(String::as_str) != Some("refs/heads/main")
-        {
-            return Err("Публикация выполняется только workflow ветки main".into());
-        }
-        if event.get("GITHUB_REPOSITORY").map(String::as_str) != Some(repo) {
-            return Err("Репозиторий workflow не совпадает с целью".into());
-        }
-        let expected = event.get("GITHUB_SHA").map(String::as_str).unwrap_or("");
+        self.publish_from(repo, event, None)
+    }
+    fn publish_pr(
+        &self,
+        repo: &str,
+        event: &BTreeMap<String, String>,
+        pull: &PullRelease<'_>,
+    ) -> Result<()> {
+        self.publish_from(repo, event, Some(pull))
+    }
+    fn publish_from(
+        &self,
+        repo: &str,
+        event: &BTreeMap<String, String>,
+        pull: Option<&PullRelease<'_>>,
+    ) -> Result<()> {
+        self.check_main_workflow(repo, event)?;
+        let workflow_sha = event.get("GITHUB_SHA").map(String::as_str).unwrap_or("");
+        let expected = if let Some(pull) = pull {
+            if event.get("GITHUB_EVENT_NAME").map(String::as_str) != Some("issue_comment")
+                || pull.number == 0
+                || pull.base != workflow_sha
+                || !rx(r"\A[a-f0-9]{40}\z").is_match(pull.base)
+                || pull.base == pull.head
+            {
+                return Err(
+                    "Для выпуска PR нужен issue_comment из проверенной ревизии main".into(),
+                );
+            }
+            pull.head
+        } else {
+            workflow_sha
+        };
         if !rx(r"\A[a-f0-9]{40}\z").is_match(expected)
             || self.cmd(&["git", "rev-parse", "HEAD"])? != expected
         {
@@ -585,15 +709,114 @@ impl Release<'_> {
         if !self.cmd(&["git", "status", "--porcelain"])?.is_empty() {
             return Err("Рабочее дерево содержит изменения".into());
         }
-        self.check_live_main(expected)?;
+        self.check_source(repo, expected, pull)?;
+        if let Some(pull) = pull {
+            let number = self.check_next(pull.base)?;
+            if self.manifest_at(pull.base)?["version"] == number {
+                return Err("Для выпуска PR нужна новая версия".into());
+            }
+        }
         let records = self.records(repo)?;
         let plan = self.plan(&records)?;
         if plan["publish"] != true {
+            if pull.is_some() {
+                let tag = plan["tag"].as_str().ok_or("Нет тега выпуска")?;
+                let record = records
+                    .iter()
+                    .find(|r| r["tag_name"] == tag)
+                    .ok_or("Нет записи выпуска")?;
+                if self.cmd(&["git", "rev-parse", &format!("{tag}^{{commit}}")])? != expected
+                    || !self.has_pull_source(record, expected)?
+                {
+                    return Err("Версия уже опубликована для другой ревизии PR".into());
+                }
+                self.check_remote_tag(tag, expected)?;
+                let number = plan["version"].as_str().ok_or("Нет версии выпуска")?;
+                let artifacts = self.artifacts(expected)?;
+                let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let outputs = self.archive(number, expected, &artifacts, directory.path())?;
+                self.verify_assets(repo, number, expected, Some(&outputs))?;
+            }
             println!("Текущая версия уже опубликована.");
             return Ok(());
         }
         self.runner.check(self.root)?;
-        self.finish(repo, plan["version"].as_str().unwrap(), &records, expected)
+        self.finish(
+            repo,
+            plan["version"].as_str().unwrap(),
+            &records,
+            expected,
+            pull,
+        )
+    }
+    fn check_main_workflow(&self, repo: &str, event: &BTreeMap<String, String>) -> Result<()> {
+        if event.get("GITHUB_ACTIONS").map(String::as_str) != Some("true")
+            || event.get("GITHUB_REF").map(String::as_str) != Some("refs/heads/main")
+            || event.get("GITHUB_REPOSITORY").map(String::as_str) != Some(repo)
+        {
+            return Err(format!(
+                "Публикация выполняется только workflow ветки main в {repo}"
+            ));
+        }
+        Ok(())
+    }
+    fn latest(&self, repo: &str) -> Result<Option<String>> {
+        let (owner, name) = repo.split_once('/').ok_or("Некорректное имя репозитория")?;
+        let data: Value = serde_json::from_slice(&self.bytes(&[
+            "gh","api","graphql","-f","query=query($owner:String!,$name:String!){repository(owner:$owner,name:$name){latestRelease{tagName}}}",
+            "-f",&format!("owner={owner}"),"-f",&format!("name={name}"),
+        ])?).map_err(|e| e.to_string())?;
+        let latest = data
+            .pointer("/data/repository/latestRelease")
+            .ok_or("GitHub не подтвердил последний выпуск")?;
+        if latest.is_null() {
+            return Ok(None);
+        }
+        latest["tagName"]
+            .as_str()
+            .map(|s| Some(s.to_owned()))
+            .ok_or("Неверный тег последнего выпуска".into())
+    }
+    fn promote(&self, repo: &str, event: &BTreeMap<String, String>) -> Result<()> {
+        self.check_main_workflow(repo, event)?;
+        let head = self.cmd(&["git", "rev-parse", "HEAD"])?;
+        if event.get("GITHUB_SHA") != Some(&head)
+            || !matches!(
+                event.get("GITHUB_EVENT_NAME").map(String::as_str),
+                Some("push" | "workflow_dispatch")
+            )
+            || !self.cmd(&["git", "status", "--porcelain"])?.is_empty()
+        {
+            return Err("Продвижение требует чистую проверенную ревизию main".into());
+        }
+        self.check_live_main(&head)?;
+        let records = self.records(repo)?;
+        let plan = self.plan(&records)?;
+        if plan["publish"] != false {
+            return Err("Нет опубликованного пакета для продвижения".into());
+        }
+        let number = check_versions(self.root)?;
+        let tag = format!("v{number}");
+        let source = self.cmd(&["git", "rev-parse", &format!("{tag}^{{commit}}")])?;
+        self.check_remote_tag(&tag, &source)?;
+        self.verify_assets(repo, &number, &source, None)?;
+        if self.latest(repo)?.as_deref() != Some(&tag) {
+            let record = records
+                .iter()
+                .find(|r| r["tag_name"] == tag)
+                .ok_or("Нет записи выпуска")?;
+            if !self.has_pull_source(record, &source)? {
+                return Err("Нет проверенного источника выпуска PR".into());
+            }
+            self.check_live_main(&head)?;
+            self.check_remote_tag(&tag, &source)?;
+            self.cmd(&["gh", "release", "edit", &tag, "--repo", repo, "--latest"])?;
+            if self.latest(repo)?.as_deref() != Some(&tag) {
+                return Err("GitHub не подтвердил продвижение пакета".into());
+            }
+        }
+        println!("{}", json!({"latest":tag,"sha":source}));
+        Ok(())
     }
 }
 fn upgrade_section(body: &str) -> Option<String> {
@@ -657,6 +880,7 @@ const TARGETS: [&str; 4] = [
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
 ];
+
 fn write_checksum(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
     let filename = path.file_name().unwrap().to_string_lossy();
     let checksum = path.with_file_name(format!("{filename}.sha256"));
@@ -752,12 +976,30 @@ pub fn run(args: &[OsString], package: &Path) -> Result<()> {
         println!("{}", local.check_next(base)?);
         return Ok(());
     }
-    let artifacts = if action == "publish" && args.len() == 3 && args[1] == "--artifacts" {
-        Some(Path::new(&args[2]))
-    } else if action == "plan" && args.len() == 1 {
+    let pull = if action == "publish-pr" && args.len() == 9 {
+        let field = |name| {
+            option(&args[1..], name)?
+                .to_str()
+                .ok_or("Некорректный параметр PR".to_owned())
+        };
+        Some(PullRelease {
+            number: field("--pr")?
+                .parse()
+                .map_err(|_| "Некорректный номер PR")?,
+            head: field("--head")?,
+            base: field("--base")?,
+        })
+    } else {
+        None
+    };
+    let artifacts = if pull.is_some()
+        || (action == "publish" && args.len() == 3 && args[1] == "--artifacts")
+    {
+        Some(Path::new(option(&args[1..], "--artifacts")?))
+    } else if matches!(action, "plan" | "promote") && args.len() == 1 {
         None
     } else {
-        return Err("Использование: fstack release check|prepare [VERSION]|check-next BASE|plan|publish --artifacts DIR|artifact --target TARGET --binary PATH --output DIR".into());
+        return Err("Использование: fstack release check|prepare [VERSION]|check-next BASE|plan|publish --artifacts DIR|publish-pr --pr N --head SHA --base SHA --artifacts DIR|promote|artifact --target TARGET --binary PATH --output DIR".into());
     };
     let release = Release {
         root: package,
@@ -782,7 +1024,11 @@ pub fn run(args: &[OsString], package: &Path) -> Result<()> {
     if !rx(r"\A[\w.-]+/[\w.-]+\z").is_match(&repo) {
         return Err("Некорректное имя репозитория".into());
     }
-    if action == "publish" {
+    if let Some(pull) = pull {
+        release.publish_pr(&repo, &std::env::vars().collect(), &pull)
+    } else if action == "promote" {
+        release.promote(&repo, &std::env::vars().collect())
+    } else if action == "publish" {
         release.publish(&repo, &std::env::vars().collect())
     } else {
         let plan = release.plan(&release.records(&repo)?)?;

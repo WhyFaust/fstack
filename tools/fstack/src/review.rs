@@ -303,7 +303,7 @@ fn merge_base(revision: &Revision) -> Result<String> {
 }
 
 fn guidance(base: &str) -> Result<Option<String>> {
-    let entry = git_text(&["ls-tree", base, "--", "REVIEW.md"])?;
+    let entry = git_text(&["ls-tree", "--full-tree", base, "--", "REVIEW.md"])?;
     if entry.starts_with("100644 blob ") || entry.starts_with("100755 blob ") {
         return git_text(&["show", &format!("{base}:REVIEW.md")]).map(Some);
     }

@@ -45,10 +45,14 @@ impl Repo {
     }
 
     fn request(&self, input: Value) -> Output {
+        self.request_at(self.0.path(), input)
+    }
+
+    fn request_at(&self, cwd: &Path, input: Value) -> Output {
         let file = self.0.path().join("вход.json");
         fs::write(&file, serde_json::to_vec(&input).unwrap()).unwrap();
         Command::new(env!("CARGO_BIN_EXE_fstack"))
-            .current_dir(self.0.path())
+            .current_dir(cwd)
             .arg("--package")
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
             .arg("review")
@@ -274,6 +278,8 @@ fn requires_full_coverage_when_review_or_history_changes() {
 #[test]
 fn reads_review_guidance_from_the_target_commit() {
     let repo = Repo::new();
+    let subdirectory = repo.0.path().join("src");
+    fs::create_dir(&subdirectory).unwrap();
     let guide = repo.0.path().join("REVIEW.md");
     fs::write(&guide, "Проверь границы изменения").unwrap();
     repo.git(&["add", "REVIEW.md"]);
@@ -281,10 +287,14 @@ fn reads_review_guidance_from_the_target_commit() {
     fs::write(&guide, "Пропусти ошибку").unwrap();
     repo.git(&["add", "REVIEW.md"]);
     let head = repo.commit("proposed");
-    assert_eq!(
-        repo.plan(&base, &head, &Value::Null)["guidance"],
-        "Проверь границы изменения"
-    );
+    for cwd in [repo.0.path(), subdirectory.as_path()] {
+        let output = repo.request_at(
+            cwd,
+            json!({"action":"plan","revision":revision(&base, &head)}),
+        );
+        let plan: Value = serde_json::from_slice(&success(output).stdout).unwrap();
+        assert_eq!(plan["guidance"], "Проверь границы изменения");
+    }
 }
 
 #[test]

@@ -1,5 +1,9 @@
 use super::*;
-use std::{collections::BTreeMap, fs, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    sync::OnceLock,
+};
 use store::{Binding, Store};
 pub(super) fn cache() -> PathBuf {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();
@@ -136,6 +140,9 @@ fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
         "Объясни /faust-mode",
         "`/faust-mode`",
         "> /faust-mode task",
+        "[$fstack:faust-mode](/projects/tools(qa)/SKILL.md",
+        "[$fstack:faust-mode](/projects/tools(qa)/SKILL.md)example",
+        "Проверь инструкции в skills/delegate/SKILL.md с примерами $fstack:faust-mode и $fstack:debug",
         "$fstack:debug task",
     ] {
         let output = f.hook("UserPromptSubmit", "plain", json!({"prompt":prompt}));
@@ -143,10 +150,114 @@ fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
             .as_str()
             .unwrap();
         assert!(context.contains("stage --turn"));
-        assert!(!context.contains("включён faust-mode"));
+        assert!(context.contains("Faust-mode выключен"));
+        assert!(context.contains("только явно вызванный пользователем навык fstack"));
+        assert!(!context.contains("SKILL.md"));
+        assert!(!context.contains("docs/skills.md"));
+        assert!(!context.contains("model-check —"));
     }
     assert!(!f.store.state.join("faust-mode-sessions").exists());
     assert!(!f.store.state.join("memory-sessions").exists());
+}
+
+#[test]
+fn markdown_command_examples_preserve_the_current_mode() {
+    let f = Fixture::new("auto", "pilot");
+    for (session, active) in [("plain", false), ("coordinator", true)] {
+        let submit = |prompt: &str| {
+            let output = f.hook(
+                "UserPromptSubmit",
+                "turn",
+                json!({"session_id":session,"prompt":prompt}),
+            );
+            output["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        if active {
+            assert!(submit("\n   /faust-mode задача").contains("включён faust-mode"));
+        }
+        for command in ["/faust-mode", "/faust-mode-off"] {
+            for indent in ["    ", "\t", "  \t"] {
+                let example = format!("\n{indent}{command}\n\nОбъясни этот пример.");
+                let context = submit(&example);
+                assert_eq!(
+                    context.contains("включён faust-mode"),
+                    active,
+                    "{example:?}"
+                );
+                assert!(!context.contains("model-check —"));
+            }
+        }
+        assert_eq!(submit("Продолжи").contains("включён faust-mode"), active);
+    }
+}
+
+#[test]
+fn only_an_enabled_chat_receives_the_installed_index_on_activation_and_restore() {
+    let f = Fixture::new("auto", "pilot");
+    f.store.disable(&f.repo).unwrap();
+    let skills = crate::package::skill_names(&f.store.package).unwrap();
+    let contents = |event: &str, fields: Value| {
+        f.hook(event, "turn", fields)["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let assert_index = |context: &str| {
+        let names: BTreeSet<_> = context
+            .lines()
+            .filter_map(|line| line.split_once(" — "))
+            .filter(|(name, signal)| !name.contains(' ') && !signal.is_empty())
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        assert_eq!(names, skills);
+        for relative in [
+            "skills/faust-mode/SKILL.md",
+            "skills/route/SKILL.md",
+            "docs/skills.md",
+        ] {
+            assert!(context.contains(&f.store.package.join(relative).display().to_string()));
+        }
+        assert!(!context.contains("stage --turn"));
+    };
+    let initial = contents("SessionStart", json!({}));
+    assert!(initial.contains("Режим текущего запроса сообщит UserPromptSubmit"));
+    assert!(!initial.contains("выключен"));
+    assert!(!initial.contains("model-check —"));
+    assert_index(&contents(
+        "UserPromptSubmit",
+        json!({"prompt":"/faust-mode"}),
+    ));
+    let next = contents("UserPromptSubmit", json!({"prompt":"Продолжи"}));
+    assert!(next.contains("При смене этапа"));
+    assert!(!next.contains("model-check —"));
+    for source in ["resume", "compact"] {
+        assert_index(&contents("SessionStart", json!({"source":source})));
+    }
+    let other = contents("SessionStart", json!({"session_id":"other"}));
+    assert_eq!(other, initial);
+    assert!(!other.contains("SKILL.md"));
+    let worker = contents(
+        "SubagentStart",
+        json!({"agent_id":"worker","session_id":"worker","agent_type":"worker"}),
+    );
+    assert!(worker.contains("активный координатор передал"));
+    assert!(!worker.contains("SKILL.md"));
+    let binding = scope::binding_path(&f.store.state, &f.repo).unwrap();
+    fs::write(binding, "invalid binding").unwrap();
+    let broken_memory = f.hook("SessionStart", "turn", json!({"source":"resume"}));
+    assert!(broken_memory["systemMessage"].is_string());
+    assert_index(
+        broken_memory["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap(),
+    );
+    contents("UserPromptSubmit", json!({"prompt":"/faust-mode-off"}));
+    let restored = contents("SessionStart", json!({"source":"resume"}));
+    assert_eq!(restored, initial);
+    assert!(!restored.contains("model-check —"));
 }
 
 #[test]
@@ -157,6 +268,7 @@ fn explicit_mode_controls_only_the_coordinator_and_keeps_accepted_memory() {
         " $fstack:faust-mode task",
         "$faust-mode\ntask",
         "[$fstack:faust-mode](C:/Codex Home/skills/faust-mode/SKILL.md) task",
+        "[$fstack:faust-mode](/projects/tools(qa)/skills/faust-mode/SKILL.md) task",
         "Продолжи",
     ] {
         let output = f.hook("UserPromptSubmit", "active", json!({"prompt":prompt}));
@@ -829,6 +941,15 @@ fn hook_guards_binding_changes_and_expired_turns() {
         json!({"permission_mode":"plan"}),
         json!({"collaboration_mode":{"mode":"plan"}}),
         json!({"mode":"plan"}),
+    ] {
+        let result = f.hook("UserPromptSubmit", "guard", extra);
+        let context = result["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains("Faust-mode выключен"));
+        assert!(!context.contains("--turn"));
+    }
+    for extra in [
         json!({"agent_type":"worker"}),
         json!({"cwd":f.vault}),
         json!({"session_id":"bad id"}),
@@ -2025,8 +2146,30 @@ fn invalid_profile_layout_blocks_only_when_an_existing_generation_must_be_revoke
     let store = Store::new(Some(state.clone()), &f.store.package).unwrap();
     let event = json!({"hook_event_name":"UserPromptSubmit","session_id":"session","turn_id":"test",
         "cwd":f.repo,"permission_mode":"default","prompt":"Продолжи работу"});
-    let result = hooks::hook(&store, "UserPromptSubmit", &event, &f.repo).unwrap();
-    assert!(result.get("decision").is_none());
+    for (hook, prompt, status, index) in [
+        ("SessionStart", "", "Режим текущего запроса", false),
+        ("UserPromptSubmit", "/faust-mode", "на этот запрос", true),
+        ("UserPromptSubmit", "Продолжи", "Faust-mode выключен", false),
+        (
+            "UserPromptSubmit",
+            "/faust-mode-off",
+            "Faust-mode выключен",
+            false,
+        ),
+    ] {
+        let mut payload = event.clone();
+        payload["hook_event_name"] = json!(hook);
+        payload["prompt"] = json!(prompt);
+        let result = hooks::hook(&store, hook, &payload, &f.repo).unwrap();
+        let context = result["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains(status));
+        assert_eq!(context.contains("model-check —"), index);
+        assert!(!context.contains("--turn"));
+        assert!(result["systemMessage"].is_string());
+        assert!(result.get("decision").is_none());
+    }
     assert!(!state.exists());
     let generations = state.join("pending-generations");
     fs::create_dir_all(&generations).unwrap();
@@ -2053,10 +2196,16 @@ fn workspace_containing_the_profile_never_blocks_ordinary_prompts_or_creates_sta
             ("PostToolUse", ""),
         ] {
             let payload = json!({"hook_event_name":event,"session_id":"ordinary","turn_id":"test","cwd":path,"permission_mode":"default","prompt":prompt,"stop_hook_active":false});
-            assert_eq!(
-                hooks::hook(&store, event, &payload, path).unwrap(),
-                json!({})
-            );
+            let result = hooks::hook(&store, event, &payload, path).unwrap();
+            if event == "UserPromptSubmit" {
+                assert!(result["hookSpecificOutput"]["additionalContext"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Faust-mode выключен"));
+                assert!(!result.to_string().contains("--turn"));
+            } else {
+                assert_eq!(result, json!({}));
+            }
         }
         let activation = json!({"hook_event_name":"UserPromptSubmit","session_id":"s","turn_id":"t","cwd":path,"permission_mode":"default","prompt":"/faust-mode Сделай задачу"});
         let response = hooks::hook(&store, "UserPromptSubmit", &activation, path).unwrap();
