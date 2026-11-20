@@ -1,0 +1,107 @@
+name: Подготовить выпуск
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  request:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/fstack-release ')
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.verify.outputs.pr }}
+      head: ${{ steps.verify.outputs.head }}
+      base: ${{ steps.verify.outputs.base }}
+      run: ${{ steps.verify.outputs.run }}
+    steps:
+      - name: Проверить полномочия, ревизию и сборку PR
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pr=$(jq -er '.issue.number' "$GITHUB_EVENT_PATH")
+          request=$(jq -er '.comment.body' "$GITHUB_EVENT_PATH")
+          [[ "$request" =~ ^/fstack-release\ ([0-9a-f]{40})$ ]]
+          head=${BASH_REMATCH[1]}
+          if [[ "$GITHUB_ACTOR" != "$GITHUB_REPOSITORY_OWNER" ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" |
+              jq -e '.permission=="admin" or .role_name=="maintain"' >/dev/null
+          fi
+          pull=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr")
+          jq -e --arg head "$head" --arg base "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" \
+            '.state=="open" and .draft==false and .base.repo.full_name==$repo and .base.ref=="main" and .base.sha==$base and .head.sha==$head' <<< "$pull" >/dev/null
+          head_repo=$(jq -er '.head.repo.id' <<< "$pull")
+          head_branch=$(jq -er '.head.ref' <<< "$pull")
+          runs=$(gh api --method GET --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs" \
+            -f event=pull_request -f head_sha="$head" -f status=success)
+          run=$(jq -er --arg head "$head" --arg base "$GITHUB_SHA" --argjson pr "$pr" \
+            --arg title "PR $pr $head $GITHUB_SHA" --arg branch "$head_branch" --argjson repo "$head_repo" \
+            '[.[].workflow_runs[] | select(
+              .display_title==$title and .event=="pull_request" and .conclusion=="success" and
+              .head_sha==$head and .head_branch==$branch and .head_repository.id==$repo and
+              ((.pull_requests | length)==0 or any(.pull_requests[]; .number==$pr and .head.sha==$head and .base.sha==$base))
+            )][0].id' <<< "$runs")
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: request
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: fstack-release-publish
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Получить исходники издателя
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: f606e7c048e6dcd567bae32c56f236f3dd3d07c6
+          path: publisher
+          persist-credentials: false
+      - name: Собрать издатель
+        working-directory: publisher
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          cargo +1.90.0 build --release --locked --manifest-path tools/fstack/Cargo.toml
+          cp tools/fstack/target/release/fstack "$RUNNER_TEMP/publisher-cli"
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.request.outputs.head }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Сверить workflow с основной веткой
+        working-directory: candidate
+        env:
+          BASE_SHA: ${{ needs.request.outputs.base }}
+          HEAD_SHA: ${{ needs.request.outputs.head }}
+        run: git diff --exit-code --no-ext-diff --no-textconv "$BASE_SHA" "$HEAD_SHA" -- .github/workflows
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.request.outputs.run }}
+          pattern: native-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/native
+      - name: Проверить комплект и опубликовать до слияния
+        working-directory: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.request.outputs.pr }}
+          HEAD_SHA: ${{ needs.request.outputs.head }}
+          BASE_SHA: ${{ needs.request.outputs.base }}
+        run: |
+          "$RUNNER_TEMP/publisher-cli" --package . release publish-pr \
+            --pr "$PR_NUMBER" --head "$HEAD_SHA" --base "$BASE_SHA" --artifacts "$RUNNER_TEMP/native"
