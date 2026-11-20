@@ -20,6 +20,12 @@ struct Stub {
     records: RefCell<Vec<Value>>,
     exact: RefCell<Value>,
     version_pull: RefCell<Option<(String, Value)>>,
+    pull: RefCell<Value>,
+    change_head_after_upload: Cell<bool>,
+    incomplete_upload: Cell<bool>,
+    assets: RefCell<Vec<Value>>,
+    checksums: RefCell<BTreeMap<u64, Vec<u8>>>,
+    latest: RefCell<Value>,
     created_notes: RefCell<String>,
     calls: RefCell<Vec<Vec<String>>>,
     publish_tag: bool,
@@ -34,8 +40,40 @@ impl Runner for Stub {
             return System.run(root, args, input);
         }
         if args[1] == "api" {
-            let response = if args[2] == "graphql" {
+            let endpoint = args.last().unwrap();
+            if let Some(id) = endpoint.strip_prefix("repos/fixture/fstack/releases/assets/") {
+                assert!(args.contains(&"Accept: application/octet-stream"));
+                return self
+                    .checksums
+                    .borrow()
+                    .get(&id.parse::<u64>().unwrap())
+                    .cloned()
+                    .ok_or("Unknown checksum asset".into());
+            }
+            let response = if args[2] == "graphql"
+                && args.iter().any(|arg| arg.contains("latestRelease"))
+            {
+                json!({"data":{"repository":{"latestRelease":*self.latest.borrow()}}})
+            } else if args[2] == "graphql" {
                 json!({"data":{"repository":{"release":*self.exact.borrow()}}})
+            } else if args[2] == "repos/fixture/fstack/pulls/7" {
+                self.pull.borrow().clone()
+            } else if args[2] == "repos/fixture/fstack/releases/10" {
+                self.records
+                    .borrow()
+                    .iter()
+                    .find(|r| r["id"] == 10)
+                    .unwrap()
+                    .clone()
+            } else if let Some(tag) = endpoint.strip_prefix("repos/fixture/fstack/releases/tags/") {
+                self.records
+                    .borrow()
+                    .iter()
+                    .find(|r| r["tag_name"] == tag && r["draft"] == false)
+                    .unwrap()
+                    .clone()
+            } else if *endpoint == "repos/fixture/fstack/releases/10/assets?per_page=100" {
+                json!([*self.assets.borrow()])
             } else if args.last().unwrap().ends_with("/pulls?per_page=100") {
                 let pulls = self.version_pull.borrow();
                 match pulls.as_ref() {
@@ -63,8 +101,33 @@ impl Runner for Stub {
         if args[1..3] == ["release", "create"] {
             assert!(args.windows(2).any(|pair| pair == ["--notes-file", "-"]));
             *self.created_notes.borrow_mut() = String::from_utf8(input.unwrap().to_vec()).unwrap();
+            if self.publish_tag {
+                self.records.borrow_mut().push(json!({
+                    "id":10,"tag_name":args[3],"draft":true,"prerelease":false,
+                    "author":{"login":"github-actions[bot]"},"body":*self.created_notes.borrow()
+                }));
+            }
         }
-        if self.publish_tag && args[1..3] == ["release", "edit"] {
+        if args[1..3] == ["release", "upload"] {
+            self.assets.borrow_mut().clear();
+            for (i, filename) in args[4..].iter().take_while(|s| **s != "--repo").enumerate() {
+                let path = Path::new(filename);
+                let bytes = fs::read(path).unwrap();
+                let id = 100 + i as u64;
+                self.assets.borrow_mut().push(json!({"id":id,"name":path.file_name().unwrap().to_str().unwrap(),
+                    "state":"uploaded","size":bytes.len(),"digest":format!("sha256:{:x}",Sha256::digest(&bytes))}));
+                if path.extension().is_some_and(|s| s == "sha256") {
+                    self.checksums.borrow_mut().insert(id, bytes);
+                }
+            }
+            if self.change_head_after_upload.replace(false) {
+                self.pull.borrow_mut()["head"]["sha"] = json!("1".repeat(40));
+            }
+            if self.incomplete_upload.replace(false) {
+                self.assets.borrow_mut().pop();
+            }
+        }
+        if self.publish_tag && args[1..3] == ["release", "edit"] && args.contains(&"--target") {
             let target = args[args.iter().position(|s| *s == "--target").unwrap() + 1];
             assert!(args.contains(&"--prerelease=false"));
             System.run(root, &["git", "tag", args[3], target], None)?;
@@ -77,6 +140,9 @@ impl Runner for Stub {
                 }
             }
         }
+        if args[1..3] == ["release", "edit"] && args.contains(&"--latest") {
+            *self.latest.borrow_mut() = json!({"tagName":args[3]});
+        }
         Ok(Vec::new())
     }
 }
@@ -84,6 +150,12 @@ fn stub() -> Stub {
     Stub {
         exact: RefCell::new(Value::Null),
         version_pull: RefCell::new(None),
+        pull: RefCell::new(Value::Null),
+        change_head_after_upload: Cell::new(false),
+        incomplete_upload: Cell::new(false),
+        assets: RefCell::new(Vec::new()),
+        checksums: RefCell::new(BTreeMap::new()),
+        latest: RefCell::new(Value::Null),
         created_notes: RefCell::new(String::new()),
         records: RefCell::new(vec![
             json!({"tag_name":"v0.2.0","draft":false,"prerelease":false}),
@@ -209,6 +281,240 @@ fn event(sha: &str) -> BTreeMap<String, String> {
     .map(|(k, v)| (k.into(), v.into()))
     .collect()
 }
+
+#[test]
+fn premerge_publication_rechecks_the_pr_and_reuses_only_the_published_tree_after_squash() {
+    let (_temp, root) = fixture();
+    let base = git(&root, &["rev-parse", "HEAD"]);
+    origin(&root);
+    git(&root, &["checkout", "-b", "candidate"]);
+    let mut stub = stub();
+    stub.publish_tag = true;
+    let release = Release {
+        root: &root,
+        runner: &stub,
+        artifacts: None,
+    };
+    release.prepare(Some("0.2.1")).unwrap();
+    commit(&root, "chore: release candidate");
+    let head = git(&root, &["rev-parse", "HEAD"]);
+    git(
+        &root,
+        &["push", "origin", "HEAD:refs/heads/release-candidates/pr-7"],
+    );
+    let pull = PullRelease {
+        number: 7,
+        head: &head,
+        base: &base,
+    };
+    let valid = json!({
+        "number":7,"state":"open","draft":false,"merged":false,"mergeable":true,
+        "base":{"ref":"main","repo":{"full_name":"fixture/fstack"},"sha":base},
+        "head":{"ref":"candidate","repo":{"full_name":"someone/fork"},"sha":head},
+        "body":"## При обновлении\n\nПроверьте настройки."
+    });
+    let mut event = event(&head);
+    event.insert("GITHUB_EVENT_NAME".into(), "push".into());
+    event.insert(
+        "GITHUB_REF".into(),
+        "refs/heads/release-candidates/pr-7".into(),
+    );
+    let artifacts = artifacts(&root, &head);
+    let release = Release {
+        artifacts: Some(&artifacts),
+        ..release
+    };
+    let publish = || release.publish_pr("fixture/fstack", &event, &pull);
+
+    for (pointer, value) in [
+        ("/draft", json!(true)),
+        ("/state", json!("closed")),
+        ("/base/ref", json!("other")),
+        ("/base/sha", json!("2".repeat(40))),
+        ("/head/sha", json!("3".repeat(40))),
+        ("/base/repo/full_name", json!("someone/fork")),
+    ] {
+        let mut changed = valid.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        stub.pull.replace(changed);
+        assert!(publish().is_err(), "{pointer}");
+        assert!(stub.calls.borrow().is_empty(), "{pointer}");
+    }
+    stub.pull.replace(valid.clone());
+    for (key, wrong) in [
+        ("GITHUB_REF", "refs/heads/release-candidates/pr-8"),
+        ("GITHUB_EVENT_NAME", "workflow_dispatch"),
+        ("GITHUB_SHA", base.as_str()),
+    ] {
+        let mut other = event.clone();
+        other.insert(key.into(), wrong.into());
+        assert!(release.publish_pr("fixture/fstack", &other, &pull).is_err());
+        assert!(stub.calls.borrow().is_empty());
+    }
+    git(
+        &root,
+        &[
+            "push",
+            "--force",
+            "origin",
+            &format!("{base}:refs/heads/release-candidates/pr-7"),
+        ],
+    );
+    assert!(publish().is_err());
+    assert!(stub.calls.borrow().is_empty());
+    git(
+        &root,
+        &["push", "origin", "HEAD:refs/heads/release-candidates/pr-7"],
+    );
+    let descriptor = artifacts.join(TARGETS[0]).join("artifact.json");
+    let original = fs::read(&descriptor).unwrap();
+    let mut changed: Value = serde_json::from_slice(&original).unwrap();
+    changed["source_sha"] = json!(base);
+    fs::write(&descriptor, changed.to_string()).unwrap();
+    assert!(publish().is_err());
+    assert!(stub.calls.borrow().is_empty());
+    fs::write(&descriptor, original).unwrap();
+
+    stub.change_head_after_upload.set(true);
+    assert!(publish().is_err());
+    let actions = || {
+        stub.calls
+            .borrow()
+            .iter()
+            .map(|call| call[2].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(actions(), ["create", "upload"]);
+    assert!(stub.created_notes.borrow().contains("Проверьте настройки."));
+    assert!(git(&root, &["tag", "--list", "v0.2.1"]).is_empty());
+    stub.pull.replace(valid.clone());
+    stub.calls.borrow_mut().clear();
+    stub.incomplete_upload.set(true);
+    assert!(publish().unwrap_err().contains("набор файлов"));
+    assert_eq!(actions(), ["upload"]);
+    assert!(stub
+        .records
+        .borrow()
+        .iter()
+        .any(|r| r["id"] == 10 && r["draft"] == true));
+    assert!(git(&root, &["tag", "--list", "v0.2.1"]).is_empty());
+
+    save(&root, "new-doc.md", "Поздняя правка");
+    commit(&root, "docs: different candidate");
+    let newer = git(&root, &["rev-parse", "HEAD"]);
+    git(
+        &root,
+        &["push", "origin", "HEAD:refs/heads/release-candidates/pr-7"],
+    );
+    let mut updated = valid.clone();
+    updated["head"]["sha"] = json!(newer);
+    stub.pull.replace(updated);
+    let mut retry = event.clone();
+    retry.insert("GITHUB_SHA".into(), newer.clone());
+    let fresh = self::artifacts(&root, &newer);
+    let retarget = Release {
+        artifacts: Some(&fresh),
+        ..release
+    };
+    stub.calls.borrow_mut().clear();
+    assert!(retarget
+        .publish_pr(
+            "fixture/fstack",
+            &retry,
+            &PullRelease {
+                number: 7,
+                base: &base,
+                head: &newer
+            }
+        )
+        .unwrap_err()
+        .contains("другой ревизии"));
+    assert!(actions().is_empty());
+    git(&root, &["checkout", "--detach", &head]);
+    git(&root, &["branch", "-f", "candidate", &head]);
+    git(
+        &root,
+        &[
+            "push",
+            "--force",
+            "origin",
+            "HEAD:refs/heads/release-candidates/pr-7",
+        ],
+    );
+    self::artifacts(&root, &head);
+    stub.pull.replace(valid);
+    stub.calls.borrow_mut().clear();
+    publish().unwrap();
+    assert_eq!(actions(), ["upload", "edit"]);
+    assert!(stub.calls.borrow()[1]
+        .iter()
+        .any(|arg| arg == "--latest=false"));
+    assert_eq!(git(&root, &["rev-parse", "v0.2.1"]), head);
+    stub.calls.borrow_mut().clear();
+    publish().unwrap();
+    assert!(actions().is_empty());
+
+    git(&root, &["checkout", "main"]);
+    git(&root, &["merge", "--squash", "candidate"]);
+    save(
+        &root,
+        "guide.md",
+        "Unrelated difference in the squash snapshot",
+    );
+    commit(&root, "merge: candidate with a different tree");
+    let records = stub.records.borrow().clone();
+    assert!(release.plan(&records).is_err());
+    git(&root, &["rm", "guide.md"]);
+    git(&root, &["commit", "--amend", "--no-edit"]);
+    assert_ne!(git(&root, &["rev-parse", "HEAD"]), head);
+    assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
+    assert_eq!(release.plan(&records).unwrap()["publish"], false);
+    let mut foreign = records
+        .iter()
+        .find(|r| r["tag_name"] == "v0.2.1")
+        .unwrap()
+        .clone();
+    foreign["author"]["login"] = json!("other");
+    assert!(release.plan(&[foreign]).is_err());
+    let squash = git(&root, &["rev-parse", "HEAD"]);
+    git(&root, &["push", "origin", "HEAD:refs/heads/main"]);
+    let mut main_event = self::event(&squash);
+    main_event.insert("GITHUB_EVENT_NAME".into(), "push".into());
+    let promote = || release.promote("fixture/fstack", &main_event);
+    let checksum_id = *stub.checksums.borrow().keys().next().unwrap();
+    let checksum = stub
+        .checksums
+        .borrow_mut()
+        .insert(checksum_id, b"bad checksum".to_vec())
+        .unwrap();
+    assert!(promote().is_err());
+    assert!(actions().is_empty());
+    stub.checksums.borrow_mut().insert(checksum_id, checksum);
+    let missing = stub.assets.borrow_mut().pop().unwrap();
+    assert!(promote().is_err());
+    assert!(actions().is_empty());
+    stub.assets.borrow_mut().push(missing);
+    promote().unwrap();
+    assert_eq!(actions(), ["edit"]);
+    assert_eq!(
+        stub.calls.borrow()[0],
+        [
+            "gh",
+            "release",
+            "edit",
+            "v0.2.1",
+            "--repo",
+            "fixture/fstack",
+            "--latest"
+        ]
+    );
+    stub.calls.borrow_mut().clear();
+    promote().unwrap();
+    assert!(actions().is_empty());
+    save(&root, "guide.md", "Later documentation on main");
+    commit(&root, "docs: legitimate followup");
+    assert_eq!(release.plan(&records).unwrap()["publish"], false);
+}
 #[test]
 fn event_and_live_main_reject_unvalidated_commits() {
     let (_temp, root) = fixture();
@@ -257,7 +563,7 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
     origin(&root);
     let mut record = json!({"tag_name":"v0.2.1","draft":true,"body":format!("<!-- release-source:{sha} -->"),"author":{"login":"human"}});
     assert!(release
-        .finish("fixture/fstack", "0.2.1", &[record.clone()], &sha)
+        .finish("fixture/fstack", "0.2.1", &[record.clone()], &sha, None)
         .unwrap_err()
         .contains("не принадлежит"));
     assert!(stub.calls.borrow().is_empty());
@@ -270,7 +576,7 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
     assert!(release.draft_target(&record, &sha, "0.2.1").is_err());
     record["body"] = json!(format!("{marker}\n\nДополнение к черновику"));
     release
-        .finish("fixture/fstack", "0.2.1", &[record], &sha)
+        .finish("fixture/fstack", "0.2.1", &[record], &sha, None)
         .unwrap();
     assert_eq!(
         stub.calls
@@ -302,7 +608,7 @@ fn draft_ownership_tag_identity_and_archive_checksum() {
     commit(&root, "chore: other");
     git(&root, &["tag", "v0.2.1"]);
     assert!(release
-        .finish("fixture/fstack", "0.2.1", &[], &sha)
+        .finish("fixture/fstack", "0.2.1", &[], &sha, None)
         .unwrap_err()
         .contains("другую ревизию"));
     assert!(stub.calls.borrow().is_empty());
@@ -504,7 +810,7 @@ fn publish_archives_exact_skill_bytes_and_rejects_untrusted_artifacts() {
     };
     let count = stub.calls.borrow().len();
     assert!(old
-        .finish("fixture/fstack", "0.3.0", &[], &head)
+        .finish("fixture/fstack", "0.3.0", &[], &head, None)
         .unwrap_err()
         .contains("Исходная ревизия"));
     assert_eq!(stub.calls.borrow().len(), count);
@@ -566,6 +872,10 @@ fn explicit_version_checks_package_and_skill_changes_against_the_pr_base() {
     commit(&root, "chore: prepare package");
     assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
     git(&root, &["tag", "v0.2.1"]);
+    assert_eq!(release.check_next(&base).unwrap(), "0.2.1");
+    assert!(release.plan(&[]).is_err());
+    save(&root, "guide.md", "Other tree");
+    commit(&root, "docs: differing snapshot");
     assert!(release.check_next(&base).unwrap_err().contains("занята"));
 }
 
@@ -606,11 +916,13 @@ fn publishing_depends_on_the_current_version_only() {
     let base = git(&root, &["rev-parse", "HEAD"]);
     let same = json!({"tag_name":"v0.2.0","draft":false,"prerelease":false});
     let unrelated = json!({"tag_name":"v20.0.0","draft":false,"prerelease":false});
+    git(&root, &["tag", "-d", "v0.2.0"]);
     assert_eq!(
         release.plan(std::slice::from_ref(&unrelated)).unwrap()["publish"],
         true
     );
     assert_eq!(release.plan(&[]).unwrap()["publish"], true);
+    git(&root, &["tag", "v0.2.0", &base]);
     assert_eq!(
         release.plan(&[same.clone(), unrelated]).unwrap()["publish"],
         false
