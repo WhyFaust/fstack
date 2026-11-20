@@ -146,38 +146,47 @@ fn mode_lock(store: &Store, session: &str) -> Result<std::fs::File> {
     let key = pending::digest(&["memory-mode", &io::normalized(&store.state), session]);
     io::lock_key(&format!("mode-{}", &key[..2]), None)
 }
-fn chat_mode(
+const MANUAL_OFF: &str = "coordinator-off";
+
+fn previous_chat_mode(
     store: &Store,
     cwd: &Path,
     session: &str,
     command: Option<bool>,
 ) -> Result<Option<String>> {
-    let enable = command == Some(true);
     let dir = store.state.join("faust-mode-sessions");
-    if !io::state(&store.state, cwd, enable)? || !io::directory(&dir, enable, true)? {
+    let update = command.is_some();
+    if !io::state(&store.state, cwd, update)? || !io::directory(&dir, update, true)? {
         return Ok(None);
     }
     let marker = dir.join(pending::digest(&[session]));
-    match command {
-        Some(true) => {
-            if let Some(epoch) = io::read(&marker)? {
-                return Ok(Some(epoch));
-            }
-            let _mode_lock = mode_lock(store, session)?;
-            io::write(
-                &marker,
-                &format!("coordinator-{}", io::nonce()?),
-                false,
-                None,
-            )?;
-            io::read(&marker)
-        }
-        Some(false) => {
-            let _mode_lock = mode_lock(store, session)?;
-            Ok(io::delete(&marker)?.then(String::new))
-        }
-        None => io::read(&marker),
+    let suppressed = marker.with_extension("off");
+    if !update && !io::file(&marker)? && !io::file(&suppressed)? {
+        return Ok(None);
     }
+    let _mode_lock = mode_lock(store, session)?;
+    let enabled = io::read(&marker)?;
+    let old_off = enabled.as_deref() == Some(MANUAL_OFF);
+    let has_suppression = io::file(&suppressed)?;
+    let previous = if enabled.is_none() && has_suppression {
+        Some(MANUAL_OFF.to_owned())
+    } else {
+        enabled.clone()
+    };
+    // Прежний клиент выключает режим удалением основного файла. Запоминаем
+    // ручной выбор и при первом чтении включения из такого профиля.
+    if !has_suppression && (update || enabled.is_some()) {
+        io::write(&suppressed, "", false, None)?;
+    }
+    if command == Some(true) {
+        if enabled.is_none() || old_off {
+            let next = format!("coordinator-{}", io::nonce()?);
+            io::write(&marker, &next, true, enabled.as_deref())?;
+        }
+    } else if (command == Some(false) || old_off) && io::delete(&marker)? {
+        io::sync_parent(&marker)?;
+    }
+    Ok(previous)
 }
 const INACTIVE: &str = "Faust-mode выключен. Выполняй запрос напрямую. Применяй только явно вызванный пользователем навык fstack. Цитаты, ссылки внутри навыка и разбор его исходников не разрешают другие вызовы.";
 const SESSION_START: &str = "Режим текущего запроса сообщит UserPromptSubmit. До включения применяй только явно вызванный пользователем навык fstack.";
@@ -188,12 +197,14 @@ enum Activation {
     Restore,
     Continue,
     SingleTurn,
+    Ultra,
 }
 
 fn activation(package: &Path, plan: bool, state: Activation) -> String {
     let status = match state {
         Activation::Restore => "При старте чата восстановлен faust-mode до /faust-mode-off.",
         Activation::SingleTurn => "В этом чате включён faust-mode на этот запрос. Состояние режима недоступно для этой рабочей папки.",
+        Activation::Ultra => "В этом чате включён faust-mode на этот запрос по глубине ultra.",
         _ => "В этом чате включён faust-mode до команды /faust-mode-off.",
     };
     let mut text = format!(
@@ -391,7 +402,9 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 .as_ref()
                 .is_some_and(|turn| turn.mode == codex_task::Mode::Plan);
         let delegated = recorded.as_ref().is_some_and(|turn| turn.delegated);
-        let mut context = if !child && chat_mode(store, cwd, session, None)?.is_some() {
+        let mut context = if !child
+            && previous_chat_mode(store, cwd, session, None)?.is_some_and(|mode| mode != MANUAL_OFF)
+        {
             activation(&store.package, plan, Activation::Restore)
         } else if child || delegated {
             WORKER.into()
@@ -477,13 +490,19 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     if (plan && !prompt_submit) || (child && !delegated) {
         return Ok(json!({}));
     }
-    let previous_mode = chat_mode(store, cwd, session, None)?;
+    let previous_mode = previous_chat_mode(store, cwd, session, command)?;
     let coordinator = if prompt_submit {
         let state = if let Some(enable) = command {
-            let mode = chat_mode(store, cwd, session, Some(enable))?;
-            (enable && mode.is_some()).then_some(Activation::Enter)
+            enable.then_some(Activation::Enter)
         } else {
-            previous_mode.as_ref().map(|_| Activation::Continue)
+            match previous_mode.as_deref() {
+                Some(MANUAL_OFF) => None,
+                Some(_) => Some(Activation::Continue),
+                None if recorded.as_ref().is_some_and(|turn| turn.root_ultra) => {
+                    Some(Activation::Ultra)
+                }
+                None => None,
+            }
         };
         Some(state.map_or_else(
             || INACTIVE.into(),

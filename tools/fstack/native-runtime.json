@@ -676,8 +676,8 @@
     }
   ],
   "notice_files": {
-    "licenses/native-runtime.txt": "1445b88fb53d13b48532035e517a867d40a318436fe0b6dfd7989b7e78b4b110",
-    "licenses/native-runtime-rust-1.90.0.html": "025c0dd1236493fcd5b6386b68453852e6528722bd5f8dce5949e94d225e7a60"
+    "tools/fstack/native-runtime.txt": "1445b88fb53d13b48532035e517a867d40a318436fe0b6dfd7989b7e78b4b110",
+    "tools/fstack/native-runtime-rust-1.90.0.html": "025c0dd1236493fcd5b6386b68453852e6528722bd5f8dce5949e94d225e7a60"
   },
   "excluded_packages": [
     {

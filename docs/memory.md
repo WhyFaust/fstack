@@ -68,7 +68,7 @@ obsidian vault="Проверочный vault" backlinks path="Codex Memory/Proje
 
 Синхронизируй всю папку `Codex Memory`, включая JSON с отметками об удалении,
 Bases и Canvas. В Obsidian Sync включи «Sync all other types» на каждом устройстве
-и перезапусти Obsidian. [Настройки синхронизации](https://obsidian.md/help/sync/settings).
+и перезапусти Obsidian.
 
 Выполни `memory init` с локальными путями и одним именем проекта на всех устройствах.
 Перед изменением с другого устройства дождись синхронизации. `memory disable`

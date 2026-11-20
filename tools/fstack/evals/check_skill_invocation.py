@@ -56,18 +56,22 @@ class ResponsesHandler(BaseHTTPRequestHandler):
         pass
 
 
-def start_thread(server: Server, workspace: Path) -> str:
+def start_thread(server: Server, workspace: Path, *, ephemeral: bool = True) -> str:
     started = server.request("thread/start", {
-        "cwd": str(workspace), "ephemeral": True, "modelProvider": "fixture",
+        "cwd": str(workspace), "ephemeral": ephemeral, "modelProvider": "fixture",
         "approvalPolicy": "never", "sandbox": "read-only",
     }, time.monotonic() + 60)
     return started["thread"]["id"]
 
 
-def turn_texts(server: Server, provider: ThreadingHTTPServer, thread_id: str, prompt: str) -> list[str]:
+def turn_texts(server: Server, provider: ThreadingHTTPServer, thread_id: str, prompt: str,
+               *, effort: str | None = None) -> list[str]:
     provider.inputs.clear()
     deadline = time.monotonic() + 60
-    server.request("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": prompt}]}, deadline)
+    params = {"threadId": thread_id, "input": [{"type": "text", "text": prompt}]}
+    if effort is not None:
+        params["effort"] = effort
+    server.request("turn/start", params, deadline)
     while True:
         msg = server.pending.pop(0) if server.pending else server.receive(deadline)
         if msg.get("method") == "turn/completed" and msg["params"]["threadId"] == thread_id:
@@ -179,7 +183,10 @@ stream_max_retries = 0
                     or any(skill.get("enabled") is not True
                            or Path(skill["path"]).resolve() != entries[skill["name"]] for skill in discovered)):
                 raise RuntimeError("Codex не обнаружил все включённые навыки по установленным путям")
+            improvement = "Изучи весь проект и предложи, какие улучшения взять в работу."
             cases = [("Проверь изменение.", None),
+                     (improvement, None),
+                     (f"$fstack:audit {improvement}", "fstack:audit"),
                      ("Объясни разницу между why, how и test-update в каталоге навыков.", None)]
             manifest = json.loads((root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
             route_prompt = next((prompt for prompt in manifest["interface"]["defaultPrompt"]
@@ -188,7 +195,7 @@ stream_max_retries = 0
                 raise RuntimeError("В карточке плагина нет прямого вызова route")
             cases.append((route_prompt, "fstack:route"))
             cases.extend((f"${name} Проверь доступность инструкции.", name) for name in sources
-                         if name not in {"fstack:faust-mode", "fstack:why", "fstack:route"})
+                         if name not in {"fstack:audit", "fstack:faust-mode", "fstack:why", "fstack:route"})
             cases.append(("$fstack:why По истории проекта выясни причину решения.", "fstack:why"))
             cases.append(("$fstack:faust-mode Проверь состояние существующего GitLab MR.", "fstack:faust-mode"))
             for prompt, selected in cases:
@@ -227,12 +234,35 @@ stream_max_retries = 0
             ]:
                 texts = turn_texts(server, provider, thread_id, prompt)
                 check_hook_context(texts, root, signals, active=active, index=False)
+
+            thread_id = start_thread(server, workspace, ephemeral=False)
+            for prompt, effort, active, index in [
+                ("Начни разбор.", "ultra", True, True),
+                ("Продолжи разбор.", "ultra", True, True),
+                ("Уточни детали.", "high", False, False),
+                ("Вернись к разбору.", "ultra", True, True),
+                ("/faust-mode-off", "ultra", False, False),
+                ("Продолжи после выключения.", "ultra", False, False),
+                ("/faust-mode", "high", True, True),
+                ("Продолжи после ручного включения.", "high", True, False),
+            ]:
+                texts = turn_texts(server, provider, thread_id, prompt, effort=effort)
+                check_hook_context(texts, root, signals, active=active, index=index)
+
+            neighbor = start_thread(server, workspace, ephemeral=False)
+            texts = turn_texts(server, provider, neighbor, "Начни отдельный разбор.", effort="high")
+            check_hook_context(texts, root, signals, active=False, index=False)
+            texts = turn_texts(server, provider, neighbor, "Продолжи отдельный разбор.", effort="ultra")
+            check_hook_context(texts, root, signals, active=True, index=True)
+
+            texts = turn_texts(server, provider, start_thread(server, workspace), "Проверь временный чат.", effort="ultra")
+            check_hook_context(texts, root, signals, active=False, index=False)
         finally:
             server.close()
             provider.shutdown()
             thread.join()
     print(f"{run('--version').strip()}: проверены прямые вызовы всех {len(sources)} навыков, "
-          "обычный запрос, разбор имён и цитаты, индекс включённого режима, продолжение, выключение и новый чат.")
+          "обычный запрос, разбор имён и цитаты, индекс, ручное переключение, выбор глубины в постоянном и временном чате.")
 
 
 if __name__ == "__main__":

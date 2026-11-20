@@ -159,7 +159,7 @@ fn skill_ui_validates_types_limits_policy_and_dependencies() {
     }
     for dependency in [
         json!({"type":"mcp","value":"existing"}),
-        json!({"type":"mcp","value":"docs","url":"https://developers.openai.com/mcp"}),
+        json!({"type":"mcp","value":"docs","url":"https://example.invalid/mcp"}),
         json!({"type":"mcp","value":"local","transport":"stdio","command":"local-mcp"}),
         json!({"type":"mcp","value":"custom","transport":"sse"}),
     ] {
@@ -622,8 +622,8 @@ fn native_notices_track_locked_dependencies_and_shipped_texts() {
     for relative in [
         "tools/fstack/Cargo.lock",
         "tools/fstack/Cargo.toml",
-        "licenses/native-runtime.txt",
-        "licenses/native-runtime-rust-1.90.0.html",
+        "tools/fstack/native-runtime.txt",
+        "tools/fstack/native-runtime-rust-1.90.0.html",
     ] {
         let path = package.join(relative);
         let original = fs::read(&path).unwrap();
@@ -633,7 +633,7 @@ fn native_notices_track_locked_dependencies_and_shipped_texts() {
         assert!(native_notices(&package).is_err(), "{relative}");
         fs::write(&path, original).unwrap();
     }
-    let path = package.join("licenses/native-runtime.json");
+    let path = package.join("tools/fstack/native-runtime.json");
     let original = json_file(&path).unwrap();
     for field in ["packages", "excluded_packages"] {
         let mut inventory = original.clone();
@@ -645,6 +645,32 @@ fn native_notices_track_locked_dependencies_and_shipped_texts() {
     inventory["packages"][0]["checksum"] = json!("wrong");
     fs::write(path, inventory.to_string()).unwrap();
     assert!(native_notices(&package).is_err());
+}
+
+#[test]
+fn native_notices_accept_the_legacy_layout_until_a_current_inventory_is_present() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path();
+    let source = root().join("tools/fstack");
+    let current = package.join("tools/fstack");
+    let legacy = package.join("licenses");
+    fs::create_dir_all(&current).unwrap();
+    fs::create_dir(&legacy).unwrap();
+    for name in ["Cargo.toml", "Cargo.lock"] {
+        fs::copy(source.join(name), current.join(name)).unwrap();
+    }
+    for name in ["native-runtime.txt", "native-runtime-rust-1.90.0.html"] {
+        fs::copy(source.join(name), legacy.join(name)).unwrap();
+    }
+    let inventory = read(&source.join("native-runtime.json")).unwrap();
+    let old_inventory = inventory.replace("tools/fstack/native-runtime", "licenses/native-runtime");
+    fs::write(legacy.join("native-runtime.json"), &old_inventory).unwrap();
+    native_notices(package).unwrap();
+
+    fs::write(current.join("native-runtime.json"), old_inventory).unwrap();
+    assert!(native_notices(package)
+        .unwrap_err()
+        .contains("Неполный комплект уведомлений"));
 }
 
 #[test]

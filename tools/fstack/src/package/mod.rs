@@ -799,7 +799,17 @@ pub(crate) fn check(root: &Path) -> Result<String> {
 
 fn native_notices(root: &Path) -> Result<()> {
     use sha2::{Digest, Sha256};
-    let inventory = json_file(&root.join("licenses/native-runtime.json"))?;
+    let directory = match fs::symlink_metadata(root.join("tools/fstack/native-runtime.json")) {
+        Ok(_) => "tools/fstack",
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "licenses",
+        Err(error) => return Err(error.to_string()),
+    };
+    let inventory = json_file(&contained(
+        root,
+        &root.join(directory),
+        "native-runtime.json",
+        false,
+    )?)?;
     require(
         inventory["schema"] == 1,
         "Неверная схема уведомлений runtime",
@@ -841,8 +851,8 @@ fn native_notices(root: &Path) -> Result<()> {
         .ok_or("Нет файлов уведомлений")?;
     require(
         files.len() == 2
-            && files.contains_key("licenses/native-runtime.txt")
-            && files.contains_key("licenses/native-runtime-rust-1.90.0.html"),
+            && files.contains_key(&format!("{directory}/native-runtime.txt"))
+            && files.contains_key(&format!("{directory}/native-runtime-rust-1.90.0.html")),
         "Неполный комплект уведомлений runtime",
     )?;
     for (relative, digest) in files {

@@ -17,7 +17,7 @@
       "y": 240,
       "width": 340,
       "height": 240,
-      "color": "#24837B"
+      "color": "5"
     },
     {
       "id": "capture",
@@ -27,7 +27,7 @@
       "y": 240,
       "width": 340,
       "height": 240,
-      "color": "#66800B"
+      "color": "4"
     },
     {
       "id": "review",
@@ -37,7 +37,7 @@
       "y": 240,
       "width": 340,
       "height": 240,
-      "color": "#AD8301"
+      "color": "3"
     },
     {
       "id": "home",

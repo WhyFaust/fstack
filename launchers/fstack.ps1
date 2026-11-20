@@ -12,10 +12,16 @@ function Test-RuntimeFile([string] $Path) {
 function Get-RuntimeHash([string] $Path) {
     $stream = [IO.File]::OpenRead($Path)
     try {
-        return (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash.ToLowerInvariant()
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $digest = $sha256.ComputeHash($stream)
+        } finally {
+            $sha256.Dispose()
+        }
     } finally {
         $stream.Dispose()
     }
+    return [BitConverter]::ToString($digest).Replace('-', '').ToLowerInvariant()
 }
 
 $binary = [IO.Path]::Combine($package, 'bin', 'fstack.exe')
