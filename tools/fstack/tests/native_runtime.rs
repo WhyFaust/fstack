@@ -1125,6 +1125,54 @@ fn prompt_hook_reports_cold_runtime_and_accepts_activation_after_installation() 
     assert!(context.contains(catalog.to_str().unwrap()));
 }
 
+#[cfg(windows)]
+#[test]
+fn launcher_verifies_the_selected_release_asset_before_installing() {
+    use sha2::{Digest, Sha256};
+
+    let runtime = Runtime::new();
+    fs::remove_file(&runtime.binary).unwrap();
+    let cache = runtime.runtime_cache();
+    let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let install = |digest: &str| {
+        Command::new(&shell)
+            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+            .arg(r#"
+                $curl = [IO.Path]::Combine($env:SystemRoot, 'System32', 'curl.exe')
+                Set-Item -LiteralPath ('function:' + $curl) -Value {
+                    $path = $args[-1]
+                    $content = if ($path.EndsWith('.sha256')) {
+                        $env:FSTACK_TEST_DIGEST + '  ' + [IO.Path]::GetFileNameWithoutExtension($path)
+                    } else { 'fixture runtime' }
+                    [IO.File]::WriteAllText($path, $content)
+                    $global:LASTEXITCODE = 0
+                }
+                $PSModuleAutoLoadingPreference = 'None'
+                $hook = [IO.Path]::Combine($env:PLUGIN_ROOT, 'hooks', 'memory.ps1')
+                & ([scriptblock]::Create([IO.File]::ReadAllText($hook))) Bootstrap
+            "#)
+            .env("CODEX_HOME", &runtime.codex_home)
+            .env("PLUGIN_ROOT", &runtime.root)
+            .env("FSTACK_TEST_DIGEST", digest)
+            .output()
+            .unwrap()
+    };
+    let rejected = install(&"0".repeat(64));
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("runtime checksum mismatch"));
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
+
+    let bytes = b"fixture runtime";
+    let accepted = install(&format!("{:x}", Sha256::digest(bytes)));
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    assert_eq!(fs::read(cache.join("fstack.exe")).unwrap(), bytes);
+}
+
 #[cfg(unix)]
 #[test]
 fn launcher_verifies_the_selected_release_asset_before_installing() {

@@ -148,7 +148,7 @@ fn mode_lock(store: &Store, session: &str) -> Result<std::fs::File> {
 }
 const MANUAL_OFF: &str = "coordinator-off";
 
-fn chat_mode(
+fn previous_chat_mode(
     store: &Store,
     cwd: &Path,
     session: &str,
@@ -160,24 +160,32 @@ fn chat_mode(
         return Ok(None);
     }
     let marker = dir.join(pending::digest(&[session]));
-    let Some(enable) = command else {
-        return io::read(&marker);
-    };
-    let _mode_lock = mode_lock(store, session)?;
-    let previous = io::read(&marker)?;
-    if previous
-        .as_deref()
-        .is_some_and(|state| (state != MANUAL_OFF) == enable)
-    {
-        return Ok(previous);
+    let suppressed = marker.with_extension("off");
+    if !update && !io::file(&marker)? && !io::file(&suppressed)? {
+        return Ok(None);
     }
-    let next = if enable {
-        format!("coordinator-{}", io::nonce()?)
+    let _mode_lock = mode_lock(store, session)?;
+    let enabled = io::read(&marker)?;
+    let old_off = enabled.as_deref() == Some(MANUAL_OFF);
+    let previous = if enabled.is_none() && io::file(&suppressed)? {
+        Some(MANUAL_OFF.to_owned())
     } else {
-        MANUAL_OFF.to_owned()
+        enabled.clone()
     };
-    io::write(&marker, &next, true, previous.as_deref())?;
-    Ok(Some(next))
+    if command == Some(true) {
+        if enabled.is_none() || old_off {
+            let next = format!("coordinator-{}", io::nonce()?);
+            io::write(&marker, &next, true, enabled.as_deref())?;
+        }
+    } else if command == Some(false) || old_off {
+        // Старый runtime считает наличие marker включением. Пока он есть,
+        // ручное включение важнее подавления автоматики в обоих клиентах.
+        io::write(&suppressed, "", false, None)?;
+        if io::delete(&marker)? {
+            io::sync_parent(&marker)?;
+        }
+    }
+    Ok(previous)
 }
 const INACTIVE: &str = "Faust-mode выключен. Выполняй запрос напрямую. Применяй только явно вызванный пользователем навык fstack. Цитаты, ссылки внутри навыка и разбор его исходников не разрешают другие вызовы.";
 const SESSION_START: &str = "Режим текущего запроса сообщит UserPromptSubmit. До включения применяй только явно вызванный пользователем навык fstack.";
@@ -394,7 +402,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 .is_some_and(|turn| turn.mode == codex_task::Mode::Plan);
         let delegated = recorded.as_ref().is_some_and(|turn| turn.delegated);
         let mut context = if !child
-            && chat_mode(store, cwd, session, None)?.is_some_and(|mode| mode != MANUAL_OFF)
+            && previous_chat_mode(store, cwd, session, None)?.is_some_and(|mode| mode != MANUAL_OFF)
         {
             activation(&store.package, plan, Activation::Restore)
         } else if child || delegated {
@@ -481,11 +489,10 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     if (plan && !prompt_submit) || (child && !delegated) {
         return Ok(json!({}));
     }
-    let previous_mode = chat_mode(store, cwd, session, None)?;
+    let previous_mode = previous_chat_mode(store, cwd, session, command)?;
     let coordinator = if prompt_submit {
         let state = if let Some(enable) = command {
-            let mode = chat_mode(store, cwd, session, Some(enable))?;
-            (enable && mode.is_some()).then_some(Activation::Enter)
+            enable.then_some(Activation::Enter)
         } else {
             match previous_mode.as_deref() {
                 Some(MANUAL_OFF) => None,

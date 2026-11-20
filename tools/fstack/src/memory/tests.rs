@@ -216,6 +216,68 @@ fn ultra_follows_the_verified_root_turn_and_respects_the_manual_chat_choice() {
 }
 
 #[test]
+fn disabling_the_coordinator_removes_the_marker_read_by_older_clients() {
+    let f = Fixture::new("auto", "pilot");
+    let dir = f.store.state.join("faust-mode-sessions");
+    let marker = dir.join(pending::digest(&["session"]));
+    let legacy_enabled = || io::read(&marker).unwrap().is_some();
+    let submit = |prompt: &str| {
+        f.hook(
+            "UserPromptSubmit",
+            "turn",
+            json!({"prompt":prompt,"permission_mode":"plan"}),
+        )["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+
+    assert!(submit("/faust-mode-off").contains("выключен"));
+    assert!(!legacy_enabled());
+    assert!(submit("/faust-mode").contains("включён faust-mode"));
+    assert!(legacy_enabled());
+    assert!(submit("/faust-mode-off").contains("выключен"));
+    assert!(!legacy_enabled());
+
+    let suppressed = marker.with_extension("off");
+    fs::remove_file(&suppressed).unwrap();
+    fs::write(&marker, "coordinator-off").unwrap();
+    assert!(submit("Продолжи").contains("выключен"));
+    assert!(!legacy_enabled());
+    assert!(io::file(&suppressed).unwrap());
+    fs::write(&marker, "coordinator-previous-runtime").unwrap();
+    assert!(submit("Продолжи").contains("включён faust-mode"));
+}
+
+#[test]
+fn a_failed_disable_keeps_the_last_completed_manual_choice() {
+    let f = Fixture::new("auto", "pilot");
+    let marker = f
+        .store
+        .state
+        .join("faust-mode-sessions")
+        .join(pending::digest(&["session"]));
+    f.hook(
+        "UserPromptSubmit",
+        "on",
+        json!({"prompt":"/faust-mode","permission_mode":"plan"}),
+    );
+    let enabled = io::read(&marker).unwrap().unwrap();
+    fs::create_dir(marker.with_extension("off")).unwrap();
+    let off = json!({"hook_event_name":"UserPromptSubmit","session_id":"session","turn_id":"off",
+        "cwd":f.repo,"prompt":"/faust-mode-off","permission_mode":"plan"});
+    assert!(hooks::hook(&f.store, "UserPromptSubmit", &off, &f.repo).is_err());
+    assert_eq!(io::read(&marker).unwrap(), Some(enabled));
+    fs::remove_dir(marker.with_extension("off")).unwrap();
+    let retry = hooks::hook(&f.store, "UserPromptSubmit", &off, &f.repo).unwrap();
+    assert!(retry["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("выключен"));
+    assert!(!io::file(&marker).unwrap());
+}
+
+#[test]
 fn markdown_command_examples_preserve_the_current_mode() {
     let f = Fixture::new("auto", "pilot");
     for (session, active) in [("plain", false), ("coordinator", true)] {
