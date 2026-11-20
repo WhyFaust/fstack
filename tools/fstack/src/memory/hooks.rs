@@ -167,23 +167,24 @@ fn previous_chat_mode(
     let _mode_lock = mode_lock(store, session)?;
     let enabled = io::read(&marker)?;
     let old_off = enabled.as_deref() == Some(MANUAL_OFF);
-    let previous = if enabled.is_none() && io::file(&suppressed)? {
+    let has_suppression = io::file(&suppressed)?;
+    let previous = if enabled.is_none() && has_suppression {
         Some(MANUAL_OFF.to_owned())
     } else {
         enabled.clone()
     };
+    // Прежний клиент выключает режим удалением основного файла. Запоминаем
+    // ручной выбор и при первом чтении включения из такого профиля.
+    if !has_suppression && (update || enabled.is_some()) {
+        io::write(&suppressed, "", false, None)?;
+    }
     if command == Some(true) {
         if enabled.is_none() || old_off {
             let next = format!("coordinator-{}", io::nonce()?);
             io::write(&marker, &next, true, enabled.as_deref())?;
         }
-    } else if command == Some(false) || old_off {
-        // Старый runtime считает наличие marker включением. Пока он есть,
-        // ручное включение важнее подавления автоматики в обоих клиентах.
-        io::write(&suppressed, "", false, None)?;
-        if io::delete(&marker)? {
-            io::sync_parent(&marker)?;
-        }
+    } else if (command == Some(false) || old_off) && io::delete(&marker)? {
+        io::sync_parent(&marker)?;
     }
     Ok(previous)
 }

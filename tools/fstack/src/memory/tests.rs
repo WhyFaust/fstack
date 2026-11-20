@@ -208,6 +208,13 @@ fn ultra_follows_the_verified_root_turn_and_respects_the_manual_chat_choice() {
     snapshot(root.clone(), context("low"));
     assert!(submit("current", "Объясни ultra", json!({"effort":"ultra"})).contains("выключен"));
     snapshot(root, context("ultra"));
+    assert!(submit("current", "/faust-mode", json!({})).contains("до команды"));
+    let enabled = store
+        .state
+        .join("faust-mode-sessions")
+        .join(pending::digest(&[session]));
+    fs::remove_file(enabled).unwrap(); // Предыдущий клиент обработал /faust-mode-off.
+    assert!(ordinary().contains("выключен"));
     assert!(submit("current", "/faust-mode-off", json!({})).contains("выключен"));
     assert!(ordinary().contains("выключен"));
     assert!(submit("current", "/faust-mode", json!({})).contains("до команды"));
@@ -245,8 +252,10 @@ fn disabling_the_coordinator_removes_the_marker_read_by_older_clients() {
     assert!(submit("Продолжи").contains("выключен"));
     assert!(!legacy_enabled());
     assert!(io::file(&suppressed).unwrap());
+    fs::remove_file(&suppressed).unwrap();
     fs::write(&marker, "coordinator-previous-runtime").unwrap();
     assert!(submit("Продолжи").contains("включён faust-mode"));
+    assert!(io::file(&suppressed).unwrap());
 }
 
 #[test]
@@ -257,15 +266,16 @@ fn a_failed_disable_keeps_the_last_completed_manual_choice() {
         .state
         .join("faust-mode-sessions")
         .join(pending::digest(&["session"]));
-    f.hook(
-        "UserPromptSubmit",
-        "on",
-        json!({"prompt":"/faust-mode","permission_mode":"plan"}),
-    );
-    let enabled = io::read(&marker).unwrap().unwrap();
+    fs::create_dir(marker.parent().unwrap()).unwrap();
     fs::create_dir(marker.with_extension("off")).unwrap();
     let off = json!({"hook_event_name":"UserPromptSubmit","session_id":"session","turn_id":"off",
         "cwd":f.repo,"prompt":"/faust-mode-off","permission_mode":"plan"});
+    let mut on = off.clone();
+    on["prompt"] = json!("/faust-mode");
+    assert!(hooks::hook(&f.store, "UserPromptSubmit", &on, &f.repo).is_err());
+    assert!(!io::file(&marker).unwrap());
+    let enabled = "coordinator-previous-runtime".to_owned();
+    fs::write(&marker, &enabled).unwrap();
     assert!(hooks::hook(&f.store, "UserPromptSubmit", &off, &f.repo).is_err());
     assert_eq!(io::read(&marker).unwrap(), Some(enabled));
     fs::remove_dir(marker.with_extension("off")).unwrap();
