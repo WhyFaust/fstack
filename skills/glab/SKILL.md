@@ -3,7 +3,7 @@ name: glab
 description: "Работает с GitLab через glab, когда нужная операция недоступна через MCP."
 disable-model-invocation: true
 metadata:
-  version: "2.2.4"
+  version: "2.2.5"
 ---
 
 # GitLab через CLI
@@ -47,11 +47,10 @@ glab mr note resolve "$mr_iid" "$discussion_id"
 - Сверив проект и право на запуск, создай отсутствующий MR pipeline через
   `POST projects/$target_project_id/merge_requests/$mr_iid/pipelines`, запусти
   обязательную ручную job через `POST projects/$job_project_id/jobs/$job_id/play`.
-  Подтверди ID. [Pipelines](https://docs.gitlab.com/api/merge_requests/#create-merge-request-pipeline) · [Jobs](https://docs.gitlab.com/api/jobs/#run-a-job)
+  Подтверди ID запущенных pipeline и job.
 - Для назначения передай нужные `assignee_ids` или `reviewer_ids` через
   `glab api --hostname "$gitlab_host" --input` в `PUT projects/$target_project_id/merge_requests/$mr_iid`.
   Сохрани действующие назначения, сверь оба поля через GET.
-  [API назначения](https://docs.gitlab.com/api/merge_requests/#update-a-merge-request)
 
 ## Текст в PowerShell
 
@@ -71,8 +70,7 @@ glab api "projects/:id/issues/$issueIid/notes" -F "body=@$notePath"
 Сверь source/target, ID, project и SHA pipeline, последние jobs и downstream.
 Для jobs бери project ID pipeline. Артефакт получи из
 `projects/$project_id/jobs/$job_id/artifacts` по SHA и ID попытки, проверь архив.
-Для merged results сверь обоих родителей, при смене target перечитай результат.
-[Синтетический merge-коммит](https://docs.gitlab.com/ci/pipelines/merged_results_pipelines/)
+Для merged results сверь обоих родителей синтетического merge-коммита. При смене target перечитай результат.
 
 Для разрешённых approve и merge передай полный `sha` после проверки готовности.
 
@@ -83,4 +81,3 @@ glab api --hostname "$gitlab_host" --method POST \
 
 Между записями перечитай MR, approvals и CI. При смене SHA проверь новую
 ревизию, при merge train дождись интеграции.
-[Approvals](https://docs.gitlab.com/api/merge_request_approvals/) · [MR](https://docs.gitlab.com/api/merge_requests/)

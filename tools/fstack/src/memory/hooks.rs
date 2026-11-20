@@ -146,38 +146,38 @@ fn mode_lock(store: &Store, session: &str) -> Result<std::fs::File> {
     let key = pending::digest(&["memory-mode", &io::normalized(&store.state), session]);
     io::lock_key(&format!("mode-{}", &key[..2]), None)
 }
+const MANUAL_OFF: &str = "coordinator-off";
+
 fn chat_mode(
     store: &Store,
     cwd: &Path,
     session: &str,
     command: Option<bool>,
 ) -> Result<Option<String>> {
-    let enable = command == Some(true);
     let dir = store.state.join("faust-mode-sessions");
-    if !io::state(&store.state, cwd, enable)? || !io::directory(&dir, enable, true)? {
+    let update = command.is_some();
+    if !io::state(&store.state, cwd, update)? || !io::directory(&dir, update, true)? {
         return Ok(None);
     }
     let marker = dir.join(pending::digest(&[session]));
-    match command {
-        Some(true) => {
-            if let Some(epoch) = io::read(&marker)? {
-                return Ok(Some(epoch));
-            }
-            let _mode_lock = mode_lock(store, session)?;
-            io::write(
-                &marker,
-                &format!("coordinator-{}", io::nonce()?),
-                false,
-                None,
-            )?;
-            io::read(&marker)
-        }
-        Some(false) => {
-            let _mode_lock = mode_lock(store, session)?;
-            Ok(io::delete(&marker)?.then(String::new))
-        }
-        None => io::read(&marker),
+    let Some(enable) = command else {
+        return io::read(&marker);
+    };
+    let _mode_lock = mode_lock(store, session)?;
+    let previous = io::read(&marker)?;
+    if previous
+        .as_deref()
+        .is_some_and(|state| (state != MANUAL_OFF) == enable)
+    {
+        return Ok(previous);
     }
+    let next = if enable {
+        format!("coordinator-{}", io::nonce()?)
+    } else {
+        MANUAL_OFF.to_owned()
+    };
+    io::write(&marker, &next, true, previous.as_deref())?;
+    Ok(Some(next))
 }
 const INACTIVE: &str = "Faust-mode выключен. Выполняй запрос напрямую. Применяй только явно вызванный пользователем навык fstack. Цитаты, ссылки внутри навыка и разбор его исходников не разрешают другие вызовы.";
 const SESSION_START: &str = "Режим текущего запроса сообщит UserPromptSubmit. До включения применяй только явно вызванный пользователем навык fstack.";
@@ -188,12 +188,14 @@ enum Activation {
     Restore,
     Continue,
     SingleTurn,
+    Ultra,
 }
 
 fn activation(package: &Path, plan: bool, state: Activation) -> String {
     let status = match state {
         Activation::Restore => "При старте чата восстановлен faust-mode до /faust-mode-off.",
         Activation::SingleTurn => "В этом чате включён faust-mode на этот запрос. Состояние режима недоступно для этой рабочей папки.",
+        Activation::Ultra => "В этом чате включён faust-mode на этот запрос по глубине ultra.",
         _ => "В этом чате включён faust-mode до команды /faust-mode-off.",
     };
     let mut text = format!(
@@ -391,7 +393,9 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 .as_ref()
                 .is_some_and(|turn| turn.mode == codex_task::Mode::Plan);
         let delegated = recorded.as_ref().is_some_and(|turn| turn.delegated);
-        let mut context = if !child && chat_mode(store, cwd, session, None)?.is_some() {
+        let mut context = if !child
+            && chat_mode(store, cwd, session, None)?.is_some_and(|mode| mode != MANUAL_OFF)
+        {
             activation(&store.package, plan, Activation::Restore)
         } else if child || delegated {
             WORKER.into()
@@ -483,7 +487,14 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             let mode = chat_mode(store, cwd, session, Some(enable))?;
             (enable && mode.is_some()).then_some(Activation::Enter)
         } else {
-            previous_mode.as_ref().map(|_| Activation::Continue)
+            match previous_mode.as_deref() {
+                Some(MANUAL_OFF) => None,
+                Some(_) => Some(Activation::Continue),
+                None if recorded.as_ref().is_some_and(|turn| turn.root_ultra) => {
+                    Some(Activation::Ultra)
+                }
+                None => None,
+            }
         };
         Some(state.map_or_else(
             || INACTIVE.into(),

@@ -1,51 +1,42 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="610" viewBox="0 0 1000 610" role="img" aria-labelledby="title desc">
-  <title id="title">От запроса к результату</title>
-  <desc id="desc">Наблюдение, причина, решение и проверка. Связную работу может выполнить один владелец. Делегирование нужно для полезного самостоятельного результата.</desc>
-  <defs>
-    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fffaf4"/><stop offset="1" stop-color="#f3e8e0"/></linearGradient>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#9c7562" stroke-width="1.5" stroke-linecap="round"/></marker>
-  </defs>
-  <rect x="1" y="1" width="998" height="608" rx="24" fill="url(#paper)" stroke="#e0d0c4"/>
-  <g font-family="Segoe UI, Arial, sans-serif">
-  <text x="40" y="44" font-size="13" fill="#986047" font-weight="700">МЕТОД РАБОТЫ</text>
-  <text x="40" y="88" font-size="32" fill="#362b25" font-weight="700">От симптома к проверенному решению</text>
-  <text x="40" y="121" font-size="18" fill="#67564d" font-weight="400">Каждый следующий шаг опирается на доказательства предыдущего.</text>
-  <rect x="40" y="160" width="212" height="236" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
-  <text x="58" y="193" font-size="14" fill="#a96e50" font-weight="700">01</text>
-  <text x="58" y="229" font-size="24" fill="#362b25" font-weight="700">Наблюдение</text>
-  <text x="58" y="265" font-size="16" fill="#67564d" font-weight="400">Что случилось?</text>
-  <text x="58" y="291" font-size="16" fill="#67564d" font-weight="400">Как повторить?</text>
-  <text x="58" y="317" font-size="16" fill="#67564d" font-weight="400">Где теряется время?</text>
-  <text x="58" y="370" font-size="13" fill="#986047" font-weight="600">Логи · исходники</text>
-  <path d="M 255 270 H 271" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <rect x="276" y="160" width="212" height="236" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
-  <text x="294" y="193" font-size="14" fill="#a96e50" font-weight="700">02</text>
-  <text x="294" y="229" font-size="24" fill="#362b25" font-weight="700">Причина</text>
-  <text x="294" y="265" font-size="16" fill="#67564d" font-weight="400">Какое условие</text>
-  <text x="294" y="291" font-size="16" fill="#67564d" font-weight="400">порождает отказ?</text>
-  <text x="294" y="317" font-size="16" fill="#67564d" font-weight="400">Кто им управляет?</text>
-  <text x="294" y="370" font-size="13" fill="#986047" font-weight="600">Механизм · владелец</text>
-  <path d="M 491 270 H 507" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <rect x="512" y="160" width="212" height="236" rx="18" fill="#f7e0d0" stroke="#dfd2c8"/>
-  <text x="530" y="193" font-size="14" fill="#a96e50" font-weight="700">03</text>
-  <text x="530" y="229" font-size="24" fill="#362b25" font-weight="700">Решение</text>
-  <text x="530" y="265" font-size="16" fill="#67564d" font-weight="400">Что убирает причину?</text>
-  <text x="530" y="291" font-size="16" fill="#67564d" font-weight="400">Какие состояния</text>
-  <text x="530" y="317" font-size="16" fill="#67564d" font-weight="400">и зависимости остаются?</text>
-  <text x="530" y="370" font-size="13" fill="#986047" font-weight="600">Контракт · совместимость</text>
-  <path d="M 727 270 H 743" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <rect x="748" y="160" width="212" height="236" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
-  <text x="766" y="193" font-size="14" fill="#a96e50" font-weight="700">04</text>
-  <text x="766" y="229" font-size="24" fill="#362b25" font-weight="700">Проверка</text>
-  <text x="766" y="265" font-size="16" fill="#67564d" font-weight="400">Изменился ли исход?</text>
-  <text x="766" y="291" font-size="16" fill="#67564d" font-weight="400">Сохранены ли</text>
-  <text x="766" y="317" font-size="16" fill="#67564d" font-weight="400">нужные свойства?</text>
-  <text x="766" y="370" font-size="13" fill="#986047" font-weight="600">Поведение · ревизия</text>
-  <rect x="40" y="428" width="920" height="148" rx="18" fill="#44332c" stroke="#44332c"/>
-  <text x="64" y="462" font-size="22" fill="#fff7ef" font-weight="700">Кто выполняет работу</text>
-  <text x="64" y="499" font-size="17" fill="#e6c9b6" font-weight="400">Связная цепочка по одним данным</text>
-  <text x="64" y="536" font-size="18" fill="#fff7ef" font-weight="600">Один владелец может пройти весь путь</text>
-  <text x="530" y="499" font-size="17" fill="#e6c9b6" font-weight="400">Самостоятельный полезный результат</text>
-  <text x="530" y="536" font-size="18" fill="#fff7ef" font-weight="600">Отдельный контекст + модель под поручение</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="355" viewBox="0 0 480 355" role="img" aria-labelledby="title desc" font-family="Segoe UI, Arial, sans-serif" fill="#291F23">
+  <title id="title">Выборка CI обнаружила сбой при повторном открытии</title>
+  <desc id="desc">Обе команды pytest запущены локально. Когда файл active.lock перестали удалять, команда pytest tests/unit выбрала два теста, и оба прошли. Команда CI pytest -m quick выбрала три теста. Два прошли, повторное открытие завершилось ошибкой FileExistsError. После восстановления очистки та же команда прошла все три теста.</desc>
+
+  <rect width="480" height="355" rx="12" fill="#FAF6EE"/>
+  <path d="M12 0H468Q480 0 480 12V82H0V12Q0 0 12 0Z" fill="#291F23"/>
+  <text x="20" y="38" font-size="30" font-weight="700" fill="#FFF7EF">Без очистки active.lock</text>
+  <text x="20" y="68" font-size="20" fill="#F2D7C9">Обе команды выполнены локально.</text>
+
+  <g font-size="18" font-weight="600">
+    <text x="20" y="108">Команда</text>
+    <g text-anchor="middle">
+      <text x="264" y="108">Всего</text>
+      <text x="348" y="108">Прошли</text>
+      <text x="434" y="108">Сбои</text>
+    </g>
+  </g>
+  <path d="M20 119H460 M20 167H460" fill="none" stroke="#C9BAAB" stroke-width="1.5"/>
+
+  <text x="20" y="150" font-size="21" font-weight="600">pytest tests/unit</text>
+  <text x="20" y="198" font-size="21" font-weight="600">pytest -m quick</text>
+  <text x="20" y="220" font-size="17">Выборка CI</text>
+  <g font-size="25" font-weight="600" text-anchor="middle">
+    <text x="264" y="151">2</text>
+    <text x="348" y="151">2</text>
+    <text x="434" y="151">0</text>
+    <text x="264" y="199">3</text>
+    <text x="348" y="199">2</text>
+    <rect x="412" y="173" width="44" height="35" rx="7" fill="#AF472B"/>
+    <text x="434" y="199" fill="#FFFFFF">1</text>
+  </g>
+  <path d="M434 210v30h-35" fill="none" stroke="#AF472B" stroke-width="2"/>
+  <text x="20" y="247" font-size="18" fill="#AF472B">Повторное открытие вызвало FileExistsError.</text>
+
+  <rect x="12" y="266" width="456" height="77" rx="8" fill="#E1EDE4"/>
+  <text x="24" y="293" font-size="18">После восстановления очистки</text>
+  <text x="24" y="324" font-size="21" font-weight="600">pytest -m quick</text>
+  <g fill="#216451">
+    <path d="m268 316 5 5 11-12" fill="none" stroke="#216451" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="454" y="324" text-anchor="end" font-size="22" font-weight="700">3 из 3 прошли</text>
   </g>
 </svg>

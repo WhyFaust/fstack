@@ -1,41 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="582" viewBox="0 0 1000 582" role="img" aria-labelledby="title desc">
-  <title id="title">Как проверять изменение правил</title>
-  <desc id="desc">Фиксируем гипотезу, сравниваем варианты на одинаковых задачах, проверяем поведение и стоимость. По доказательствам принимаем, дорабатываем, отклоняем или оставляем вывод неопределенным.</desc>
-  <defs>
-    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fffaf4"/><stop offset="1" stop-color="#f3e8e0"/></linearGradient>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#9c7562" stroke-width="1.5" stroke-linecap="round"/></marker>
-  </defs>
-  <rect x="1" y="1" width="998" height="580" rx="24" fill="url(#paper)" stroke="#e0d0c4"/>
-  <g font-family="Segoe UI, Arial, sans-serif">
-  <text x="40" y="44" font-size="13" fill="#986047" font-weight="700">ПРОВЕРКА ИЗМЕНЕНИЙ</text>
-  <text x="40" y="88" font-size="32" fill="#362b25" font-weight="700">Идея становится гипотезой</text>
-  <text x="40" y="121" font-size="18" fill="#67564d" font-weight="400">Сравнение должно допускать отказ от правки и отсутствие победителя.</text>
-  <rect x="40" y="160" width="280" height="182" rx="18" fill="#ffffff" stroke="#dfd2c8"/>
-  <text x="58" y="202" font-size="22" fill="#362b25" font-weight="700">1. До запуска</text>
-  <text x="58" y="243" font-size="16" fill="#67564d" font-weight="400">Ошибка и ожидаемый выигрыш</text>
-  <text x="58" y="271" font-size="16" fill="#67564d" font-weight="400">Риск ухудшить соседние задачи</text>
-  <text x="58" y="299" font-size="16" fill="#67564d" font-weight="400">Критерии, повторы и бюджет</text>
-  <rect x="360" y="160" width="280" height="182" rx="18" fill="#ffffff" stroke="#dfd2c8"/>
-  <text x="378" y="202" font-size="22" fill="#362b25" font-weight="700">2. Равные условия</text>
-  <text x="378" y="243" font-size="16" fill="#67564d" font-weight="400">Исходные запросы и снимки</text>
-  <text x="378" y="271" font-size="16" fill="#67564d" font-weight="400">Свежие контексты вариантов</text>
-  <text x="378" y="299" font-size="16" fill="#67564d" font-weight="400">Без готового решения</text>
-  <rect x="680" y="160" width="280" height="182" rx="18" fill="#ffffff" stroke="#dfd2c8"/>
-  <text x="698" y="202" font-size="22" fill="#362b25" font-weight="700">3. Проверка</text>
-  <text x="698" y="243" font-size="16" fill="#67564d" font-weight="400">Поведение и совместимость</text>
-  <text x="698" y="271" font-size="16" fill="#67564d" font-weight="400">Независимая оценка решения</text>
-  <text x="698" y="299" font-size="16" fill="#67564d" font-weight="400">Время, токены, вмешательства</text>
-  <path d="M 323 253 H 350" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <path d="M 643 253 H 670" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <rect x="40" y="374" width="920" height="72" rx="18" fill="#f7e0d0" stroke="#dfd2c8"/>
-  <text x="62" y="405" font-size="12" fill="#986047" font-weight="700">ВАРИАНТЫ</text>
-  <text x="62" y="430" font-size="21" fill="#362b25" font-weight="600">Текущие правила   /   Предложенная правка   /   Более простая реализация</text>
-  <path d="M 500 449 V 477" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <rect x="40" y="490" width="296" height="58" rx="18" fill="#e6ede2" stroke="#dfd2c8"/>
-  <text x="58" y="526" font-size="20" fill="#362b25" font-weight="600">Принять</text>
-  <rect x="352" y="490" width="296" height="58" rx="18" fill="#f1dfd5" stroke="#dfd2c8"/>
-  <text x="370" y="526" font-size="20" fill="#362b25" font-weight="600">Доработать или отклонить</text>
-  <rect x="664" y="490" width="296" height="58" rx="18" fill="#e7e5ef" stroke="#dfd2c8"/>
-  <text x="682" y="526" font-size="20" fill="#362b25" font-weight="600">Данных недостаточно</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="328" viewBox="0 0 600 328" role="img" aria-labelledby="title desc">
+  <title id="title">Сохранится ли новое значение?</title>
+  <desc id="desc">Для одного ключа перебраны четыре позиции старой записи. Без проверки поколения новое значение потеряно только в последней позиции, когда новую запись уже опубликовали. С проверкой поколения и в контроле с одинаковым содержимым потерь нет.</desc>
+  <rect width="600" height="328" rx="16" fill="#FAF6EE"/>
+  <g fill="#291F23" font-family="Segoe UI, Arial, sans-serif">
+    <text x="22" y="42" font-size="32" font-weight="700">Сохранится ли новое значение?</text>
+    <g text-anchor="middle" font-size="21" font-weight="600">
+      <text x="371" y="89">Позиция старой записи</text>
+      <text x="551" y="89">Потери</text>
+    </g>
+    <g text-anchor="middle" font-size="20">
+      <text x="296" y="118">1</text>
+      <text x="346" y="118">2</text>
+      <text x="396" y="118">3</text>
+      <text x="446" y="118">4</text>
+    </g>
+    <path d="M22 129H578 M22 177H578 M22 225H578 M22 273H578" fill="none" stroke="#291F23" stroke-opacity=".25"/>
+    <g font-size="22">
+      <text x="22" y="161">Без проверки</text>
+      <text x="22" y="209">С проверкой поколения</text>
+      <text x="22" y="257">Одинаковые значения</text>
+    </g>
+    <g text-anchor="middle" font-size="23" font-weight="700">
+      <text x="551" y="161" fill="#AF472B">1 из 4</text>
+      <text x="551" y="209">0 из 4</text>
+      <text x="551" y="257">0 из 4</text>
+    </g>
+    <g fill="none" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="translate(0 153)">
+        <path transform="translate(296 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(346 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(396 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(446 0)" d="M-6 -6 L6 6 M6 -6 L-6 6" stroke="#AF472B"/>
+      </g>
+      <g transform="translate(0 201)">
+        <path transform="translate(296 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(346 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(396 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(446 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+      </g>
+      <g transform="translate(0 249)">
+        <path transform="translate(296 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(346 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(396 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+        <path transform="translate(446 0)" d="M-8 0 L-3 5 L8 -6" stroke="#216451"/>
+      </g>
+    </g>
+    <g font-size="20">
+      <path transform="translate(32 303)" d="M-8 0 L-3 5 L8 -6" stroke="#216451" fill="none" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="52" y="310">Значение сохранилось</text>
+      <path transform="translate(315 303)" d="M-6 -6 L6 6 M6 -6 L-6 6" stroke="#AF472B" fill="none" stroke-width="3.5" stroke-linecap="round"/>
+      <text x="335" y="310">Значение потеряно</text>
+    </g>
   </g>
 </svg>

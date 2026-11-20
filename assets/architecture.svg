@@ -1,37 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="550" viewBox="0 0 1000 550" role="img" aria-labelledby="title desc">
-  <title id="title">Области ответственности fstack</title>
-  <desc id="desc">Навыки fstack задают метод. Codex предоставляет модели, инструменты и разрешения. Результат проверяется в проекте. Одобренные хуки и runtime обслуживают память в Obsidian.</desc>
-  <defs>
-    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fffaf4"/><stop offset="1" stop-color="#f3e8e0"/></linearGradient>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#9c7562" stroke-width="1.5" stroke-linecap="round"/></marker>
-  </defs>
-  <rect x="1" y="1" width="998" height="548" rx="24" fill="url(#paper)" stroke="#e0d0c4"/>
-  <g font-family="Segoe UI, Arial, sans-serif">
-  <text x="40" y="44" font-size="13" fill="#986047" font-weight="700">ОБЛАСТИ ОТВЕТСТВЕННОСТИ</text>
-  <text x="40" y="88" font-size="32" fill="#362b25" font-weight="700">Метод, исполнение и память</text>
-  <text x="40" y="121" font-size="18" fill="#67564d" font-weight="400">fstack описывает работу. Клиент предоставляет возможности и права.</text>
-  <rect x="40" y="160" width="280" height="210" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
-  <text x="62" y="202" font-size="27" fill="#362b25" font-weight="700">fstack</text>
-  <text x="62" y="241" font-size="17" fill="#67564d" font-weight="400">Навыки и каталог</text>
-  <text x="62" y="270" font-size="17" fill="#67564d" font-weight="400">Выбор метода и решения</text>
-  <text x="62" y="299" font-size="17" fill="#67564d" font-weight="400">Критерии результата</text>
-  <text x="62" y="347" font-size="14" fill="#986047" font-weight="600">Читаемые инструкции</text>
-  <rect x="360" y="160" width="280" height="210" rx="18" fill="#f7e0d0" stroke="#dfd2c8"/>
-  <text x="382" y="202" font-size="27" fill="#362b25" font-weight="700">Codex</text>
-  <text x="382" y="241" font-size="17" fill="#67564d" font-weight="400">Модели и reasoning</text>
-  <text x="382" y="270" font-size="17" fill="#67564d" font-weight="400">Агенты и инструменты</text>
-  <text x="382" y="299" font-size="17" fill="#67564d" font-weight="400">Контекст и разрешения</text>
-  <text x="382" y="347" font-size="14" fill="#986047" font-weight="600">Фактическое исполнение</text>
-  <rect x="680" y="160" width="280" height="210" rx="18" fill="#fffdf9" stroke="#dfd2c8"/>
-  <text x="702" y="202" font-size="27" fill="#362b25" font-weight="700">Проект</text>
-  <text x="702" y="241" font-size="17" fill="#67564d" font-weight="400">Исходники и зависимости</text>
-  <text x="702" y="270" font-size="17" fill="#67564d" font-weight="400">Стенд, тесты и CI</text>
-  <text x="702" y="299" font-size="17" fill="#67564d" font-weight="400">Политики и потребители</text>
-  <text x="702" y="347" font-size="14" fill="#986047" font-weight="600">Наблюдаемый результат</text>
-  <path d="M 323 266 H 350" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <path d="M 643 266 H 670" fill="none" stroke="#9c7562" stroke-width="2" marker-end="url(#arrow)"/>
-  <rect x="40" y="407" width="920" height="110" rx="18" fill="#44332c" stroke="#44332c"/>
-  <text x="64" y="442" font-size="23" fill="#fff7ef" font-weight="700">Одобренные хуки → нативный runtime → Obsidian</text>
-  <text x="64" y="479" font-size="18" fill="#e6c9b6" font-weight="400">Решения и поправки в заметках · привязки и очередь в профиле Codex</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="478" viewBox="0 0 600 478" role="img" aria-labelledby="title desc">
+  <title id="title">Как глубина запроса включает faust-mode</title>
+  <desc id="desc">В обычном постоянном чате выбран ultra. Хук подтверждает глубину текущего хода и включает faust-mode. Координатор решает, нужна ли отдельная проверка. В примере он поручает сверку команд подагенту со свежим контекстом и задаёт low. В испытании с локальной моделью-заглушкой оба клиента передали low в запросе подагента. Следующий ход на high без ручного включения проходит в обычном режиме.</desc>
+
+  <rect width="600" height="478" fill="#FAF6EE"/>
+
+  <!-- По вертикали идут сообщения основного чата. Поручение ответвляется вправо. -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 47V159" stroke="#216451" stroke-width="3"/>
+    <path d="M32 162V396" stroke="#291F23" stroke-opacity=".48" stroke-width="2" stroke-dasharray="4 7"/>
+    <path d="M32 183V248Q32 264 48 264H80M72 257l8 7-8 7" stroke="#AF472B" stroke-width="3"/>
+  </g>
+  <circle cx="32" cy="47" r="6" fill="#216451"/>
+  <circle cx="32" cy="159" r="8" fill="#216451"/>
+  <circle cx="32" cy="396" r="6" fill="#FAF6EE" stroke="#291F23" stroke-width="2.5"/>
+
+  <g font-family="Segoe UI, Arial, sans-serif" fill="#291F23">
+    <text x="60" y="54" font-size="23" fill="#216451">Обычный чат · выбран ultra</text>
+    <text x="58" y="98" font-size="32" font-weight="700">«Проверь изменения в проекте»</text>
+
+    <text x="60" y="170" font-size="33" font-weight="700">Координатор <tspan fill="#216451">· ultra</tspan></text>
+    <text x="60" y="205" font-size="23">Хук подтвердил глубину этого хода</text>
+    <text x="60" y="233" font-size="23">и включил faust-mode.</text>
+
+    <text x="96" y="272" font-size="22" fill="#AF472B">Если нужна отдельная проверка</text>
+    <text x="95" y="310" font-size="31" font-weight="700">Подагент <tspan fill="#AF472B">· low</tspan></text>
+    <text x="96" y="344" font-size="23">Сверяет команды в новом контексте.</text>
+
+    <text x="60" y="405" font-size="29" font-weight="700">Следующий ход · high</text>
+    <text x="60" y="441" font-size="23">Без /faust-mode чат работает как обычно.</text>
   </g>
 </svg>

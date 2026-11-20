@@ -27,6 +27,7 @@ impl Mode {
 pub(super) struct Turn {
     pub mode: Mode,
     pub delegated: bool,
+    pub root_ultra: bool,
 }
 
 struct Transcript {
@@ -151,6 +152,7 @@ struct ActiveTurn {
     mode: Mode,
     context_seen: bool,
     delegated: bool,
+    ultra: bool,
 }
 
 fn latest_turn(
@@ -189,6 +191,7 @@ fn latest_turn(
                         mode,
                         context_seen: false,
                         delegated: app_task(data, &data["turn_id"]),
+                        ultra: false,
                     })
             });
             communication = false;
@@ -216,6 +219,7 @@ fn latest_turn(
                 if mode == Mode::Plan {
                     active.mode = mode;
                 }
+                active.ultra = data["effort"] == "ultra";
                 active.context_seen = true;
             }
             (Some("inter_agent_communication_metadata"), _) => {
@@ -236,6 +240,7 @@ fn latest_turn(
     (turn.context_seen || turn.mode == Mode::Plan).then_some(Turn {
         mode: turn.mode,
         delegated: turn.delegated,
+        root_ultra: turn.ultra && !turn.delegated && transcript.header["source"].is_string(),
     })
 }
 

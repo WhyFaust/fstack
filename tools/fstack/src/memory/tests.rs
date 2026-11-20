@@ -161,6 +161,61 @@ fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
 }
 
 #[test]
+fn ultra_follows_the_verified_root_turn_and_respects_the_manual_chat_choice() {
+    let f = Fixture::new("auto", "pilot");
+    let store = Store::new(Some(f.base.join("fstack/memory")), &f.store.package).unwrap();
+    let sessions = f.base.join("sessions/2026/11/20");
+    fs::create_dir_all(&sessions).unwrap();
+    let session = "ultra-test";
+    let transcript = sessions.join(format!("rollout-2026-11-20T12-00-00-{session}.jsonl"));
+    let snapshot = |source: Value, context: Value| {
+        let meta = json!({"type":"session_meta","payload":{"id":session,"source":source}});
+        let start = json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"current","collaboration_mode_kind":"default"}});
+        let row = json!({"type":"turn_context","payload":context});
+        fs::write(&transcript, format!("{meta}\n{start}\n{row}\n")).unwrap();
+    };
+    let context = |effort: &str| json!({"turn_id":"current","cwd":f.repo,"effort":effort,"collaboration_mode":{"mode":"default"}});
+    let submit = |turn: &str, prompt: &str, fields: Value| {
+        let mut input = json!({"hook_event_name":"UserPromptSubmit","session_id":session,
+            "cwd":f.repo,"turn_id":turn,"prompt":prompt,"transcript_path":transcript});
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        hooks::hook(&store, "UserPromptSubmit", &input, &f.repo).unwrap()["hookSpecificOutput"]
+            ["additionalContext"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let ordinary = || submit("current", "Проверь модуль", json!({}));
+    let root = json!("vscode");
+    snapshot(root.clone(), context("ultra"));
+    assert!(ordinary().contains("по глубине ultra"));
+    assert!(ordinary().contains("model-check —"));
+    assert!(!store.state.join("faust-mode-sessions").exists());
+    assert!(submit("new-turn", "Продолжи", json!({})).contains("выключен"));
+    assert!(
+        submit("current", "Продолжи", json!({"permission_mode":"plan"}))
+            .contains("нативном Plan Mode")
+    );
+    let mut other_cwd = context("ultra");
+    other_cwd["cwd"] = json!(f.base);
+    snapshot(root.clone(), other_cwd);
+    assert!(ordinary().contains("выключен"));
+    snapshot(json!({"subagent":{"thread_spawn":{}}}), context("ultra"));
+    assert!(ordinary().contains("выключен"));
+    snapshot(root.clone(), context("low"));
+    assert!(submit("current", "Объясни ultra", json!({"effort":"ultra"})).contains("выключен"));
+    snapshot(root, context("ultra"));
+    assert!(submit("current", "/faust-mode-off", json!({})).contains("выключен"));
+    assert!(ordinary().contains("выключен"));
+    assert!(submit("current", "/faust-mode", json!({})).contains("до команды"));
+    snapshot(json!("cli"), context("high"));
+    assert!(ordinary().contains("до команды"));
+}
+
+#[test]
 fn markdown_command_examples_preserve_the_current_mode() {
     let f = Fixture::new("auto", "pilot");
     for (session, active) in [("plain", false), ("coordinator", true)] {
