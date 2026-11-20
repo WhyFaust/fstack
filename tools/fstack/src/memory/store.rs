@@ -9,7 +9,24 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
+
+static STOP_WORDS: LazyLock<BTreeSet<&str>> = LazyLock::new(|| {
+    concat!(
+        "a an and are as at be been but by can could did do does for from had has have how i ",
+        "if in into is it its me my of on or our should that the their this to us was we were ",
+        "what when where which who why will with would you your а без был была были было в во ",
+        "вот для до его ее её если есть же за и из или к как какая какие какой какое ко когда ",
+        "кто ли мне мой мы на над нам наш не ни но о об от по под при про с со так там то тот ",
+        "у уже что чтобы это этого этой этом этот я",
+    )
+    .split_whitespace()
+    .collect()
+});
+static SEARCH_WORD: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"[\p{L}\p{N}]+").expect("valid word pattern"));
+
 fn russian_stem(stemmer: &Stemmer, word: &str) -> Option<String> {
     if !word.chars().all(|ch| matches!(ch, 'а'..='я' | 'ё')) {
         return None;
@@ -321,11 +338,7 @@ impl Store {
     pub fn new(state: Option<PathBuf>, package: &Path) -> Result<Self> {
         let dir = match state {
             Some(p) => p,
-            None => std::env::var_os("CODEX_HOME")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or(io::home()?.join(".codex"))
-                .join("fstack/memory"),
+            None => io::configured_directory("CODEX_HOME", ".codex")?.join("fstack/memory"),
         };
         Ok(Self {
             state: io::absolute(&dir)?,
@@ -997,13 +1010,11 @@ impl Store {
         if query.chars().count() > 500 || !(1..=50).contains(&limit) {
             return Err("Invalid memory search query or limit".into());
         }
-        let stop="a an and are as at be been but by can could did do does for from had has have how i if in into is it its me my of on or our should that the their this to us was we were what when where which who why will with would you your а без был была были было в во вот для до его ее её если есть же за и из или к как какая какие какой какое ко когда кто ли мне мой мы на над нам наш не ни но о об от по под при про с со так там то тот у уже что чтобы это этого этой этом этот я".split_whitespace().collect::<BTreeSet<_>>();
-        let q = query.case_fold().collect::<String>();
-        let regex = regex::Regex::new(r"[\p{L}\p{N}]+").unwrap();
+        let query = query.case_fold().collect::<String>();
         let mut terms = Vec::new();
-        for m in regex.find_iter(&q) {
-            if !stop.contains(m.as_str()) && !terms.contains(&m.as_str().to_owned()) {
-                terms.push(m.as_str().to_owned());
+        for word in SEARCH_WORD.find_iter(&query).map(|word| word.as_str()) {
+            if !STOP_WORDS.contains(word) && !terms.contains(&word) {
+                terms.push(word);
                 if terms.len() == 20 {
                     break;
                 }
@@ -1019,7 +1030,7 @@ impl Store {
             .collect();
         let mut expression = format!(
             "{{title body}} : ({})",
-            fts_alternatives(terms.iter().map(String::as_str))
+            fts_alternatives(terms.iter().copied())
         );
         if !stems.is_empty() {
             expression.push_str(&format!(
@@ -1052,9 +1063,9 @@ impl Store {
             let forms = if stems.is_empty() {
                 String::new()
             } else {
-                regex
+                SEARCH_WORD
                     .find_iter(&title)
-                    .chain(regex.find_iter(&body))
+                    .chain(SEARCH_WORD.find_iter(&body))
                     .filter_map(|m| russian_stem(&stemmer, m.as_str()))
                     .collect::<Vec<_>>()
                     .join(" ")

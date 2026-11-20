@@ -5,9 +5,13 @@ package_root() {
     CDPATH= cd -P -- "$(command -p dirname -- "$0")/.." && pwd -P
 }
 
+runtime_file() {
+    [ -f "$1" ] && [ ! -L "$1" ] && [ -x "$1" ]
+}
+
 runtime_path() {
     root=$1
-    if [ -f "$root/bin/fstack" ] && [ ! -L "$root/bin/fstack" ] && [ -x "$root/bin/fstack" ]; then
+    if runtime_file "$root/bin/fstack"; then
         printf '%s\n' "$root/bin/fstack"
         return
     fi
@@ -66,20 +70,20 @@ install_runtime() {
     for suffix in .sha256 ''; do
         curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
             --connect-timeout 15 --max-time 180 --retry 2 --retry-max-time 180 \
-            "$url$suffix" --output "$staging/$asset$suffix"
+            "$url$suffix" --output "$staging/fstack$suffix"
     done
     if command -v sha256sum >/dev/null 2>&1; then
-        digest=$(sha256sum < "$staging/$asset")
+        digest=$(sha256sum < "$staging/fstack")
     else
-        digest=$(shasum -a 256 < "$staging/$asset")
+        digest=$(shasum -a 256 < "$staging/fstack")
     fi
-    expected=$(cat "$staging/$asset.sha256")
-    if [ "$expected" != "${digest%% *}  $asset" ] || [ ! -s "$staging/$asset" ]; then
+    expected=$(cat "$staging/fstack.sha256")
+    if [ "$expected" != "${digest%% *}  $asset" ] || [ ! -s "$staging/fstack" ]; then
         printf '%s\n' 'fstack: контрольная сумма runtime не совпала' >&2
         return 1
     fi
-    chmod 700 "$staging/$asset"
-    mv -f -- "$staging/$asset" "$binary"
+    chmod 700 "$staging/fstack"
+    mv -f -- "$staging/fstack" "$target_dir/"
 }
 
 main() {
@@ -88,18 +92,18 @@ main() {
     case "${1:-}" in
         --install-runtime)
             [ "$#" -eq 1 ] || exit 2
-            if [ ! -f "$binary" ] || [ -L "$binary" ] || [ ! -x "$binary" ]; then
+            if ! runtime_file "$binary"; then
                 install_runtime "$binary" "$root"
             fi
             printf '%s\n' "$binary"
             ;;
         --runtime-path)
             [ "$#" -eq 1 ] || exit 2
-            [ -f "$binary" ] && [ ! -L "$binary" ] && [ -x "$binary" ] || exit 1
+            runtime_file "$binary" || exit 1
             printf '%s\n' "$binary"
             ;;
         *)
-            if [ ! -f "$binary" ] || [ -L "$binary" ] || [ ! -x "$binary" ]; then
+            if ! runtime_file "$binary"; then
                 printf '%s\n' 'fstack: откройте чат с одобренным хуком или запустите этот файл с --install-runtime' >&2
                 exit 1
             fi

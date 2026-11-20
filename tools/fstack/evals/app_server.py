@@ -49,6 +49,11 @@ def environment(home: Path, *, isolated_user: bool = False) -> dict[str, str]:
     return env
 
 
+def toml_string(value: str | Path) -> str:
+    # TOML допускает символы вне BMP напрямую, но не JSON-пары суррогатов.
+    return json.dumps(str(value), ensure_ascii=False)
+
+
 def profile(home: Path, workspace: Path, readonly: list[Path] = (), executable: str | None = None,
             editable: bool = True) -> None:
     home.mkdir(parents=True, exist_ok=False)
@@ -60,7 +65,8 @@ def profile(home: Path, workspace: Path, readonly: list[Path] = (), executable: 
         helpers = [binary, *(binary.with_name(name) for name in
                    ("codex-exec", "codex-exec.exe", "codex-node-repl", "codex-node-repl.exe"))]
         readonly = [*readonly, *(path for path in helpers if path.is_file())]
-    roots = "\n".join(f'{json.dumps(str(p.resolve()))} = "read"' for p in readonly)
+    roots = "\n".join(f'{toml_string(p.resolve())} = "read"' for p in readonly)
+    scratch_path = toml_string(scratch)
     (home / "config.toml").write_text(f'''approval_policy = "never"
 default_permissions = "fstack-eval"
 web_search = "disabled"
@@ -77,17 +83,17 @@ multi_agent_v2 = true
 inherit = "core"
 
 [shell_environment_policy.set]
-TMPDIR = {json.dumps(str(scratch))}
-TMP = {json.dumps(str(scratch))}
-TEMP = {json.dumps(str(scratch))}
-XDG_CACHE_HOME = {json.dumps(str(scratch))}
+TMPDIR = {scratch_path}
+TMP = {scratch_path}
+TEMP = {scratch_path}
+XDG_CACHE_HOME = {scratch_path}
 
 [permissions.fstack-eval.filesystem]
 ":minimal" = "read"
-{json.dumps(str(workspace.resolve()))} = {json.dumps('write' if editable else 'read')}
-{json.dumps(str(scratch))} = "write"
+{toml_string(workspace.resolve())} = "{'write' if editable else 'read'}"
+{scratch_path} = "write"
 # Тесты создают настоящие временные Git-репозитории. Не подставлять fake .git.
-{json.dumps(str(scratch / '.git'))} = "write"
+{toml_string(scratch / '.git')} = "write"
 {roots}
 
 [permissions.fstack-eval.network]
@@ -212,9 +218,9 @@ def trust_fixture_hooks(codex: str, home: Path, project: Path) -> dict[str, list
             assert hook["trustStatus"] == "untrusted" and hook["enabled"] is True, hook
             expected.setdefault(hook["eventName"], []).append("untrusted")
             declaration, separator, content = hook["currentHash"].partition("/")
-            stream.write(f'\n[hooks.state.{json.dumps(hook["key"])}]\ntrusted_hash = {json.dumps(declaration)}\n')
+            stream.write(f'\n[hooks.state.{toml_string(hook["key"])}]\ntrusted_hash = {toml_string(declaration)}\n')
             if separator:
-                stream.write(f'trusted_content_hash = {json.dumps(content)}\n')
+                stream.write(f'trusted_content_hash = {toml_string(content)}\n')
     return expected
 
 

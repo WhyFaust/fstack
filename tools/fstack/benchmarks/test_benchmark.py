@@ -49,6 +49,16 @@ class BenchmarkTests(unittest.TestCase):
             path = Path(directory) / "result.json"
             path.write_text(json.dumps(data), encoding="utf-8")
             self.assertEqual(20, read_result(path)["results"]["show"]["p95_ms"])
+            for key, invalid in [("records", 2.5), ("samples", 5.0)]:
+                with self.subTest(setting=key), self.assertRaises(ValueError):
+                    settings = {**data["settings"], key: invalid}
+                    path.write_text(json.dumps({**data, "settings": settings}), encoding="utf-8")
+                    read_result(path)
+            data["results"]["show"]["samples_ms"] = [True, *samples[1:]]
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_result(path)
+            data["results"]["show"]["samples_ms"] = samples
             data["results"]["show"]["median_ms"] = 1
             path.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaises(ValueError):

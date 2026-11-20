@@ -178,6 +178,41 @@ impl Runtime {
     }
 }
 
+#[test]
+fn explicit_profile_and_cache_work_without_a_home_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let profile = root.join("profile");
+    let cache = root.join("cache");
+    let vault = root.join("vault");
+    fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_fstack"))
+        .arg("--package")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .args(["memory", "vault", "--set"])
+        .arg(&vault)
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env("CODEX_HOME", &profile)
+        .env(
+            if cfg!(windows) {
+                "LOCALAPPDATA"
+            } else {
+                "XDG_CACHE_HOME"
+            },
+            &cache,
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(profile.join("fstack/memory/vault.json").is_file());
+    assert!(cache.join("fstack/memory-locks").is_dir());
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_shells_preserve_hook_directory_and_utf8() {
@@ -1164,6 +1199,10 @@ cp "$FSTACK_TEST_FIXTURES/${1##*/}" "$3"
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
 
     fs::write(&checksum, format!("{:x}  {asset}\n", Sha256::digest(bytes))).unwrap();
+    let occupied = cache.join("fstack");
+    fs::create_dir(&occupied).unwrap();
+    assert!(!install(&asset, fixtures.as_os_str()).status.success());
+    fs::remove_dir(occupied).unwrap();
     assert!(install(&asset, fixtures.as_os_str()).status.success());
     assert_eq!(fs::read(cache.join("fstack")).unwrap(), bytes);
     fs::write(&id_file, format!("{second_id}\n")).unwrap();

@@ -29,13 +29,13 @@ def compare(plan, cases, results, judgments, left, right, calibrated, stale):
             for criterion in verdict["criteria"]:
                 if criterion[al] == "pass" and criterion[bl] == "fail": regressions.append(key)
                 if criterion[bl] == "fail": unresolved = True
-                if criterion[bl] == "unknown": unknown = True
+                if "unknown" in (criterion[al], criterion[bl]): unknown = True
             winner = labels.get(verdict["winner"])
             if winner == right: wins.append(case)
             if winner == left: losses.append(case)
             if verdict["winner"] == "unknown": unknown = True
     repeated = {c for c, count in Counter(wins).items() if count > plan["repetitions"] / 2}
-    holdout_win = any(cases[c]["split"] == "holdout" for c in repeated)
+    holdout_win = any(c in cases and cases[c]["split"] == "holdout" for c in repeated)
     groups = {cases[c]["split"] for c in plan["cases"] if c in cases}
     coverage = plan["repetitions"] >= 3 and {"holdout", "control"} <= groups
     if stale:

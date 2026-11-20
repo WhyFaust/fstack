@@ -1,7 +1,11 @@
 use super::{io, Result};
 use regex::Regex;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::LazyLock};
+static PROJECT_LINK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\A\[\[Codex Memory/Projects/([a-z0-9][a-z0-9-]{0,47})/(Project|[a-z0-9][a-z0-9-]{0,47})(?:\|([a-z0-9][a-z0-9-]{0,47}))?\]\]\z").expect("valid project link pattern")
+});
+
 pub type Fields = BTreeMap<String, String>;
 pub const MEMORY: &str = "fstack_memory: 1";
 pub const APPROVED: &str = "fstack_approved: 1";
@@ -223,8 +227,9 @@ pub fn parse(raw: &str, entry: &str, marker: &str, include_body: bool) -> Result
             .get("project_link")
             .filter(|s| s.as_str() != super::shared::LINK)
         {
-            let r=Regex::new(r"\A\[\[Codex Memory/Projects/([a-z0-9][a-z0-9-]{0,47})/(Project|[a-z0-9][a-z0-9-]{0,47})(?:\|([a-z0-9][a-z0-9-]{0,47}))?\]\]\z").unwrap();
-            let c = r.captures(link).ok_or("Invalid memory graph link")?;
+            let c = PROJECT_LINK
+                .captures(link)
+                .ok_or("Invalid memory graph link")?;
             if (&c[2] != "Project" && c[1] != c[2]) || c.get(3).is_some_and(|v| v.as_str() != &c[1])
             {
                 return Err("Invalid memory graph link".into());

@@ -1,4 +1,5 @@
 name: fstack
+run-name: ${{ github.event_name == 'pull_request' && format('PR {0} {1} {2}', github.event.number, github.event.pull_request.head.sha, github.event.pull_request.base.sha) || format('{0} {1}', github.event_name, github.sha) }}
 
 on:
   pull_request:
@@ -24,7 +25,46 @@ env:
   TOOLCHAIN: 1.90.0
 
 jobs:
+  source:
+    name: Выбрать ревизию пакета
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    outputs:
+      sha: ${{ steps.select.outputs.sha }}
+      base: ${{ steps.select.outputs.base }}
+      workflow_only: ${{ steps.select.outputs.workflow_only }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: select
+        env:
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          base=$CHANGE_BASE
+          workflow_only=false
+          version=$(jq -er '.version | select(test("^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*)){2}$"))' .codex-plugin/plugin.json)
+          outside_workflows=(. ':(exclude).github/workflows')
+          if tag=$(git rev-parse --verify --quiet "refs/tags/v$version^{commit}") &&
+             ! git diff --quiet "$tag" "$sha" -- .github/workflows &&
+             git diff --quiet "$tag" "$sha" -- "${outside_workflows[@]}" &&
+             { [[ -z "$base" ]] || git diff --quiet "$base" "$sha" -- "${outside_workflows[@]}"; }; then
+            if [[ -n "$base" ]]; then git merge-base --is-ancestor "$base" "$sha"; fi
+            sha=$tag
+            base=$tag
+            workflow_only=true
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "workflow_only=$workflow_only" >> "$GITHUB_OUTPUT"
+
   package:
+    needs: source
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     name: Пакет (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -42,7 +82,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          fetch-depth: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '0' || '1' }}
+          ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - name: Rust, сборка и тесты
         run: |
           rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt,clippy
@@ -52,7 +94,7 @@ jobs:
           cargo "+$TOOLCHAIN" build --release --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST"
       - name: Проверить пакет и версию
         env:
-          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          CHANGE_BASE: ${{ needs.source.outputs.base }}
         run: |
           "$BINARY" --package . check-package .
           "$BINARY" --package . release check
@@ -60,11 +102,15 @@ jobs:
             "$BINARY" --package . release check-next "$CHANGE_BASE"
           fi
       - name: Проверить доступность версии в GitHub Releases
-        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        if: runner.os == 'Linux'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: '"$BINARY" --package . release plan'
+          WORKFLOW_ONLY: ${{ needs.source.outputs.workflow_only }}
+        run: |
+          plan=$("$BINARY" --package . release plan)
+          echo "$plan"
+          if [[ "$WORKFLOW_ONLY" == true ]]; then jq -e '.publish == false' <<< "$plan"; fi
       - uses: actions/setup-python@v7
         if: runner.os == 'Linux'
         with:
@@ -115,29 +161,29 @@ jobs:
           retention-days: 7
 
   release:
-    name: Выпустить пакет
-    needs: package
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    name: Обновить канал выпуска
+    needs: source
+    if: needs.source.outputs.workflow_only == 'false' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-22.04
+    concurrency:
+      group: fstack-release-publish
+      cancel-in-progress: false
     permissions:
       contents: write
-      pull-requests: read
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v8.0.2
-        with:
-          pattern: native-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/native
-      - name: Сверить сборку и опубликовать
+          persist-credentials: false
+      - name: Собрать издатель из принятой ревизии
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          cargo "+$TOOLCHAIN" build --release --locked --manifest-path "$CARGO_MANIFEST"
+      - name: Сверить опубликованные файлы и обновить канал
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          publisher="$RUNNER_TEMP/native/x86_64-unknown-linux-gnu"
-          test "$(jq -er .source_sha "$publisher/artifact.json")" = "$GITHUB_SHA"
-          test "$(jq -er .sha256 "$publisher/artifact.json")" = "$(sha256sum "$publisher/fstack" | cut -d ' ' -f 1)"
-          chmod +x "$publisher/fstack"
-          "$publisher/fstack" --package . release publish --artifacts "$RUNNER_TEMP/native"
+          tools/fstack/target/release/fstack --package . release promote
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/stable" \
+            -f sha="$GITHUB_SHA" -F force=false --silent

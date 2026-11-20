@@ -550,7 +550,7 @@ fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
         _ => 5,
     };
     require(
-        handler["async"].as_bool().unwrap_or(false) == (event == "Bootstrap")
+        handler.get("async").map_or(Some(false), Value::as_bool) == Some(event == "Bootstrap")
             && handler["timeout"] == timeout,
         format!("{event}: неверный режим запуска хука"),
     )?;
@@ -694,11 +694,18 @@ pub(crate) fn check(root: &Path) -> Result<String> {
     check_catalog(&listing, &skills)?;
     for name in &skills {
         let folder = root.join("skills").join(name);
+        let mut versions = Vec::new();
         for path in entries(&folder)? {
             if skill_markdown(&path) {
                 let text = links.read_document(&path)?;
                 let (data, body) = parse_skill(&path, &text)
                     .map_err(|error| format!("{}: {error}", path.display()))?;
+                versions.push(
+                    data["metadata"]["version"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_owned(),
+                );
                 require(
                     !body.trim().is_empty(),
                     format!("{}: отсутствует текст инструкции", path.display()),
@@ -716,6 +723,12 @@ pub(crate) fn check(root: &Path) -> Result<String> {
             folder.join("SKILL.md").is_file(),
             format!("{name}: отсутствует SKILL.md"),
         )?;
+        if versions.len() > 1 {
+            require(
+                !versions[0].trim().is_empty() && versions.iter().all(|v| v == &versions[0]),
+                format!("{name}: metadata.version должна совпадать во всех переводах"),
+            )?;
+        }
         resource_directories(&folder, root)?;
         skill_ui(root, &folder, name)?;
     }

@@ -458,6 +458,15 @@ fn complete_package_rejects_broken_release_contracts() {
     let package = temp.path().join("package");
     copy_tree(&root(), &package);
     check(&package).unwrap();
+    let translation = package.join("skills/write/SKILL_en.md");
+    let original = read(&translation).unwrap();
+    let data = metadata(&translation).unwrap();
+    let version = data["metadata"]["version"].as_str().unwrap();
+    for replacement in ["0.0.0", ""] {
+        fs::write(&translation, original.replacen(version, replacement, 1)).unwrap();
+        assert!(check(&package).unwrap_err().contains("metadata.version"));
+    }
+    fs::write(translation, original).unwrap();
     for (relative, key, value) in [
         (".codex-plugin/plugin.json", "version", json!("01.0.0")),
         (".codex-plugin/plugin.json", "skills", json!("./missing/")),
@@ -473,6 +482,9 @@ fn complete_package_rejects_broken_release_contracts() {
         fs::write(&path, original).unwrap();
     }
     let hooks = json_file(&package.join("hooks/hooks.json")).unwrap();
+    let mut synchronous = hooks["hooks"]["Stop"][0]["hooks"][0].clone();
+    synchronous["async"] = json!("false");
+    assert!(check_hook_command("Stop", &synchronous).is_err());
     for event in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
         let mut handler = hooks["hooks"][event][0]["hooks"]
             .as_array()
