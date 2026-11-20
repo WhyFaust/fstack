@@ -81,14 +81,13 @@ jobs:
           mkdir -p "$package/bin"
           git archive HEAD | tar -x -C "$package"
           cp "$BINARY" "$package/bin/fstack"
-          for version in 0.169.0 0.171.0; do
-            cli_dir="$RUNNER_TEMP/fstack-cli-$version"
-            npm install --prefix "$cli_dir" --no-save --no-audit --no-fund "@openai/codex@$version"
-            codex="$cli_dir/node_modules/.bin/codex"
-            "$BINARY" --package "$package" check-installation --codex "$codex"
-            python tools/fstack/evals/check_doctor.py "$package" --codex "$codex"
-            python tools/fstack/evals/check_skill_invocation.py "$package" --codex "$codex"
-          done
+          cli_dir="$RUNNER_TEMP/fstack-cli"
+          npm install --prefix "$cli_dir" --prefer-online --no-save --no-audit --no-fund @openai/codex@latest
+          codex="$cli_dir/node_modules/.bin/codex"
+          "$codex" --version
+          "$BINARY" --package "$package" check-installation --codex "$codex"
+          python tools/fstack/evals/check_doctor.py "$package" --codex "$codex"
+          python tools/fstack/evals/check_skill_invocation.py "$package" --codex "$codex"
       - name: Проверить зависимости Linux
         if: runner.os == 'Linux'
         run: |
