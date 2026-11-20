@@ -126,11 +126,6 @@ impl Release<'_> {
     }
     fn pull_at(&self, repo: &str, pull: &PullRelease<'_>) -> Result<Value> {
         self.check_live_main(pull.base)?;
-        let promotion_ref = format!("refs/heads/release-candidates/pr-{}", pull.number);
-        let remote = self.cmd(&["git", "ls-remote", "--exit-code", "origin", &promotion_ref])?;
-        if remote.split_whitespace().next() != Some(pull.head) {
-            return Err("Ветка продвижения PR изменилась".into());
-        }
         let data: Value = serde_json::from_slice(&self.bytes(&[
             "gh",
             "api",
@@ -689,21 +684,17 @@ impl Release<'_> {
         event: &BTreeMap<String, String>,
         pull: Option<&PullRelease<'_>>,
     ) -> Result<()> {
-        let branch = pull.map_or_else(
-            || "main".to_owned(),
-            |p| format!("release-candidates/pr-{}", p.number),
-        );
-        self.check_workflow(repo, event, &branch)?;
+        self.check_main_workflow(repo, event)?;
         let workflow_sha = event.get("GITHUB_SHA").map(String::as_str).unwrap_or("");
         let expected = if let Some(pull) = pull {
-            if event.get("GITHUB_EVENT_NAME").map(String::as_str) != Some("push")
+            if event.get("GITHUB_EVENT_NAME").map(String::as_str) != Some("issue_comment")
                 || pull.number == 0
-                || pull.head != workflow_sha
+                || pull.base != workflow_sha
                 || !rx(r"\A[a-f0-9]{40}\z").is_match(pull.base)
                 || pull.base == pull.head
             {
                 return Err(
-                    "Для выпуска PR нужен push проверенного SHA в ветку продвижения".into(),
+                    "Для выпуска PR нужен issue_comment из проверенной ревизии main".into(),
                 );
             }
             pull.head
@@ -758,18 +749,13 @@ impl Release<'_> {
             pull,
         )
     }
-    fn check_workflow(
-        &self,
-        repo: &str,
-        event: &BTreeMap<String, String>,
-        branch: &str,
-    ) -> Result<()> {
+    fn check_main_workflow(&self, repo: &str, event: &BTreeMap<String, String>) -> Result<()> {
         if event.get("GITHUB_ACTIONS").map(String::as_str) != Some("true")
-            || event.get("GITHUB_REF") != Some(&format!("refs/heads/{branch}"))
+            || event.get("GITHUB_REF").map(String::as_str) != Some("refs/heads/main")
             || event.get("GITHUB_REPOSITORY").map(String::as_str) != Some(repo)
         {
             return Err(format!(
-                "Публикация выполняется только workflow ветки {branch} в {repo}"
+                "Публикация выполняется только workflow ветки main в {repo}"
             ));
         }
         Ok(())
@@ -792,7 +778,7 @@ impl Release<'_> {
             .ok_or("Неверный тег последнего выпуска".into())
     }
     fn promote(&self, repo: &str, event: &BTreeMap<String, String>) -> Result<()> {
-        self.check_workflow(repo, event, "main")?;
+        self.check_main_workflow(repo, event)?;
         let head = self.cmd(&["git", "rev-parse", "HEAD"])?;
         if event.get("GITHUB_SHA") != Some(&head)
             || !matches!(

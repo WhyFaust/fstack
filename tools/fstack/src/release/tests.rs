@@ -298,10 +298,6 @@ fn premerge_publication_rechecks_the_pr_and_reuses_only_the_published_tree_after
     release.prepare(Some("0.2.1")).unwrap();
     commit(&root, "chore: release candidate");
     let head = git(&root, &["rev-parse", "HEAD"]);
-    git(
-        &root,
-        &["push", "origin", "HEAD:refs/heads/release-candidates/pr-7"],
-    );
     let pull = PullRelease {
         number: 7,
         head: &head,
@@ -313,12 +309,8 @@ fn premerge_publication_rechecks_the_pr_and_reuses_only_the_published_tree_after
         "head":{"ref":"candidate","repo":{"full_name":"someone/fork"},"sha":head},
         "body":"## При обновлении\n\nПроверьте настройки."
     });
-    let mut event = event(&head);
-    event.insert("GITHUB_EVENT_NAME".into(), "push".into());
-    event.insert(
-        "GITHUB_REF".into(),
-        "refs/heads/release-candidates/pr-7".into(),
-    );
+    let mut event = event(&base);
+    event.insert("GITHUB_EVENT_NAME".into(), "issue_comment".into());
     let artifacts = artifacts(&root, &head);
     let release = Release {
         artifacts: Some(&artifacts),
@@ -342,29 +334,37 @@ fn premerge_publication_rechecks_the_pr_and_reuses_only_the_published_tree_after
     }
     stub.pull.replace(valid.clone());
     for (key, wrong) in [
-        ("GITHUB_REF", "refs/heads/release-candidates/pr-8"),
+        ("GITHUB_REF", "refs/heads/release-candidates/pr-7"),
         ("GITHUB_EVENT_NAME", "workflow_dispatch"),
-        ("GITHUB_SHA", base.as_str()),
+        ("GITHUB_EVENT_NAME", "push"),
+        ("GITHUB_SHA", head.as_str()),
     ] {
         let mut other = event.clone();
         other.insert(key.into(), wrong.into());
         assert!(release.publish_pr("fixture/fstack", &other, &pull).is_err());
         assert!(stub.calls.borrow().is_empty());
     }
+    let mut old_trigger = self::event(&head);
+    old_trigger.insert("GITHUB_EVENT_NAME".into(), "push".into());
+    old_trigger.insert(
+        "GITHUB_REF".into(),
+        "refs/heads/release-candidates/pr-7".into(),
+    );
+    assert!(release
+        .publish_pr("fixture/fstack", &old_trigger, &pull)
+        .is_err());
+    assert!(stub.calls.borrow().is_empty());
+    git(&root, &["push", "origin", "HEAD:refs/heads/main"]);
+    assert!(publish().unwrap_err().contains("main изменился"));
+    assert!(stub.calls.borrow().is_empty());
     git(
         &root,
         &[
             "push",
             "--force",
             "origin",
-            &format!("{base}:refs/heads/release-candidates/pr-7"),
+            &format!("{base}:refs/heads/main"),
         ],
-    );
-    assert!(publish().is_err());
-    assert!(stub.calls.borrow().is_empty());
-    git(
-        &root,
-        &["push", "origin", "HEAD:refs/heads/release-candidates/pr-7"],
     );
     let descriptor = artifacts.join(TARGETS[0]).join("artifact.json");
     let original = fs::read(&descriptor).unwrap();
@@ -402,15 +402,9 @@ fn premerge_publication_rechecks_the_pr_and_reuses_only_the_published_tree_after
     save(&root, "new-doc.md", "Поздняя правка");
     commit(&root, "docs: different candidate");
     let newer = git(&root, &["rev-parse", "HEAD"]);
-    git(
-        &root,
-        &["push", "origin", "HEAD:refs/heads/release-candidates/pr-7"],
-    );
     let mut updated = valid.clone();
     updated["head"]["sha"] = json!(newer);
     stub.pull.replace(updated);
-    let mut retry = event.clone();
-    retry.insert("GITHUB_SHA".into(), newer.clone());
     let fresh = self::artifacts(&root, &newer);
     let retarget = Release {
         artifacts: Some(&fresh),
@@ -420,7 +414,7 @@ fn premerge_publication_rechecks_the_pr_and_reuses_only_the_published_tree_after
     assert!(retarget
         .publish_pr(
             "fixture/fstack",
-            &retry,
+            &event,
             &PullRelease {
                 number: 7,
                 base: &base,
@@ -432,15 +426,6 @@ fn premerge_publication_rechecks_the_pr_and_reuses_only_the_published_tree_after
     assert!(actions().is_empty());
     git(&root, &["checkout", "--detach", &head]);
     git(&root, &["branch", "-f", "candidate", &head]);
-    git(
-        &root,
-        &[
-            "push",
-            "--force",
-            "origin",
-            "HEAD:refs/heads/release-candidates/pr-7",
-        ],
-    );
     self::artifacts(&root, &head);
     stub.pull.replace(valid);
     stub.calls.borrow_mut().clear();
