@@ -47,10 +47,12 @@ def main():
         print("Пропуск тестов Python. В CI их запускает задача Linux.", flush=True)
     else:
         for suite in ("benchmarks", "evals"):
-            run(sys.executable, "-B", "-m", "unittest", "discover", "-s", f"tools/fstack/{suite}", "-v")
+            run(sys.executable, "-B", "-X", "utf8", "-m", "unittest", "discover", "-s", f"tools/fstack/{suite}", "-v")
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     try:
         main()
     except (OSError, subprocess.CalledProcessError) as exc:
