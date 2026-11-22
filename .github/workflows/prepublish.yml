@@ -66,7 +66,7 @@ jobs:
       - name: Получить исходники издателя
         uses: actions/checkout@v7.0.1
         with:
-          ref: c0576d2e81d7156735855e4ebdc1d148f249500f
+          ref: d74b7b9c26930fe139d7cdbd8ee427a64bf51534
           path: publisher
           persist-credentials: false
       - name: Собрать издатель
