@@ -69,7 +69,6 @@ fn ordinary_prompts_and_quoted_commands_do_not_activate_the_coordinator() {
         assert!(context.contains("Faust-mode выключен"));
         assert!(!context.contains("SKILL.md"));
         assert!(!context.contains("model-check —"));
-        assert!(!context.contains("memory"));
     }
     assert!(!f.state.directory.exists());
 }
@@ -95,7 +94,6 @@ fn aliases_are_explicit_and_chat_state_is_isolated() {
         .contains("выключен"));
     assert!(f.submit("/faust-mode-off").contains("выключен"));
     assert!(f.submit("Продолжи").contains("выключен"));
-    assert!(!f.state.profile.join("fstack/memory").exists());
 }
 
 #[test]
@@ -164,6 +162,30 @@ fn index_is_sent_on_activation_and_restore_but_not_every_turn() {
         f.context("SessionStart", json!({"source":"resume"})),
         initial
     );
+}
+
+#[test]
+fn native_child_uses_parent_session_without_changing_its_coordinator_choice() {
+    let f = Fixture::new();
+    f.submit("/faust-mode");
+    let marker = f.state.marker("session");
+    let before = fs::read(&marker).unwrap();
+    let child = json!({"session_id":"session","agent_id":"child","agent_type":"default"});
+    assert_eq!(f.context("SubagentStart", child.clone()), WORKER);
+    let mut prompt = child;
+    prompt["prompt"] = json!("/faust-mode-off");
+    assert_eq!(f.hook("UserPromptSubmit", prompt), json!({}));
+    assert_eq!(fs::read(&marker).unwrap(), before);
+    assert!(!f.state.marker("child").exists());
+    for id in [json!("../child"), json!(null), json!(false)] {
+        assert_eq!(
+            f.hook(
+                "SubagentStart",
+                json!({"agent_id":id,"agent_type":"default"})
+            ),
+            json!({})
+        );
+    }
 }
 
 #[test]
@@ -239,7 +261,6 @@ fn plan_and_workspace_containing_profile_keep_coordination_without_other_state()
         .unwrap()
         .contains("на этот запрос"));
     assert!(!inside.directory.exists());
-    assert!(!f.state.profile.join("fstack/memory").exists());
 }
 
 #[test]

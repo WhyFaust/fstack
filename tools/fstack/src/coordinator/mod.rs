@@ -114,8 +114,9 @@ fn hook(state: &State, package: &Path, event: &str, payload: &Value, cwd: &Path)
     if payload["hook_event_name"] != event
         || child != (event == "SubagentStart")
         || (child
-            && (!payload["agent_id"].is_string()
-                || payload["agent_id"] != payload["session_id"]
+            && (!payload["agent_id"]
+                .as_str()
+                .is_some_and(|id| matches(r"\A[a-zA-Z0-9_-]{1,128}\z", id))
                 || !payload["agent_type"].is_string()))
     {
         return Ok(json!({}));
