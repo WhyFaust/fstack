@@ -7,7 +7,7 @@
 
 
 ===== fmem 0.1.0 =====
-Source: https://github.com/WhyFaust/fmem/blob/4a917e46173d20b45c95b4f5ad074bfd9a636036/LICENSE
+Source: https://github.com/WhyFaust/fmem/blob/fb70495eb8558b7b13b3fed24bfe134f5563ce9c/LICENSE
 
 MIT License
 

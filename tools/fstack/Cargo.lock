@@ -211,7 +211,7 @@ dependencies = [
 [[package]]
 name = "fmem"
 version = "0.1.0"
-source = "git+https://github.com/WhyFaust/fmem.git?rev=4a917e46173d20b45c95b4f5ad074bfd9a636036#4a917e46173d20b45c95b4f5ad074bfd9a636036"
+source = "git+https://github.com/WhyFaust/fmem.git?rev=fb70495eb8558b7b13b3fed24bfe134f5563ce9c#fb70495eb8558b7b13b3fed24bfe134f5563ce9c"
 dependencies = [
  "base64",
  "chrono",
