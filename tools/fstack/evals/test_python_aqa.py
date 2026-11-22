@@ -103,14 +103,12 @@ class CorpusChecks(unittest.TestCase):
             self.assertEqual(self.check("")["status"], "unavailable")
 
     def test_bank_limits_the_module_and_test_class(self):
-        for field, value in (("oracle_file", "../oracle.py"), ("test", "oracle.OwnTests.test_one"),
+        for field, value in (("oracle_file", "../oracle.py"), ("oracle_file", "alternate_oracle.py"),
+                             ("test", "oracle.OwnTests.test_one"),
                              ("test", "oracle.DispatchContractTests.test_one; command")):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 corpus.oracle_test({**self.case, field: value})
-        for module, suffix in (("store", "Store"), ("hooks", "Hook")):
-            result = corpus.oracle_test({"oracle_file": f"scripts/tests/test_memory_{module}.py",
-                "test": f"scripts.tests.test_memory_{module}.Memory{suffix}Tests.test_one"})
-            self.assertEqual(result[:2], (f"Memory{suffix}Tests", "test_one"))
+        self.assertEqual(corpus.oracle_test(self.case), ("DispatchContractTests", "test_one", ("checks", "dispatch")))
 
     def test_validate_flags_empty_bank(self):
         with tempfile.TemporaryDirectory() as temporary:

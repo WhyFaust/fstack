@@ -1,4 +1,4 @@
-use super::Result;
+use crate::Result;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -9,9 +9,33 @@ use std::{
 pub fn hash(data: impl AsRef<[u8]>) -> String {
     format!("{:x}", Sha256::digest(data.as_ref()))
 }
+fn ascii_json(text: &str) -> String {
+    let mut out = String::new();
+    for c in serde_json::to_string(text).unwrap().chars() {
+        if (c as u32) < 127 {
+            out.push(c)
+        } else {
+            let mut buf = [0u16; 2];
+            for u in c.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{u:04x}"));
+            }
+        }
+    }
+    out
+}
+pub fn digest(parts: &[&str]) -> String {
+    hash(format!(
+        "[{}]",
+        parts
+            .iter()
+            .map(|s| ascii_json(s))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
 pub fn absolute(path: &Path) -> Result<PathBuf> {
     if path.to_str().is_none() {
-        return Err("Memory paths require UTF-8".into());
+        return Err("Coordinator paths require UTF-8".into());
     }
     let p = if path.is_absolute() {
         path.to_owned()
@@ -60,14 +84,6 @@ pub fn equal(left: &Path, right: &Path) -> bool {
         left == right
     }
 }
-pub fn directory_key(path: &Path) -> String {
-    #[cfg(windows)]
-    if let Ok(physical) = path.canonicalize() {
-        return normalized(&physical);
-    }
-    normalized(path)
-}
-
 pub fn same_directory(left: &Path, right: &Path) -> bool {
     if equal(left, right) {
         return true;
@@ -89,26 +105,6 @@ pub fn same_directory(left: &Path, right: &Path) -> bool {
     }
     false
 }
-#[cfg(windows)]
-pub fn short_directory(path: &Path) -> Option<PathBuf> {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
-    let physical = path.canonicalize().ok()?;
-    let input: Vec<_> = physical.as_os_str().encode_wide().chain(Some(0)).collect();
-    let needed = unsafe { GetShortPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
-    if needed == 0 {
-        return None;
-    }
-    let mut buffer = vec![0; needed as usize];
-    let written = unsafe { GetShortPathNameW(input.as_ptr(), buffer.as_mut_ptr(), needed) };
-    if written == 0 || written >= needed {
-        return None;
-    }
-    let short = PathBuf::from(OsString::from_wide(&buffer[..written as usize]));
-    same_directory(path, &short).then(|| PathBuf::from(normalized(&short)))
-}
-
 pub fn within(path: &Path, root: &Path) -> bool {
     #[cfg(windows)]
     {
@@ -138,19 +134,19 @@ pub fn within(path: &Path, root: &Path) -> bool {
     }
 }
 pub fn err(_: impl std::fmt::Display) -> String {
-    "Local memory operation failed".into()
+    "Local coordinator operation failed".into()
 }
 pub fn info(path: &Path) -> Result<Option<fs::Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(m) => {
             if m.file_type().is_symlink() {
-                return Err("Symbolic links are not allowed in memory paths".into());
+                return Err("Symbolic links are not allowed in coordinator paths".into());
             }
             #[cfg(windows)]
             {
                 use std::os::windows::fs::MetadataExt;
                 if m.file_attributes() & 0x400 != 0 {
-                    return Err("Reparse points are not allowed in memory paths".into());
+                    return Err("Reparse points are not allowed in coordinator paths".into());
                 }
             }
             Ok(Some(m))
@@ -197,7 +193,7 @@ pub fn directory(path: &Path, create: bool, _private: bool) -> Result<bool> {
             m = info(p)?;
         }
         if !m.is_some_and(|m| m.is_dir()) {
-            return Err("Memory path is not a directory".into());
+            return Err("Coordinator path is not a directory".into());
         }
     }
     Ok(true)
@@ -209,7 +205,7 @@ pub fn file(path: &Path) -> Result<bool> {
     match info(path)? {
         None => Ok(false),
         Some(m) if m.is_file() => Ok(true),
-        _ => Err("Memory path is not a regular file".into()),
+        _ => Err("Coordinator path is not a regular file".into()),
     }
 }
 pub fn options() -> OpenOptions {
@@ -234,29 +230,17 @@ pub fn read_limit(path: &Path, limit: usize) -> Result<Option<String>> {
         Err(e) => return Err(err(e)),
     };
     if !f.metadata().map_err(err)?.is_file() {
-        return Err("Memory path is not a regular file".into());
+        return Err("Coordinator path is not a regular file".into());
     }
     let mut b = Vec::new();
     f.take((limit + 1) as u64)
         .read_to_end(&mut b)
         .map_err(err)?;
     if b.len() > limit {
-        return Err("Memory file is too large".into());
+        return Err("Coordinator file is too large".into());
     }
-    let s = String::from_utf8(b).map_err(|_| "Invalid encoding in memory file")?;
+    let s = String::from_utf8(b).map_err(|_| "Invalid encoding in coordinator file")?;
     Ok(Some(s.trim_start_matches('\u{feff}').replace("\r\n", "\n")))
-}
-pub fn prefix(path: &Path, limit: usize) -> Result<Option<Vec<u8>>> {
-    if !file(path)? {
-        return Ok(None);
-    }
-    let f = options().read(true).open(path).map_err(err)?;
-    if !f.metadata().map_err(err)?.is_file() {
-        return Err("Memory path is not a regular file".into());
-    }
-    let mut data = Vec::new();
-    f.take(limit as u64).read_to_end(&mut data).map_err(err)?;
-    Ok(Some(data))
 }
 pub fn read(path: &Path) -> Result<Option<String>> {
     read_limit(path, 32768)
@@ -268,7 +252,7 @@ pub fn nonce() -> Result<String> {
 }
 pub fn write(path: &Path, text: &str, replace: bool, expected: Option<&str>) -> Result<bool> {
     if !directory(path.parent().ok_or("Missing parent")?, false, false)? {
-        return Err("Missing memory directory".into());
+        return Err("Missing coordinator directory".into());
     }
     if file(path)? && !replace {
         return Ok(false);
@@ -283,7 +267,7 @@ pub fn write(path: &Path, text: &str, replace: bool, expected: Option<&str>) -> 
         f.write_all(text.as_bytes()).map_err(err)?;
         f.sync_all().map_err(err)?;
         if expected.is_some() && read(path)?.as_deref() != expected {
-            return Err("Memory note changed while preparing an update".into());
+            return Err("Coordinator note changed while preparing an update".into());
         }
         file(path)?;
         match publish(&temp, path, replace) {
@@ -310,7 +294,7 @@ fn publish(source: &Path, target: &Path, replace: bool) -> std::io::Result<()> {
     }
 }
 #[cfg(windows)]
-pub(super) fn windows_publish_path(path: &Path) -> Vec<u16> {
+pub fn windows_publish_path(path: &Path) -> Vec<u16> {
     use std::{os::windows::ffi::OsStrExt, path::Prefix};
     let mut components = path.components();
     let mut units = Vec::new();
@@ -366,46 +350,37 @@ pub fn sync_parent(path: &Path) -> Result<()> {
 pub fn sync_parent(_path: &Path) -> Result<()> {
     Ok(())
 }
-pub fn delete(path: &Path) -> Result<bool> {
-    if !file(path)? {
-        return Ok(false);
-    }
-    match fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(err(e)),
-    }
-}
 pub fn home() -> Result<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
         .ok_or("Home directory unavailable".into())
 }
-pub(super) fn configured_directory(variable: &str, fallback: &str) -> Result<PathBuf> {
+pub fn configured_directory(variable: &str, fallback: &str) -> Result<PathBuf> {
     match std::env::var_os(variable).filter(|value| !value.is_empty()) {
         Some(path) => Ok(path.into()),
         None => Ok(home()?.join(fallback)),
     }
 }
-pub fn lock(project: &Path, vault: &Path) -> Result<File> {
-    directory(project, false, false)?;
-    #[cfg(unix)]
-    let m = info(project)?.ok_or("Memory project unavailable")?;
-    #[cfg(unix)]
-    let key = {
-        use std::os::unix::fs::MetadataExt;
-        hash(format!("{}:{}", m.dev(), m.ino()))
-    };
-    #[cfg(windows)]
-    let key = {
-        let (volume, index, _) = windows_info(project, true)?;
-        hash(format!("{volume}:{index}"))
-    };
-    lock_key(&key, Some(vault))
+#[cfg(test)]
+fn cache() -> PathBuf {
+    static CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            std::env::temp_dir()
+                .canonicalize()
+                .unwrap()
+                .join(format!("fstack-coordinator-tests-{}", nonce().unwrap()))
+        })
+        .clone()
 }
+
 pub fn lock_key(key: &str, forbidden: Option<&Path>) -> Result<File> {
+    lock_key_with_timeout(key, forbidden, Duration::from_millis(250))
+}
+
+fn lock_key_with_timeout(key: &str, forbidden: Option<&Path>, timeout: Duration) -> Result<File> {
     #[cfg(test)]
-    let cache = super::tests::cache();
+    let cache = cache();
     #[cfg(not(test))]
     let cache = configured_directory(
         if cfg!(windows) {
@@ -416,11 +391,11 @@ pub fn lock_key(key: &str, forbidden: Option<&Path>) -> Result<File> {
         ".cache",
     )?;
     if !cache.is_absolute() {
-        return Err("Memory locks require an absolute cache directory".into());
+        return Err("Coordinator locks require an absolute cache directory".into());
     }
-    let dir = absolute(&cache.join("fstack/memory-locks"))?;
+    let dir = absolute(&cache.join("fstack/coordinator-locks"))?;
     if forbidden.is_some_and(|path| within(&dir, path)) {
-        return Err("Local memory lock directory is inside the vault".into());
+        return Err("Local coordinator lock directory is inside the vault".into());
     }
     directory(&dir, true, true)?;
     let p = dir.join(format!("{key}.lock"));
@@ -432,20 +407,20 @@ pub fn lock_key(key: &str, forbidden: Option<&Path>) -> Result<File> {
         .open(p)
         .map_err(err)?;
     if !f.metadata().map_err(err)?.is_file() {
-        return Err("Unsafe memory lock".into());
+        return Err("Unsafe coordinator lock".into());
     }
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + timeout;
     loop {
         match fs2::FileExt::try_lock_exclusive(&f) {
             Ok(()) => return Ok(f),
             Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
-            Err(_) => return Err("Timed out waiting for the local memory lock".into()),
+            Err(_) => return Err("Timed out waiting for the local coordinator lock".into()),
         }
     }
 }
 pub fn state(dir: &Path, cwd: &Path, create: bool) -> Result<bool> {
     if within(dir, cwd) {
-        return Err("Memory hook state must be outside the workspace".into());
+        return Err("Coordinator hook state must be outside the workspace".into());
     }
     profile_state(dir, create)
 }
@@ -454,7 +429,7 @@ pub fn profile_state(dir: &Path, create: bool) -> Result<bool> {
     for p in dir.ancestors() {
         let marker = p.join(".git");
         if within(dir, &marker) || has_git_marker(&marker)? {
-            return Err("Memory hook state must be outside the workspace".into());
+            return Err("Coordinator hook state must be outside the workspace".into());
         }
     }
     directory(dir, create, true)
@@ -462,7 +437,7 @@ pub fn profile_state(dir: &Path, create: bool) -> Result<bool> {
 
 #[cfg(windows)]
 pub fn windows_info(path: &Path, directory: bool) -> Result<(u32, u64, u32)> {
-    windows_info_if_present(path, directory)?.ok_or("Memory path is unavailable".into())
+    windows_info_if_present(path, directory)?.ok_or("Coordinator path is unavailable".into())
 }
 
 #[cfg(windows)]
@@ -489,37 +464,21 @@ pub fn windows_info_if_present(path: &Path, directory: bool) -> Result<Option<(u
 }
 
 #[cfg(windows)]
-pub(super) fn windows_info_by_handle(f: &File) -> Result<Option<(u32, u64, u32)>> {
+pub fn windows_info_by_handle(f: &File) -> Result<Option<(u32, u64, u32)>> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        FileStandardInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
-        BY_HANDLE_FILE_INFORMATION, FILE_STANDARD_INFO,
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
     };
     let mut metadata = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
     if unsafe { GetFileInformationByHandle(f.as_raw_handle(), metadata.as_mut_ptr()) } == 0 {
-        return Err("Cannot inspect physical memory file".into());
+        return Err("Cannot inspect physical coordinator file".into());
     }
     let m = unsafe { metadata.assume_init() };
     if m.dwFileAttributes & 0x400 != 0 {
-        return Err("Reparse points are not allowed in memory paths".into());
+        return Err("Reparse points are not allowed in coordinator paths".into());
     }
     if m.nNumberOfLinks == 0 {
-        // SQLite can unlink its rollback journal after we open it but before we inspect it.
-        let mut standard = FILE_STANDARD_INFO::default();
-        if unsafe {
-            GetFileInformationByHandleEx(
-                f.as_raw_handle(),
-                FileStandardInfo,
-                (&raw mut standard).cast(),
-                size_of::<FILE_STANDARD_INFO>() as u32,
-            )
-        } == 0
-        {
-            return Err("Cannot inspect physical memory file".into());
-        }
-        if standard.DeletePending && standard.NumberOfLinks == 0 && !standard.Directory {
-            return Ok(None);
-        }
+        return Err("Coordinator file is no longer linked".into());
     }
     Ok(Some((
         m.dwVolumeSerialNumber,

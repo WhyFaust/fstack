@@ -16,14 +16,8 @@ import unittest_check
 
 ROOT = Path(__file__).resolve().parents[3]
 PYTHON_AQA_ORACLE = "oracle.py"
-PYTHON_AQA_SOURCES = ["dispatch.py", "checks.py"]
-# Путь, класс и модули решения задаёт runner. Банк выбирает только проверку.
-ORACLES = {
-    "scripts/tests/test_memory_store.py": ("scripts.tests.test_memory_store.MemoryStoreTests", ("memory_store",)),
-    "scripts/tests/test_memory_hooks.py": ("scripts.tests.test_memory_hooks.MemoryHookTests",
-                                           ("memory", "memory_store", "hook_spool")),
-    PYTHON_AQA_ORACLE: ("oracle.DispatchContractTests", ("checks", "dispatch")),
-}
+PYTHON_AQA_CLASS = "oracle.DispatchContractTests"
+PYTHON_AQA_MODULES = ("checks", "dispatch")
 
 
 def check_storage(directory: Path) -> None:
@@ -106,24 +100,19 @@ def cases(bank: Path) -> list[dict]:
 
 
 def oracle_test(case: dict) -> tuple[str, str, tuple[str, ...]]:
-    path = case["oracle_file"]
-    if path not in ORACLES:
+    if case["oracle_file"] != PYTHON_AQA_ORACLE:
         raise ValueError("Неизвестный проверяющий модуль")
-    qualified_class, candidate_modules = ORACLES[path]
-    if not re.fullmatch(re.escape(qualified_class) + r"\.test_[a-z0-9_]+", case["test"]):
+    if not re.fullmatch(re.escape(PYTHON_AQA_CLASS) + r"\.test_[a-z0-9_]+", case["test"]):
         raise ValueError("Неизвестный формат проверки")
-    return qualified_class.rsplit(".", 1)[1], case["test"].rsplit(".", 1)[1], candidate_modules
+    return PYTHON_AQA_CLASS.rsplit(".", 1)[1], case["test"].rsplit(".", 1)[1], PYTHON_AQA_MODULES
 
 
 def materialize(repo: Path, case: dict, target: Path, reference: bool = False):
     revision = case["reference"] if reference else case["base"]
-    if case["oracle_file"] == PYTHON_AQA_ORACLE:
-        if git(repo, "cat-file", "-t", revision).strip() != b"tree":
-            raise ValueError("Сценарий Python/AQA требует Git SHA дерева")
-        return extract(repo, revision, target, PYTHON_AQA_SOURCES)
-    if resolve(repo, revision) != revision:
-        raise ValueError("Исторический случай требует Git SHA коммита")
-    return extract(repo, revision, target, ["."])
+    _, _, modules = oracle_test(case)
+    if git(repo, "cat-file", "-t", revision).strip() != b"tree":
+        raise ValueError("Сценарий Python/AQA требует Git SHA дерева")
+    return extract(repo, revision, target, [f"{module}.py" for module in modules])
 
 
 def grade(repo: Path, case: dict, workspace: Path, command_prefix: list[str] = (), timeout: int = 90,

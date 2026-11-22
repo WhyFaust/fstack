@@ -19,9 +19,9 @@ import verdicts
 
 class EvaluationTests(unittest.TestCase):
     def test_corpus_rejects_failure_from_an_unrelated_missing_helper(self):
-        case = {"id": "large-library", "split": "development",
-                "before_failure": ["StoreError: Memory file is too large"]}
-        unrelated = {"status": "fail", "output": "AttributeError: module has no attribute ensure_library"}
+        case = {"id": "python-manifest-fails-as-unit", "split": "development",
+                "before_failure": [" : MANIFEST_DRAINS_SIBLING"]}
+        unrelated = {"status": "fail", "output": "AttributeError: module 'dispatch' has no attribute 'issue_manifest'"}
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(corpus, "cases", return_value=[case]), \
                 patch.object(corpus, "materialize"), \
@@ -159,22 +159,22 @@ class EvaluationTests(unittest.TestCase):
                 self.assertEqual(corpus.grade(root, case, root)["status"], "fail")
 
     def test_grade_uses_saved_source_instead_of_solver_bytecode(self):
-        case = {"id": "cache", "prompt": "Исправь реализацию", "oracle_file": "scripts/tests/test_memory_store.py",
-                "reference": "ref", "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_one",
+        case = {"id": "cache", "prompt": "Исправь реализацию", "oracle_file": "oracle.py",
+                "reference": "ref", "test": "oracle.DispatchContractTests.test_one",
                 "split": "control", "before_failure": []}
         oracle = b'''import unittest, sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-import implementation
-class MemoryStoreTests(unittest.TestCase):
-    def test_one(self): self.assertEqual(implementation.answer, 42)
+sys.path.insert(0, str(Path(__file__).parent))
+import dispatch
+class DispatchContractTests(unittest.TestCase):
+    def test_one(self): self.assertEqual(dispatch.answer, 42)
 '''
         def materialize(repo, case, target, reference=False):
             target.mkdir(parents=True)
-            (target / "implementation.py").write_text("answer = 42\n", encoding="utf-8")
+            (target / "dispatch.py").write_text("answer = 42\n", encoding="utf-8")
 
         def solve(executable, home, workspace, *args):
-            source = workspace / "implementation.py"
+            source = workspace / "dispatch.py"
             py_compile.compile(str(source), invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
             source.write_text("answer = 0\n", encoding="utf-8")
             return {"status": "completed"}

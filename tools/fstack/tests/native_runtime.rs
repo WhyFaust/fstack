@@ -184,13 +184,12 @@ fn explicit_profile_and_cache_work_without_a_home_directory() {
     let root = temp.path().canonicalize().unwrap();
     let profile = root.join("profile");
     let cache = root.join("cache");
-    let vault = root.join("vault");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_fstack"))
+    let project = root.join("project");
+    fs::create_dir(&project).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fstack"))
         .arg("--package")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-        .args(["memory", "vault", "--set"])
-        .arg(&vault)
+        .args(["hook", "UserPromptSubmit"])
         .env_remove("HOME")
         .env_remove("USERPROFILE")
         .env("CODEX_HOME", &profile)
@@ -202,15 +201,33 @@ fn explicit_profile_and_cache_work_without_a_home_directory() {
             },
             &cache,
         )
-        .output()
+        .current_dir(&project)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    let input = json!({"hook_event_name":"UserPromptSubmit","cwd":project,"session_id":"profile","turn_id":"turn","prompt":"/faust-mode"});
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(profile.join("fstack/memory/vault.json").is_file());
-    assert!(cache.join("fstack/memory-locks").is_dir());
+    let output: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(output["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("включён faust-mode"));
+    assert!(profile.join("fstack/coordinator/sessions").is_dir());
+    assert!(cache.join("fstack/coordinator-locks").is_dir());
+    assert!(!profile.join("fstack/memory").exists());
 }
 
 #[cfg(windows)]
@@ -225,25 +242,6 @@ fn windows_shells_preserve_hook_directory_and_utf8() {
     runtime.root = package;
     runtime.project = base.join("Проект & пример [2]");
     fs::create_dir(&runtime.project).unwrap();
-    let vault = base.join("vault");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    runtime.json(
-        &[
-            "memory",
-            "init",
-            "--repo",
-            runtime.project.to_str().unwrap(),
-            "--vault",
-            vault.to_str().unwrap(),
-            "--project",
-            "test",
-            "--mode",
-            "auto",
-        ],
-        None,
-    );
-    let known=runtime.json(&["memory","remember"],Some(json!({"kind":"preference","title":"Кварцевит","body":"Кварцевит служит контрольным словом."})));
-    let id = known["id"].as_str().unwrap();
     let manifest: Value =
         serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
     let event = "UserPromptSubmit";
@@ -297,7 +295,7 @@ fn windows_shells_preserve_hook_directory_and_utf8() {
             .as_str()
             .unwrap_or_else(|| panic!("{name}: {response}"));
         assert!(
-            context.contains(id) && context.contains("Память"),
+            context.contains("включён faust-mode") && context.contains("Пакет & пример [1]"),
             "{name}: {context}"
         );
     }
@@ -308,719 +306,59 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
     let runtime = Runtime::new();
     runtime.call(&["check-package", runtime.root.to_str().unwrap()], None);
     assert!(!runtime.codex_home.exists());
-    let vault = runtime.root.parent().unwrap().join("vault");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    runtime.json(
-        &[
-            "memory",
-            "init",
-            "--vault",
-            vault.to_str().unwrap(),
-            "--repo",
-            runtime.project.to_str().unwrap(),
-            "--project",
-            "native",
-            "--mode",
-            "auto",
-        ],
-        None,
-    );
-    let saved = runtime.json(&["memory", "remember"], Some(json!({"kind":"decision","title":"Heliotrope runtime","body":"Use the bundled native runtime for this project."})));
-    let id = saved["id"].as_str().unwrap();
-    let hits = runtime.json(&["memory", "search", "Heliotrope"], None);
-    assert_eq!(hits.as_array().unwrap().len(), 1);
-    assert_eq!(hits[0]["id"], id);
-    runtime.json(&["memory", "forget", id], None);
-    assert!(runtime
-        .json(&["memory", "search", "Heliotrope"], None)
-        .as_array()
-        .unwrap()
-        .is_empty());
-}
-
-#[test]
-#[cfg(unix)]
-fn exec_command_skip_with_literal_paths_finishes_on_first_stop() {
-    let mut runtime = Runtime::from_temp(tempfile::tempdir_in("/tmp").unwrap());
-    let cache = runtime.runtime_cache();
-    fs::create_dir_all(&cache).unwrap();
-    let cached = cache.join(runtime.binary.file_name().unwrap());
-    fs::rename(&runtime.binary, &cached).unwrap();
-    runtime.binary = cached;
-    let vault = runtime.root.parent().unwrap().join("vault");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    runtime.json(
-        &[
-            "memory",
-            "init",
-            "--vault",
-            vault.to_str().unwrap(),
-            "--repo",
-            runtime.project.to_str().unwrap(),
-            "--project",
-            "exec",
-        ],
-        None,
-    );
-    let hooks: Value =
-        serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
-    let event = |name: &str, fields: Value| {
-        let mut payload = json!({"hook_event_name":name,"session_id":"exec-session","turn_id":"skip-turn",
-            "cwd":runtime.project,"permission_mode":"default","transcript_path":null});
-        payload
-            .as_object_mut()
-            .unwrap()
-            .extend(fields.as_object().unwrap().clone());
-        runtime.hook(&hooks["hooks"][name][0]["hooks"][0], Some(payload))
-    };
-    let issued = event("UserPromptSubmit", json!({"prompt":"Объясни результат"}));
-    let context = issued["hookSpecificOutput"]["additionalContext"]
+    let output = runtime.json(&["hook", "UserPromptSubmit"], Some(json!({
+        "hook_event_name":"UserPromptSubmit","cwd":runtime.project,"session_id":"relocated","turn_id":"turn","prompt":"/faust-mode"})));
+    let context = output["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    let token = regex::Regex::new(r"memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})")
-        .unwrap()
-        .captures(context)
-        .unwrap()
-        .get(1)
-        .unwrap()
-        .as_str();
-    let command = format!(
-        "{} --package {} memory stage --turn {token} --skip",
-        runtime.binary.display(),
-        runtime.root.display()
-    );
-    let receipt = runtime.run(Command::new("/bin/sh").args(["-c", &command]), None);
-    assert_eq!(receipt.trim(), "{\"staged\": true}");
-    let post = |command: &str| {
-        json!({"tool_name":"Bash","tool_use_id":"call-exec",
-        "tool_input":{"command":command},"tool_response":receipt})
-    };
-    event("PostToolUse", post(&format!("{command}; true")));
-    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 0);
-    event("PostToolUse", post(&command));
-    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
-    assert_eq!(event("Stop", json!({"stop_hook_active":false})), json!({}));
-    assert_eq!(
-        runtime.json(&["memory", "diagnostics"], None)["phase"],
-        "skipped"
-    );
+    assert!(context.contains(
+        runtime
+            .root
+            .join("skills/faust-mode/SKILL.md")
+            .to_str()
+            .unwrap()
+    ));
+    assert!(context.contains("model-check —"));
+    assert!(!runtime.codex_home.join("fstack/memory").exists());
 }
 
 #[test]
-fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() {
-    let mut runtime = Runtime::new();
-    let package = runtime.root.with_file_name("package $HOME's `docs`");
-    fs::rename(&runtime.root, &package).unwrap();
-    runtime.binary = package
-        .join("bin")
-        .join(runtime.binary.file_name().unwrap());
-    runtime.root = package;
-    runtime.codex_home = runtime.codex_home.with_file_name("profile $value's `data`");
-    let cache = runtime.runtime_cache();
-    fs::create_dir_all(&cache).unwrap();
-    let cached = cache.join(runtime.binary.file_name().unwrap());
-    fs::rename(&runtime.binary, &cached).unwrap();
-    runtime.binary = cached;
-    let vault = runtime.root.parent().unwrap().join("vault");
-    let offline = vault.with_file_name("offline");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    runtime.json(
-        &[
-            "memory",
-            "init",
-            "--vault",
-            vault.to_str().unwrap(),
-            "--repo",
-            runtime.project.to_str().unwrap(),
-            "--project",
-            "native",
-        ],
-        None,
-    );
-    let event = |name: &str, session: &str, turn: &str, fields: Value| {
-        let mut payload = json!({"hook_event_name":name, "session_id":session, "turn_id":turn,
-            "cwd":runtime.project, "model":"codex", "permission_mode":"default",
-            "transcript_path":null});
-        payload
-            .as_object_mut()
-            .unwrap()
-            .extend(fields.as_object().unwrap().clone());
-        runtime.json(&["memory", "hook", name], Some(payload))
+fn failed_disable_reports_only_a_single_turn_choice_through_the_cli() {
+    let runtime = Runtime::new();
+    let submit = |prompt| {
+        runtime.json(&["hook", "UserPromptSubmit"], Some(json!({
+        "hook_event_name":"UserPromptSubmit","cwd":runtime.project,"session_id":"locked-mode","turn_id":"turn","prompt":prompt
+    })))
     };
-    let stop = || json!({"stop_hook_active":false, "last_assistant_message":"Готово."});
-    fs::rename(&vault, &offline).unwrap();
-    let prompt =
-        json!({"prompt":"Поправка на будущее. Для проверок проекта используй uv run pytest."});
-    let stage = |turn: &str, predecessor: Option<&str>, body: &str, single_quoted_paths| {
-        let issued = event("UserPromptSubmit", "one", turn, prompt.clone());
-        let context = issued["hookSpecificOutput"]["additionalContext"]
+    let text = |result: &Value| {
+        result["hookSpecificOutput"]["additionalContext"]
             .as_str()
-            .unwrap();
-        let pattern = regex::Regex::new(
-            r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
-        )
-        .unwrap();
-        let captures = pattern.captures(context).unwrap();
-        let mut command = if cfg!(windows) && single_quoted_paths {
-            let literal_path = |path: &Path| {
-                path.canonicalize()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .replace('\'', "''")
-            };
-            format!(
-                "& '{}' --package '{}' memory stage --turn {} --correction 'Запуск тестов' '{body}'",
-                literal_path(&runtime.binary),
-                literal_path(&runtime.root),
-                &captures[2]
-            )
-        } else {
-            format!(r#"{} --correction "Запуск тестов" "{body}""#, &captures[1])
-        };
-        if let Some(id) = predecessor {
-            command.push_str(&format!(" --supersedes {id}"));
-        }
-        let mut shell = if cfg!(windows) {
-            let mut exe = Command::new("powershell");
-            exe.args(["-NoProfile", "-NonInteractive", "-Command"]);
-            exe
-        } else {
-            let mut exe = Command::new("/bin/sh");
-            exe.arg("-c");
-            exe
-        };
-        let output = shell
-            .arg(&command)
-            .current_dir(&runtime.project)
-            .env("CODEX_HOME", &runtime.codex_home)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let receipt = String::from_utf8(output.stdout).unwrap();
-        assert_eq!(receipt.trim(), "{\"staged\": true}");
-        event(
-            "PostToolUse",
-            "one",
-            turn,
-            json!({"tool_name":"Bash",
-              "tool_use_id":"call-native-stage", "tool_input":{"command":command},
-              "tool_response":receipt}),
-        );
+            .unwrap()
+            .to_owned()
     };
-    let rule = "В разделе «Проверки» запускай uv run pytest.";
-    stage("offline", None, rule, false);
-    assert!(event("Stop", "one", "offline", stop())["systemMessage"].is_string());
-    let diagnostics = || runtime.json(&["memory", "diagnostics"], None);
-    assert_eq!(diagnostics()["pending"], 1);
-    fs::rename(&offline, &vault).unwrap();
-    let search = || runtime.json(&["memory", "search", "pytest"], None);
-    assert_eq!(search(), json!([]));
-    event("UserPromptSubmit", "two", "on", json!({"prompt":"pytest"}));
-    event("Stop", "two", "on", stop());
-    assert_eq!(search(), json!([]));
-    event("Stop", "one", "offline", stop());
-    let entry = search()[0].clone();
-    assert_eq!(entry["body"], rule);
-    assert_eq!(entry["kind"], "correction");
-    assert_eq!(entry["session_id"], "one");
-    assert_eq!(entry["turn_id"], "offline");
-    assert_eq!(diagnostics()["pending"], 0);
-    stage("repeat", None, rule, false);
-    event("Stop", "one", "repeat", stop());
-    assert_eq!(search().as_array().unwrap().len(), 1);
-    let old_id = entry["id"].as_str().unwrap();
-    let new_rule = "Для проверок проекта используй uv run pytest -q.";
-    stage("revised", Some(old_id), new_rule, true);
-    event("Stop", "one", "revised", stop());
-    let latest = search();
-    assert_eq!(latest.as_array().unwrap().len(), 1);
-    assert_eq!(latest[0]["body"], new_rule);
-    assert_eq!(latest[0]["supersedes"], old_id);
-    let recall = event(
-        "UserPromptSubmit",
-        "two",
-        "question",
-        json!({"prompt":"pytest"}),
-    );
-    assert!(recall["hookSpecificOutput"]["additionalContext"]
-        .as_str()
+    assert!(text(&submit("/faust-mode")).contains("включён faust-mode"));
+    let directory = runtime.user_home.join("cache/fstack/coordinator-locks");
+    let path = fs::read_dir(directory)
         .unwrap()
-        .contains(latest[0]["id"].as_str().unwrap()));
-    let context = recall["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap();
-    assert!(context.contains(" show ID"));
-    assert!(context.contains("Faust-mode выключен"));
-    assert!(!context.contains("SKILL.md"));
-    let (command, token) = regex::Regex::new(
-        r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
-    )
-    .unwrap()
-    .captures(context)
-    .map(|m| (format!("{} --skip", &m[1]), m[2].to_owned()))
-    .unwrap();
-    let receipt = runtime.call(&["memory", "stage", "--turn", &token, "--skip"], None);
-    event(
-        "PostToolUse",
-        "two",
-        "question",
-        json!({"tool_name":"Bash","tool_use_id":"call-skip","tool_input":{"command":command},"tool_response":receipt}),
-    );
-    assert_eq!(event("Stop", "two", "question", stop()), json!({}));
-    assert_eq!(search(), latest);
-}
-
-#[test]
-fn codex_task_records_a_verified_project_decision_without_user_input() {
-    let runtime = Runtime::new();
-    let vault = runtime.root.parent().unwrap().join("vault");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    runtime.json(&["memory", "vault", "--set", vault.to_str().unwrap()], None);
-    let session = "00000000-0000-7000-8000-000000000001";
-    let turn = "00000000-0000-7000-8000-000000000002";
-    let parent = "00000000-0000-7000-8000-000000000003";
-    let follow_up = "00000000-0000-7000-8000-000000000004";
-    let plan = "00000000-0000-7000-8000-000000000005";
-    let switch_to_plan = "00000000-0000-7000-8000-000000000006";
-    let inter_agent = "00000000-0000-7000-8000-000000000007";
-    let dir = runtime.codex_home.join("sessions/2026/01/01");
-    fs::create_dir_all(&dir).unwrap();
-    let transcript = dir.join(format!("rollout-2026-01-01T00-00-00-{session}.jsonl"));
-    let mut rollout = fs::File::create(&transcript).unwrap();
-    let meta = json!({"type":"session_meta","payload":{"id":session,"source":"vscode","originator":"Codex Desktop"}});
-    writeln!(rollout, "{meta}").unwrap();
-    let write_turn = |rollout: &mut fs::File, turn: &str, trigger: &str, mode: &str| {
-        for item in [
-            json!({"type":"event_msg","payload":{"type":"task_started","turn_id":turn,"root_turn_id":parent,
-               "collaboration_mode_kind":"default","turn_attribution":{"turn_id":turn,"turn_trigger":trigger,
-               "parent_turn_id":parent,"root_turn_id":parent,"initiating_agent_path":null}}}),
-            json!({"type":"turn_context","payload":{"turn_id":turn,"cwd":runtime.project,"collaboration_mode":{"mode":mode}}}),
-            json!({"type":"event_msg","payload":{"type":"item_completed","item":{"type":"FunctionCallOutput"}}}),
-        ] {
-            writeln!(rollout, "{item}").unwrap();
-        }
-    };
-    write_turn(&mut rollout, turn, "app_tool_create_thread", "default");
-    let event = |name: &str, turn: &str, fields: Value| {
-        let mut payload = json!({"hook_event_name":name,"session_id":session,"turn_id":turn,
-            "cwd":runtime.project,"permission_mode":"default","transcript_path":transcript});
-        payload
-            .as_object_mut()
-            .unwrap()
-            .extend(fields.as_object().unwrap().clone());
-        runtime.json(&["memory", "hook", name], Some(payload))
-    };
-    let stop =
-        |active| json!({"stop_hook_active":active,"last_assistant_message":"Проверил итог."});
-    let project_copy = runtime.project.join(transcript.file_name().unwrap());
-    fs::copy(&transcript, &project_copy).unwrap();
-    let mut untrusted = stop(false);
-    untrusted["transcript_path"] = json!(project_copy);
-    assert_eq!(event("Stop", turn, untrusted), json!({}));
-    assert_eq!(
-        runtime.json(&["memory", "status"], None),
-        json!({"enabled":false})
-    );
-    let startup = event("SessionStart", turn, json!({"source":"startup"}));
-    assert!(startup["hookSpecificOutput"]["additionalContext"]
-        .as_str()
+        .next()
         .unwrap()
-        .contains("memory search"));
-    let initial = event("Stop", turn, stop(false));
-    assert_eq!(initial["decision"], "block");
-    let reason = initial["reason"].as_str().unwrap();
-    assert!(!reason.contains("--turn"));
-    assert!(!reason.contains("SKILL.md"));
-    let prefix =
-        regex::Regex::new(r#"((?:& )?"[^"\n]+"(?: --package "[^"\n]+")? memory report) --payload"#)
-            .unwrap()
-            .captures(reason)
-            .unwrap()[1]
-            .to_owned();
-    let report = json!({"action":"remember","candidate":{"kind":"decision","title":"Кварцевый регламент",
-        "body":"Запускай проверку кварцевого регламента до упаковки.","source":"Проверенный результат поручения"}});
-    let encoded = runtime.json(&["memory", "pack"], Some(report));
-    let encoded = encoded.as_str().unwrap();
-    let receipt = runtime.call(&["memory", "report", "--payload", encoded], None);
-    assert_eq!(event("Stop", turn, stop(false)), json!({}));
-    let post = json!({"tool_name":"Bash","tool_use_id":"call-report",
-        "tool_input":{"command":format!("{prefix} --payload {encoded}")},"tool_response":receipt});
-    let search = || runtime.json(&["memory", "search", "кварцевого"], None);
-    assert_eq!(event("PostToolUse", parent, post.clone()), json!({}));
-    assert_eq!(event("PostToolUse", turn, post), json!({}));
-    assert_eq!(search(), json!([]));
-    assert_eq!(event("Stop", turn, stop(true)), json!({}));
-    let records = search();
-    assert_eq!(records.as_array().unwrap().len(), 1);
-    assert_eq!(records[0]["title"], "Кварцевый регламент");
-    assert_eq!(records[0]["turn_id"], turn);
-    assert_eq!(records[0]["session_id"], session);
-    assert_eq!(records[0]["status"], "memory");
-    let binding = runtime.json(&["memory", "status"], None);
-    let path = vault
-        .join("Codex Memory/Projects")
-        .join(binding["project"].as_str().unwrap())
-        .join("Records")
-        .join(format!("{}.md", records[0]["id"].as_str().unwrap()));
-    assert!(fs::read_to_string(path)
         .unwrap()
-        .contains("Запускай проверку кварцевого регламента"));
-    assert_eq!(event("Stop", turn, stop(false)), json!({}));
-    assert_eq!(search(), records);
-
-    write_turn(&mut rollout, follow_up, "app_tool_send_message", "default");
-    assert_eq!(event("Stop", follow_up, stop(false))["decision"], "block");
-    let receipt = runtime.call(&["memory", "report", "--skip"], None);
-    let skip = json!({"tool_name":"Bash","tool_use_id":"call-skip",
-        "tool_input":{"command":format!("{prefix} --skip")},"tool_response":receipt});
-    assert_eq!(event("PostToolUse", follow_up, skip.clone()), json!({}));
-    assert_eq!(event("Stop", follow_up, stop(true)), json!({}));
-    assert_eq!(
-        runtime.json(&["memory", "diagnostics"], None)["phase"],
-        "skipped"
-    );
-    assert_eq!(search(), records);
-
-    write_turn(&mut rollout, inter_agent, "remote_ios", "default");
-    let wake =
-        json!({"type":"inter_agent_communication_metadata","payload":{"trigger_turn":false}});
-    let message = json!({"type":"response_item","payload":{"type":"agent_message",
-        "author":"/root/worker","recipient":"/root","content":[]}});
-    writeln!(rollout, "{wake}\n{message}").unwrap();
-    assert_eq!(event("Stop", inter_agent, stop(false))["decision"], "block");
-    assert_eq!(event("PostToolUse", inter_agent, skip.clone()), json!({}));
-    assert_eq!(event("Stop", inter_agent, stop(true)), json!({}));
-    assert_eq!(search(), records);
-
-    write_turn(&mut rollout, plan, "app_tool_send_message", "plan");
-    assert_eq!(event("Stop", plan, stop(false)), json!({}));
-
-    write_turn(
-        &mut rollout,
-        switch_to_plan,
-        "app_tool_send_message",
-        "default",
-    );
-    assert_eq!(
-        event("Stop", switch_to_plan, stop(false))["decision"],
-        "block"
-    );
-    assert_eq!(event("PostToolUse", switch_to_plan, skip), json!({}));
-    let plan_context = json!({"type":"turn_context","payload":{"turn_id":switch_to_plan,
-        "cwd":runtime.project,"collaboration_mode":{"mode":"plan"}}});
-    writeln!(rollout, "{plan_context}").unwrap();
-    assert_eq!(event("Stop", switch_to_plan, stop(true)), json!({}));
-    assert_eq!(
-        runtime.json(&["memory", "diagnostics"], None)["phase"],
-        "cancelled"
-    );
-    assert_eq!(search(), records);
-}
-
-#[test]
-fn desktop_hooks_use_recorded_plan_mode_and_capture_native_agent_decisions() {
-    let runtime = Runtime::new();
-    let vault = runtime.root.parent().unwrap().join("vault");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    runtime.json(
-        &[
-            "memory",
-            "init",
-            "--vault",
-            vault.to_str().unwrap(),
-            "--repo",
-            runtime.project.to_str().unwrap(),
-            "--project",
-            "native",
-        ],
-        None,
-    );
-    let parent = "00000000-0000-7000-8000-000000000011";
-    let child = "00000000-0000-7000-8000-000000000012";
-    let parent_turn = "00000000-0000-7000-8000-000000000013";
-    let child_turn = "00000000-0000-7000-8000-000000000014";
-    let plan_turn = "00000000-0000-7000-8000-000000000015";
-    let aborted_turn = "00000000-0000-7000-8000-000000000016";
-    let next_turn = "00000000-0000-7000-8000-000000000017";
-    let dir = runtime.codex_home.join("sessions/2026/01/01");
-    fs::create_dir_all(&dir).unwrap();
-    let transcript = |session| dir.join(format!("rollout-2026-01-01T00-00-00-{session}.jsonl"));
-    let write_header = |session, source: Value| {
-        let mut file = fs::File::create(transcript(session)).unwrap();
-        let meta = json!({"type":"session_meta","payload":{"id":session,"source":source,"originator":"Codex Desktop"}});
-        writeln!(file, "{meta}").unwrap();
-        file
-    };
-    let write_turn = |file: &mut fs::File, turn: &str, mode: &str| {
-        let start = json!({"type":"event_msg","payload":{"type":"task_started","turn_id":turn,"collaboration_mode_kind":mode}});
-        let context = json!({"type":"turn_context","payload":{"turn_id":turn,"cwd":runtime.project,
-            "collaboration_mode":{"mode":mode}}});
-        writeln!(file, "{start}\n{context}").unwrap();
-    };
-    let run_hook = |name: &str, session, turn, fields: Value| {
-        let mut payload = json!({"hook_event_name":name,"session_id":session,"turn_id":turn,
-             "cwd":runtime.project,"permission_mode":"default","transcript_path":transcript(session)});
-        payload
-            .as_object_mut()
-            .unwrap()
-            .extend(fields.as_object().unwrap().clone());
-        runtime.json(&["memory", "hook", name], Some(payload))
-    };
-    let mut root = write_header(parent, json!("vscode"));
-    write_turn(&mut root, plan_turn, "plan");
-    let plan = run_hook(
-        "UserPromptSubmit",
-        parent,
-        plan_turn,
-        json!({"prompt":"Нужен план"}),
-    );
-    assert!(!plan.to_string().contains("stage --turn"));
-
-    let mut agent = write_header(
-        child,
-        json!({"subagent":{"thread_spawn":{"parent_thread_id":parent,"depth":1,"agent_path":"/root/worker"}}}),
-    );
-    write_turn(&mut agent, child_turn, "default");
-    let agent_start = run_hook(
-        "SubagentStart",
-        child,
-        child_turn,
-        json!({"agent_id":child,"agent_type":"worker"}),
-    );
-    assert!(agent_start["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap()
-        .contains("memory search"));
-    let agent_stop = |continued| {
-        json!({"agent_id":child,"agent_type":"worker",
-        "transcript_path":transcript(parent),"agent_transcript_path":transcript(child),
-        "last_assistant_message":"Проверено","stop_hook_active":continued})
-    };
-    assert_eq!(
-        run_hook("SubagentStop", child, child_turn, agent_stop(false)),
-        json!({})
-    );
-    write_turn(&mut root, parent_turn, "default");
-    let request = run_hook("SubagentStop", child, child_turn, agent_stop(false));
-    assert_eq!(request["decision"], "block");
-    let prefix =
-        regex::Regex::new(r#"((?:& )?"[^"\n]+"(?: --package "[^"\n]+")? memory report) --payload"#)
-            .unwrap()
-            .captures(request["reason"].as_str().unwrap())
-            .unwrap()[1]
-            .to_owned();
-    let action = json!({"action":"remember","candidate":{"kind":"decision","title":"Гранатовая проверка",
-        "body":"Проверяй гранатовый режим при сборке.","source":"Результат теста подагента"}});
-    let encoded = runtime.json(&["memory", "pack"], Some(action));
-    let encoded = encoded.as_str().unwrap();
-    let receipt = runtime.call(&["memory", "report", "--payload", encoded], None);
-    let post = json!({"agent_id":child,"agent_type":"worker","tool_name":"Bash","tool_use_id":"agent-report",
-        "tool_input":{"command":format!("{prefix} --payload {encoded}")},"tool_response":receipt});
-    assert_eq!(run_hook("PostToolUse", child, child_turn, post), json!({}));
-    assert_eq!(
-        run_hook("SubagentStop", child, child_turn, agent_stop(true)),
-        json!({})
-    );
-    let records = runtime.json(&["memory", "search", "гранатовый"], None);
-    assert_eq!(records.as_array().unwrap().len(), 1);
-    assert_eq!(records[0]["session_id"], child);
-    assert_eq!(records[0]["turn_id"], child_turn);
-    assert_eq!(
-        run_hook("SubagentStop", child, child_turn, agent_stop(true)),
-        json!({})
-    );
-    assert_eq!(
-        runtime.json(&["memory", "search", "гранатовый"], None),
-        records
-    );
-
-    write_turn(&mut agent, aborted_turn, "default");
-    assert_eq!(
-        run_hook("SubagentStop", child, aborted_turn, agent_stop(false))["decision"],
-        "block"
-    );
-    let operation = json!({"action":"remember","candidate":{"kind":"decision","title":"Отменённая проверка",
-       "body":"Исход отменённой проверки.","source":"Результат подагента"}});
-    let encoded = runtime.json(&["memory", "pack"], Some(operation));
-    let encoded = encoded.as_str().unwrap();
-    let receipt = runtime.call(&["memory", "report", "--payload", encoded], None);
-    let interrupted_post = json!({"agent_id":child,"agent_type":"worker","tool_name":"Bash",
-        "tool_use_id":"aborted-report","tool_input":{"command":format!("{prefix} --payload {encoded}")},
-        "tool_response":receipt});
-    run_hook("PostToolUse", child, aborted_turn, interrupted_post);
-    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
-    let aborted =
-        json!({"type":"event_msg","payload":{"type":"turn_aborted","turn_id":aborted_turn}});
-    writeln!(agent, "{aborted}").unwrap();
-    write_turn(&mut agent, next_turn, "default");
-    assert_eq!(
-        run_hook("SubagentStop", child, next_turn, agent_stop(false))["decision"],
-        "block"
-    );
-    let receipt = runtime.call(&["memory", "report", "--skip"], None);
-    let skip = json!({"agent_id":child,"agent_type":"worker","tool_name":"Bash","tool_use_id":"next-report",
-        "tool_input":{"command":format!("{prefix} --skip")},"tool_response":receipt});
-    run_hook("PostToolUse", child, next_turn, skip);
-    assert_eq!(
-        run_hook("SubagentStop", child, next_turn, agent_stop(true)),
-        json!({})
-    );
-    assert_eq!(
-        runtime.json(&["memory", "diagnostics"], None)["phase"],
-        "cancelled"
-    );
-    assert_eq!(
-        runtime.json(&["memory", "search", "отменённой"], None),
-        json!([])
-    );
-}
-
-#[test]
-fn relocated_runtime_discovers_obsidian_registry_and_creates_the_project_on_demand() {
-    first_ordinary_turn(Runtime::new(), true);
-    first_ordinary_turn(Runtime::new(), false);
-}
-
-#[test]
-fn empty_git_directory_does_not_block_memory_capture() {
-    let runtime = Runtime::new();
-    fs::create_dir(runtime.project.parent().unwrap().join(".git")).unwrap();
-    first_ordinary_turn(runtime, true);
-}
-
-fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
-    let vault = runtime.root.parent().unwrap().join("My Work Vault");
-    fs::create_dir_all(vault.join(".obsidian")).unwrap();
-    let config = if cfg!(target_os = "macos") {
-        runtime.user_home.join("Library/Application Support")
-    } else {
-        runtime.user_home.join("config")
-    }
-    .join("obsidian");
-    fs::create_dir_all(&config).unwrap();
-    fs::write(
-        config.join("obsidian.json"),
-        json!({"vaults":{"local":{"path":vault,"ts":10}}}).to_string(),
-    )
-    .unwrap();
-    assert_eq!(
-        runtime.json(&["memory", "vault"], None),
-        json!({"vault":vault,"source":"obsidian"})
-    );
-    assert_eq!(
-        runtime.json(&["memory", "status"], None),
-        json!({"enabled":false})
-    );
-    assert!(!vault.join("Codex Memory").exists());
-    let event = |name: &str, turn: &str, fields: Value| {
-        let mut payload = json!({"hook_event_name":name,"session_id":"ordinary","turn_id":turn,
-              "cwd":runtime.project,"model":"codex","permission_mode":"default","transcript_path":null});
-        payload
-            .as_object_mut()
-            .unwrap()
-            .extend(fields.as_object().unwrap().clone());
-        runtime.json(&["memory", "hook", name], Some(payload))
-    };
-    let prompt = json!({"prompt":"Для проверок этого проекта всегда используй uv run pytest."});
-    let plan = event(
-        "UserPromptSubmit",
-        "explicit-plan",
-        json!({"prompt":"План","collaboration_mode":"plan"}),
-    );
-    let plan = plan["hookSpecificOutput"]["additionalContext"]
-        .as_str()
+        .path();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
         .unwrap();
-    assert!(plan.contains("Faust-mode выключен"));
-    assert!(!plan.contains("--turn"));
-    assert!(!vault.join("Codex Memory").exists());
-    let stop = || json!({"stop_hook_active":false,"last_assistant_message":"Готово."});
-    let steps = event("UserPromptSubmit", "implicit-plan", prompt.clone());
-    assert!(steps["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap()
-        .contains("ensure --turn"));
-    assert_eq!(event("Stop", "implicit-plan", stop()), json!({}));
-    assert!(!vault.join("Codex Memory").exists());
-
-    let ordinary = event("UserPromptSubmit", "first", prompt);
-    let context = ordinary["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap();
-    let ensure =
-        regex::Regex::new(r#"((?:& )?"[^"]+" memory ensure --turn ([0-9a-f]{64}\.[0-9a-f]{32}))"#)
-            .unwrap()
-            .captures(context)
-            .unwrap();
-    let command = &ensure[1];
-    let token = &ensure[2];
-    let receipt = runtime.call(&["memory", "ensure", "--turn", token], None);
-    let post = |cmd: &str, reply: &str| json!({"tool_name":"Bash","tool_use_id":"call-test","tool_input":{"command":cmd},"tool_response":reply});
-    assert_eq!(
-        event(
-            "PostToolUse",
-            "first",
-            post(&format!("{command}; true"), &receipt)
-        ),
-        json!({})
-    );
-    assert_eq!(
-        event("PostToolUse", "implicit-plan", post(command, &receipt)),
-        json!({})
-    );
-    assert!(!vault.join("Codex Memory").exists());
-    let issued = event("PostToolUse", "first", post(command, &receipt));
-    let instructions = issued["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap();
-    assert!(!instructions.contains("SKILL.md"));
-    let stage = regex::Regex::new(
-        r#"((?:& )?"[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
-    )
-    .unwrap()
-    .captures(instructions)
-    .unwrap();
-    let rule = "Для проверок этого проекта всегда используй uv run pytest.";
-    if save_correction {
-        let command = format!("{} --correction 'Тесты' '{rule}'", &stage[1]);
-        let receipt = runtime.call(
-            &[
-                "memory",
-                "stage",
-                "--turn",
-                &stage[2],
-                "--correction",
-                "Тесты",
-                rule,
-            ],
-            None,
-        );
-        event("PostToolUse", "first", post(&command, &receipt));
-    }
-    assert_eq!(event("Stop", "first", stop()), json!({}));
-    let records = runtime.json(&["memory", "search", "pytest"], None);
-    if save_correction {
-        assert_eq!(records[0]["body"], rule);
-    } else {
-        assert_eq!(records, json!([]));
-        assert_eq!(
-            runtime.json(&["memory", "diagnostics"], None)["phase"],
-            "skipped"
-        );
-    }
-    let connected = runtime.json(&["memory", "status"], None);
-    assert_eq!(connected["mode"], "auto");
-    assert_eq!(runtime.json(&["memory", "status"], None), connected);
-    assert_eq!(runtime.json(&["memory", "ensure"], None), connected);
-    assert!(vault
-        .join("Codex Memory/Projects")
-        .join(connected["project"].as_str().unwrap())
-        .join("Records")
-        .is_dir());
+    fs2::FileExt::lock_exclusive(&lock).unwrap();
+    let failed = text(&submit("/faust-mode-off"));
+    assert!(failed.contains("только на этот запрос"));
+    assert!(failed.contains("Постоянный выбор не сохранён"));
+    drop(lock);
+    assert!(text(&submit("Продолжи")).contains("включён faust-mode"));
+    let disabled = text(&submit("/faust-mode-off"));
+    assert!(disabled.contains("Faust-mode выключен"));
+    assert!(!disabled.contains("только на этот запрос"));
+    assert!(text(&submit("Продолжи")).contains("Faust-mode выключен"));
 }
 
 fn platform_target() -> &'static str {
@@ -1149,7 +487,7 @@ fn launcher_verifies_the_selected_release_asset_before_installing() {
                     $global:LASTEXITCODE = 0
                 }
                 $PSModuleAutoLoadingPreference = 'None'
-                $hook = [IO.Path]::Combine($env:PLUGIN_ROOT, 'hooks', 'memory.ps1')
+                $hook = [IO.Path]::Combine($env:PLUGIN_ROOT, 'hooks', 'coordinator.ps1')
                 & ([scriptblock]::Create([IO.File]::ReadAllText($hook))) Bootstrap
             "#)
             .env("CODEX_HOME", &runtime.codex_home)

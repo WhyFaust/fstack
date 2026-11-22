@@ -11,18 +11,13 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 toml = "0.8"
 sha2 = "0.10"
-base64 = "0.22"
-getrandom = "0.3"
-rusqlite = { version = "0.37", features = ["bundled"] }
-fs2 = "0.4"
-chrono = "0.4"
 libc = "0.2"
-unicode-casefold = "0.2"
+fs2 = "0.4"
+getrandom = "0.3"
 tempfile = "3"
 
 zip = { version = "2", default-features = false, features = ["deflate"] }
 serde = { version = "1.0", features = ["derive"] }
-rust-stemmers = "1.2.0"
 pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
