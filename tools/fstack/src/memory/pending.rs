@@ -11,6 +11,12 @@ pub enum Delivery {
     Current { first_stop: bool, confirmed: bool },
     Replay,
 }
+#[derive(Debug, PartialEq, Eq)]
+pub enum Stage {
+    Accepted,
+    Conflict,
+    Unavailable,
+}
 enum Capture {
     Prompt(Option<String>),
     Report,
@@ -36,30 +42,7 @@ pub fn token_parts(token: &str) -> Option<(&str, &str)> {
     (format::matches(r"\A[0-9a-f]{64}\z", k) && format::matches(r"\A[0-9a-f]{32}\z", n))
         .then_some((k, n))
 }
-fn ascii_json(text: &str) -> String {
-    let mut out = String::new();
-    for c in serde_json::to_string(text).unwrap().chars() {
-        if (c as u32) < 127 {
-            out.push(c)
-        } else {
-            let mut buf = [0u16; 2];
-            for u in c.encode_utf16(&mut buf) {
-                out.push_str(&format!("\\u{u:04x}"));
-            }
-        }
-    }
-    out
-}
-pub fn digest(parts: &[&str]) -> String {
-    io::hash(format!(
-        "[{}]",
-        parts
-            .iter()
-            .map(|s| ascii_json(s))
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
-}
+pub use io::digest;
 impl Pending {
     pub fn new(state: &Path, cwd: &Path) -> Self {
         Self {
@@ -206,38 +189,51 @@ impl Pending {
             && !(io::directory(&revoked, false, false)?
                 && io::info(&revoked.join(format!("{key}.{nonce}")))?.is_some()))
     }
-    fn prune(&self, dir: &Path, tokens: bool, limit: usize) -> Result<()> {
-        let entries = std::fs::read_dir(dir)
-            .map_err(io::err)?
-            .take(limit + 1)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(io::err)?;
-        let mut remaining = entries.len();
-        for entry in entries {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !(if tokens {
-                token_parts(&name).is_some()
-            } else {
-                format::id(&name).is_ok()
-            }) {
-                continue;
-            }
-            let meta = entry.metadata().map_err(io::err)?;
-            if !entry.file_type().map_err(io::err)?.is_file() {
-                continue;
-            }
-            if SystemTime::now()
-                .duration_since(meta.modified().map_err(io::err)?)
+    fn lock_markers(&self) -> Result<std::fs::File> {
+        let key = digest(&[&io::normalized(&self.state)]);
+        io::lock_key(&format!("pending-markers-{}", &key[..2]), None)
+    }
+    fn prune_markers(&self) -> Result<()> {
+        let sweep = self.state.join("pending-marker-sweep");
+        let now = SystemTime::now();
+        let older_than = |metadata: std::fs::Metadata, seconds| -> Result<bool> {
+            Ok(now
+                .duration_since(metadata.modified().map_err(io::err)?)
                 .unwrap_or_default()
-                > Duration::from_secs(3601)
-                && io::delete(&entry.path())?
-            {
-                remaining -= 1
+                > Duration::from_secs(seconds))
+        };
+        if let Some(metadata) = io::info(&sweep)? {
+            if !older_than(metadata, 60)? {
+                return Ok(());
             }
         }
-        if remaining >= limit {
-            return Err("Pending memory marker limit exceeded".into());
+        for (folder, tokens) in [
+            ("pending-generations", false),
+            ("pending-revocations", true),
+        ] {
+            let dir = self.state.join(folder);
+            if !io::directory(&dir, false, false)? {
+                continue;
+            }
+            for entry in std::fs::read_dir(&dir).map_err(io::err)? {
+                let entry = entry.map_err(io::err)?;
+                let name = entry.file_name();
+                let valid = name.to_str().is_some_and(|name| {
+                    if tokens {
+                        token_parts(name).is_some()
+                    } else {
+                        format::id(name).is_ok()
+                    }
+                });
+                if valid
+                    && entry.file_type().map_err(io::err)?.is_file()
+                    && older_than(entry.metadata().map_err(io::err)?, 7200)?
+                {
+                    io::delete(&entry.path())?;
+                }
+            }
         }
+        io::write(&sweep, "", true, None)?;
         Ok(())
     }
     pub fn invalidate(&self, key: &str) -> Result<Option<String>> {
@@ -245,6 +241,7 @@ impl Pending {
             return Ok(None);
         }
         let _turn_lock = self.lock_turn(key)?;
+        let _markers = self.lock_markers()?;
         let Some(previous) = self.generation(key)? else {
             return Ok(None);
         };
@@ -255,7 +252,6 @@ impl Pending {
         let marker = dir.join(format!("{key}.{previous}"));
         if !io::directory(&dir, false, false)? || io::info(&marker)?.is_none() {
             io::directory(&dir, true, true)?;
-            self.prune(&dir, true, 1024)?;
             io::write(&marker, "", false, None)?;
             if io::info(&marker)?.is_none() {
                 return Err("Missing pending memory revocation marker".into());
@@ -348,7 +344,8 @@ impl Pending {
                 io::state(&self.state, &self.cwd, true)?;
                 let dir = self.state.join("pending-generations");
                 io::directory(&dir, true, true)?;
-                self.prune(&dir, false, 256)?;
+                let _markers = self.lock_markers()?;
+                self.prune_markers()?;
                 let n = io::nonce()?;
                 if !io::write(&dir.join(key), &n, false, None)? {
                     return Err("Memory turn was replaced by a newer input".into());
@@ -453,18 +450,22 @@ impl Pending {
             params![key, nonce, scope, now(), LEGACY_REVIEW, REPORT, epoch], |row| row.get(0)
         ).map_err(io::err)
     }
-    pub fn stage(&self, key: &str, token: &str, scope: &str, action: &Value) -> Result<bool> {
+    pub fn stage(&self, key: &str, token: &str, scope: &str, action: &Value) -> Result<Stage> {
         let Some((k, nonce)) = token_parts(token) else {
-            return Ok(false);
+            return Ok(Stage::Unavailable);
         };
-        if k != key || !self.current(key, nonce)? {
-            return Ok(false);
+        if k != key {
+            return Ok(Stage::Unavailable);
+        }
+        let _turn_lock = self.lock_turn(key)?;
+        if !self.current(key, nonce)? {
+            return Ok(Stage::Unavailable);
         }
         let Some(conn) = self.connection(false, false)? else {
-            return Ok(false);
+            return Ok(Stage::Unavailable);
         };
         if !self.current(key, nonce)? {
-            return Ok(false);
+            return Ok(Stage::Unavailable);
         }
         let serialized = action.to_string();
         let changed=conn.execute("UPDATE pending SET action=? WHERE turn=? AND nonce=? AND scope=? AND expires>=? AND (action IS NULL OR action=? OR action=?)",params![serialized,key,nonce,scope,now(),serialized,LEGACY_REVIEW]).map_err(io::err)?;
@@ -477,7 +478,13 @@ impl Pending {
             Self::phase(&conn, scope, "stage")?;
         }
         conn.execute_batch("COMMIT").map_err(io::err)?;
-        Ok(conflict)
+        Ok(if changed != 0 {
+            Stage::Accepted
+        } else if conflict {
+            Stage::Conflict
+        } else {
+            Stage::Unavailable
+        })
     }
     pub fn accept_report(&self, key: &str, scope: &str, action: &Value) -> Result<bool> {
         let Some(nonce) = self.generation(key)? else {

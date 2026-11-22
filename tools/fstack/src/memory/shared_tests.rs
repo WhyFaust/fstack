@@ -1,6 +1,10 @@
 use super::*;
 use crate::memory::execute as cli;
-use std::path::PathBuf;
+use fmem::memory::{
+    shared::{for_recall, remember},
+    Binding, Store,
+};
+use std::{fs, path::PathBuf};
 
 struct Fixture {
     base: tempfile::TempDir,
@@ -13,12 +17,7 @@ impl Fixture {
         let base = tempfile::tempdir_in(temp_root).unwrap();
         let vault = base.path().join("vault");
         fs::create_dir_all(vault.join(".obsidian")).unwrap();
-        let package = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let store = Store::new(Some(base.path().join("state")), package).unwrap();
+        let store = Store::new(base.path().join("state")).unwrap();
         Self { base, vault, store }
     }
     fn project(&self, name: &str, mode: &str) -> (PathBuf, Binding) {
@@ -180,6 +179,7 @@ fn new_chat_in_another_project_receives_only_scoped_approved_ids() {
     let hook = |cwd: &Path, prompt: &str, mode: &str| {
         crate::memory::hooks::hook(
             &f.store,
+            tests::package(),
             "UserPromptSubmit",
             &payload(cwd, prompt, mode),
             cwd,
@@ -211,7 +211,7 @@ fn staged_shared_action_waits_for_stop_and_retries_without_duplicates() {
         fields["session_id"] = json!("session");
         fields["turn_id"] = json!(turn);
         fields["hook_event_name"] = json!(event);
-        crate::memory::hooks::hook(&f.store, event, &fields, &cwd).unwrap()
+        crate::memory::hooks::hook(&f.store, tests::package(), event, &fields, &cwd).unwrap()
     };
     let mut request = json!({"action":"remember","scope":"shared","candidate":preference("Всегда прикладывай журнал.")});
     request["candidate"]["kind"] = json!("correction");

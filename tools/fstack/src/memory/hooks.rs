@@ -1,8 +1,8 @@
 use super::{
-    action, codex_task, correction, decode, format, io,
+    codex_task, correction, decode, format, io,
     pending::{self, Delivery, Pending},
     report_action, scope as project_scope,
-    store::{Binding, Store, WriteOutcome},
+    store::{Binding, Store},
     Result,
 };
 use serde_json::{json, Value};
@@ -257,7 +257,12 @@ fn posted(payload: &Value, package: &Path) -> Result<Option<Posted>> {
     let response = payload["tool_response"].as_str().map(str::trim);
     if !matches!(
         response,
-        Some("{\"ready\":true}" | "{\"staged\": true}" | "{\"reported\":true}")
+        Some(
+            "{\"ready\":true}"
+                | "{\"staged\": true}"
+                | "{\"validated\":true}"
+                | "{\"reported\":true}"
+        )
     ) {
         return Ok(None);
     }
@@ -285,14 +290,17 @@ fn posted(payload: &Value, package: &Path) -> Result<Option<Posted>> {
     if pending::token_parts(token).is_none() {
         return Ok(None);
     }
-    let value = if arguments == "--skip" {
-        Some(json!({"action":"skip"}))
-    } else if let Some(encoded) = arguments.strip_prefix("--payload ") {
-        decode(encoded).ok()
-    } else {
+    if response == Some("{\"validated\":true}") || arguments.starts_with("--correction ") {
         return Ok(arguments
             .strip_prefix("--correction ")
             .and_then(|fields| literal_correction(token, fields)));
+    }
+    let value = if arguments == "--skip" {
+        Some(json!({"action":"skip"}))
+    } else {
+        arguments
+            .strip_prefix("--payload ")
+            .and_then(|encoded| decode(encoded).ok())
     };
     Ok(value.map(|v| Posted::Stage(token.into(), v)))
 }
@@ -333,7 +341,13 @@ fn literal_correction(token: &str, fields: &str) -> Option<Posted> {
         Err(_) => retry(),
     })
 }
-pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<Value> {
+pub fn hook(
+    store: &Store,
+    package: &Path,
+    event: &str,
+    payload: &Value,
+    cwd: &Path,
+) -> Result<Value> {
     let start = matches!(event, "SessionStart" | "SubagentStart");
     let stop = matches!(event, "Stop" | "SubagentStop");
     let child = payload.get("agent_id").is_some() || payload.get("agent_type").is_some();
@@ -377,7 +391,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     let stateless = || match event {
         "UserPromptSubmit" if command == Some(true) => extra(
             event,
-            activation(&store.package, explicit_plan, Activation::SingleTurn),
+            activation(package, explicit_plan, Activation::SingleTurn),
         ),
         "UserPromptSubmit" => extra(event, INACTIVE.into()),
         "SessionStart" => extra(event, SESSION_START.into()),
@@ -405,7 +419,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         let mut context = if !child
             && previous_chat_mode(store, cwd, session, None)?.is_some_and(|mode| mode != MANUAL_OFF)
         {
-            activation(&store.package, plan, Activation::Restore)
+            activation(package, plan, Activation::Restore)
         } else if child || delegated {
             WORKER.into()
         } else {
@@ -420,7 +434,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             return Ok(memory_unavailable(extra(event, context)));
         };
         if binding.is_some() {
-            let prefix = prefix(&store.package)?;
+            let prefix = prefix(package)?;
             context.push_str(&format!(
                 "\nНайди решения проекта по ключевым словам через {prefix} search. \
                  Общие предпочтения проверь при необходимости через {prefix} shared search. \
@@ -445,7 +459,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         if explicit_plan || !pending.active(&key)? {
             return Ok(json!({}));
         }
-        let posted = posted(payload, &store.package)?;
+        let posted = posted(payload, package)?;
         if posted.is_none() || (child && !matches!(posted, Some(Posted::Report(_)))) {
             return Ok(json!({}));
         }
@@ -504,10 +518,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 None => None,
             }
         };
-        Some(state.map_or_else(
-            || INACTIVE.into(),
-            |state| activation(&store.package, plan, state),
-        ))
+        Some(state.map_or_else(|| INACTIVE.into(), |state| activation(package, plan, state)))
     } else {
         None
     };
@@ -561,7 +572,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
             };
             if let Some(target) = target {
                 let token = pending.issue(&key, &target, generation, "setup", session, turn)?;
-                let prefix = prefix(&store.package)?;
+                let prefix = prefix(package)?;
                 let setup = format!("В обычном режиме подключи память проекта отдельной командой из текущего cwd: {prefix} ensure --turn {token}. Хук вернёт инструкции для этого же хода. В Plan пропусти эту команду.");
                 return Ok(extra(
                     event,
@@ -577,21 +588,19 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
     };
     let scope = scope_id(&b, cwd);
     if issuing {
-        let prefix = prefix(&store.package)?;
+        let prefix = prefix(package)?;
         let mut ids = Vec::new();
         let mut search_failed = false;
-        let mut search_in_turn = ensure;
         if let Some(prompt) = payload["prompt"].as_str().filter(|s| !s.trim().is_empty()) {
             let q = prompt.chars().take(500).collect::<String>();
-            match store.recall_for_hook(&b, &q, 3) {
-                Ok(Some(v)) => {
+            match store.recall(&b, &q, 3) {
+                Ok(v) => {
                     for entry in v.as_array().into_iter().flatten() {
                         if let Some(id) = entry["id"].as_str().filter(|s| format::id(s).is_ok()) {
                             ids.push(id.to_owned());
                         }
                     }
                 }
-                Ok(None) => search_in_turn = true,
                 Err(_) => search_failed = true,
             }
         }
@@ -601,7 +610,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 " Прочитай совпадения через {prefix} show ID и примени подходящие правила. ID: {}.",
                 ids.join(", ")
             )
-        } else if search_in_turn {
+        } else if ensure {
             format!(
                 " Перед работой подбери ключевые слова задачи, выполни {prefix} search \"КЛЮЧЕВЫЕ СЛОВА\" --limit 3 и примени подходящие правила."
             )
@@ -614,14 +623,13 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
                 "В Plan пропусти запись. Ход без записи завершай обычным ответом. ",
                 "Сохраняй устойчивые сведения без секретов и сырых журналов. ",
                 "Поправку к правилу проекта примени сейчас. ",
-                "Сверь дубликаты и подготовь поправку: ",
-                "{prefix} stage --turn {token} --correction 'Тема' 'Полное правило и область'. ",
-                "Для замены добавь --supersedes ID. Передай весь stage в cmd инструмента exec_command из каталога хода. ",
-                "Для решения передай JSON через stdin в {prefix} pack: ",
+                "Сверь дубликаты. Передай JSON через stdin в {prefix} pack: ",
                 "{{\"action\":\"remember\",\"candidate\":{{\"kind\":\"decision\",\"title\":\"Тема\",\"body\":\"Вывод\",\"source\":\"Основание\"}}}}. ",
+                "Для поправки задай kind=correction и полное правило. Для замены укажи supersedes с ID прежнего правила. ",
                 "Для предпочтения задай kind=preference, для неподтверждённого вывода action=draft. ",
-                "Результат pack передай отдельным stage --turn с тем же токеном и --payload BASE64URL. ",
-                "Stop применит одну операцию. Токен и квитанцию оставь в инструменте."
+                "Результат pack передай отдельной командой {prefix} stage --turn {token} --payload BASE64URL из каталога хода. ",
+                "Если нужны несколько независимых операций, передай в pack объект operations с массивом операций и уникальным operation_id для каждой. ",
+                "Stop применит упакованный запрос. Токен и квитанцию оставь в инструменте."
             ),
             project = b.project,
             mode = b.mode,
@@ -675,7 +683,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         );
     }
     if let Some(Posted::Stage(token, value)) = staged {
-        if pending.stage(&key, &token, &scope, &value)? {
+        if pending.stage(&key, &token, &scope, &value)? == pending::Stage::Conflict {
             return Ok(
                 json!({"decision":"block","reason":"На этот ход уже принята другая операция памяти fstack. Она остаётся в очереди. Вторую операцию выполни в новом ходе."}),
             );
@@ -689,7 +697,7 @@ pub fn hook(store: &Store, event: &str, payload: &Value, cwd: &Path) -> Result<V
         return Ok(extra(event,"Итог поручения не принят в очередь памяти. Проверь текущую область и состояние через memory diagnostics. За ход принимается одна операция.".into()));
     }
     if review_report {
-        let prefix = prefix(&store.package)?;
+        let prefix = prefix(package)?;
         if pending.request_report(&key, &scope, &epoch, session, turn)? {
             return Ok(json!({"decision":"block","reason":format!(
                 "Память fstack, проект {project}, режим {mode}. Оцени итог поручения Codex. \
@@ -781,31 +789,34 @@ fn apply(
     session: &str,
     turn: &str,
 ) -> Result<&'static str> {
-    let request = action(data)?;
-    let shared;
-    let binding = if request["scope"] == "shared" {
-        shared = super::shared::for_action(store, binding, &request)?;
-        &shared
-    } else {
-        binding
-    };
-    let outcome = match request["action"].as_str().unwrap() {
-        "skip" => return Ok("skipped"),
-        "approve" => store.approve_outcome(binding, request["id"].as_str().unwrap())?,
-        "forget" => {
-            store.forget(binding, request["id"].as_str().unwrap())?;
-            return Ok("applied");
+    if data.get("operations").is_some() {
+        let result =
+            fmem::operations::commit_with_context(store, binding, data, Some(session), Some(turn))?;
+        let receipts = result["receipts"]
+            .as_array()
+            .ok_or("Unexpected memory batch result")?;
+        if receipts
+            .iter()
+            .any(|receipt| matches!(receipt["status"].as_str(), Some("accepted" | "retryable")))
+        {
+            return Err("Memory batch has unfinished operations".into());
         }
-        a => store.save_outcome(
-            binding,
-            &request["candidate"],
-            a == "remember",
-            Some(session),
-            Some(turn),
-        )?,
-    };
-    Ok(match outcome {
-        WriteOutcome::Written(_) => "applied",
-        WriteOutcome::Forgotten => "discarded_forgotten",
-    })
+        return Ok(
+            if receipts
+                .iter()
+                .all(|receipt| receipt["status"] == "persisted")
+            {
+                "applied"
+            } else {
+                "partial"
+            },
+        );
+    }
+    let result = fmem::protocol::apply_action(store, binding, data, Some(session), Some(turn))?;
+    match result["phase"].as_str() {
+        Some("applied") => Ok("applied"),
+        Some("skipped") => Ok("skipped"),
+        Some("discarded_forgotten") => Ok("discarded_forgotten"),
+        _ => Err("Unexpected memory operation result".into()),
+    }
 }

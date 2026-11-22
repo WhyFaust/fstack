@@ -209,6 +209,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "fmem"
+version = "0.1.0"
+source = "git+https://github.com/WhyFaust/fmem.git?rev=4a917e46173d20b45c95b4f5ad074bfd9a636036#4a917e46173d20b45c95b4f5ad074bfd9a636036"
+dependencies = [
+ "base64",
+ "chrono",
+ "fs2",
+ "getrandom 0.3.4",
+ "libc",
+ "regex",
+ "rusqlite",
+ "rust-stemmers",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "sqlite-vec",
+ "tempfile",
+ "unicode-casefold",
+ "windows-sys",
+]
+
+[[package]]
 name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -234,23 +257,17 @@ dependencies = [
 name = "fstack"
 version = "0.1.0"
 dependencies = [
- "base64",
- "chrono",
- "fs2",
- "getrandom 0.3.4",
+ "fmem",
  "libc",
  "pulldown-cmark",
  "regex",
  "rusqlite",
- "rust-stemmers",
  "serde",
  "serde_json",
  "serde_yaml_ng",
  "sha2",
  "tempfile",
  "toml",
- "unicode-casefold",
- "windows-sys",
  "zip",
 ]
 
@@ -678,6 +695,15 @@ name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0ba424237a9a5db2f6071f193319e2b6a32f7f3961debb2fbbfe67067abce3f"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "syn"

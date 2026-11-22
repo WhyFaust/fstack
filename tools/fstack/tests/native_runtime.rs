@@ -340,7 +340,7 @@ fn relocated_native_package_runs_without_python_cargo_or_path_tools() {
 
 #[test]
 #[cfg(unix)]
-fn exec_command_skip_with_literal_paths_finishes_on_first_stop() {
+fn skip_is_durable_before_post_tool_use_and_finishes_on_first_stop() {
     let mut runtime = Runtime::from_temp(tempfile::tempdir_in("/tmp").unwrap());
     let cache = runtime.runtime_cache();
     fs::create_dir_all(&cache).unwrap();
@@ -390,13 +390,17 @@ fn exec_command_skip_with_literal_paths_finishes_on_first_stop() {
         runtime.root.display()
     );
     let receipt = runtime.run(Command::new("/bin/sh").args(["-c", &command]), None);
-    assert_eq!(receipt.trim(), "{\"staged\": true}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&receipt).unwrap(),
+        json!({"staged":true,"phase":"stage"})
+    );
+    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
     let post = |command: &str| {
         json!({"tool_name":"Bash","tool_use_id":"call-exec",
         "tool_input":{"command":command},"tool_response":receipt})
     };
     event("PostToolUse", post(&format!("{command}; true")));
-    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 0);
+    assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
     event("PostToolUse", post(&command));
     assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
     assert_eq!(event("Stop", json!({"stop_hook_active":false})), json!({}));
@@ -457,7 +461,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
             .as_str()
             .unwrap();
         let pattern = regex::Regex::new(
-            r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
+            r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --payload"#,
         )
         .unwrap();
         let captures = pattern.captures(context).unwrap();
@@ -502,7 +506,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
             String::from_utf8_lossy(&output.stderr)
         );
         let receipt = String::from_utf8(output.stdout).unwrap();
-        assert_eq!(receipt.trim(), "{\"staged\": true}");
+        assert_eq!(receipt.trim(), "{\"validated\":true}");
         event(
             "PostToolUse",
             "one",
@@ -558,7 +562,7 @@ fn correction_is_captured_during_a_vault_outage_then_recalled_from_a_new_chat() 
     assert!(context.contains("Faust-mode выключен"));
     assert!(!context.contains("SKILL.md"));
     let (command, token) = regex::Regex::new(
-        r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
+        r#"((?:& )?"[^"]+" --package "[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --payload"#,
     )
     .unwrap()
     .captures(context)
@@ -978,28 +982,29 @@ fn first_ordinary_turn(runtime: Runtime, save_correction: bool) {
         .as_str()
         .unwrap();
     assert!(!instructions.contains("SKILL.md"));
-    let stage = regex::Regex::new(
-        r#"((?:& )?"[^"]+" memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32})) --correction"#,
-    )
-    .unwrap()
-    .captures(instructions)
-    .unwrap();
+    let stage = regex::Regex::new(r"memory stage --turn ([0-9a-f]{64}\.[0-9a-f]{32}) --payload")
+        .unwrap()
+        .captures(instructions)
+        .unwrap();
     let rule = "Для проверок этого проекта всегда используй uv run pytest.";
     if save_correction {
-        let command = format!("{} --correction 'Тесты' '{rule}'", &stage[1]);
-        let receipt = runtime.call(
+        let request = json!({"action":"remember","candidate":{
+            "kind":"correction","title":"Тесты","body":rule,
+        }});
+        let payload = runtime.json(&["memory", "pack"], Some(request));
+        let receipt = runtime.json(
             &[
                 "memory",
                 "stage",
                 "--turn",
-                &stage[2],
-                "--correction",
-                "Тесты",
-                rule,
+                &stage[1],
+                "--payload",
+                payload.as_str().unwrap(),
             ],
             None,
         );
-        event("PostToolUse", "first", post(&command, &receipt));
+        assert_eq!(receipt, json!({"staged":true,"phase":"stage"}));
+        assert_eq!(runtime.json(&["memory", "diagnostics"], None)["staged"], 1);
     }
     assert_eq!(event("Stop", "first", stop()), json!({}));
     let records = runtime.json(&["memory", "search", "pytest"], None);

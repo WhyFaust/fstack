@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "cargo_lock_sha256": "b39aff9e54e9f8b60fca252c8357f3b6ba28987a89944a006932b8cd81bfcf0f",
-  "cargo_manifest_sha256": "b5cbfbc2f192754396bbffd739f90108f2773349da4e4a34d136091755082f9e",
+  "cargo_lock_sha256": "bbbeea00b896577cc45bedcb4c8fe782bd9999c35acb57e875e6301477b78b43",
+  "cargo_manifest_sha256": "89f62b1bd90b5125130a117a0651e6d488ca27a6054ff1027a20a9ba43c9ea6e",
   "rust_version": "1.90.0",
   "targets": [
     "x86_64-unknown-linux-gnu",
@@ -515,6 +515,14 @@
       "notice_source": "LICENSE-MIT"
     },
     {
+      "name": "sqlite-vec",
+      "version": "0.1.9",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT OR Apache-2.0",
+      "checksum": "d0ba424237a9a5db2f6071f193319e2b6a32f7f3961debb2fbbfe67067abce3f",
+      "notice_source": "https://github.com/asg017/sqlite-vec/blob/v0.1.9/LICENSE-MIT"
+    },
+    {
       "name": "syn",
       "version": "3.0.10",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -676,7 +684,7 @@
     }
   ],
   "notice_files": {
-    "tools/fstack/native-runtime.txt": "1445b88fb53d13b48532035e517a867d40a318436fe0b6dfd7989b7e78b4b110",
+    "tools/fstack/native-runtime.txt": "e23164e2225accd81bb2319c02d3196e527ee0830b7ad598a3a96084012bc3e0",
     "tools/fstack/native-runtime-rust-1.90.0.html": "025c0dd1236493fcd5b6386b68453852e6528722bd5f8dce5949e94d225e7a60"
   },
   "excluded_packages": [

@@ -1,20 +1,16 @@
 use super::*;
+use fmem::memory::views;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    sync::OnceLock,
 };
 use store::{Binding, Store};
-pub(super) fn cache() -> PathBuf {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            std::env::temp_dir()
-                .canonicalize()
-                .unwrap()
-                .join(format!("fstack-memory-tests-{}", io::nonce().unwrap()))
-        })
-        .clone()
+pub(super) fn package() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
 }
 struct Fixture {
     _temp: tempfile::TempDir,
@@ -32,12 +28,7 @@ impl Fixture {
         let vault = root.join("vault");
         fs::create_dir(&repo).unwrap();
         fs::create_dir_all(vault.join(".obsidian")).unwrap();
-        let package = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let store = Store::new(Some(root.join("state")), package).unwrap();
+        let store = Store::new(root.join("state")).unwrap();
         let binding = store.setup(&vault, &repo, slug, Some(mode)).unwrap();
         Self {
             _temp: temp,
@@ -86,7 +77,7 @@ impl Fixture {
         v.as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        hooks::hook(&self.store, event, &v, &self.repo).unwrap()
+        hooks::hook(&self.store, package(), event, &v, &self.repo).unwrap()
     }
     fn token(&self, turn: &str) -> String {
         let v = self.hook(
@@ -163,7 +154,7 @@ fn ordinary_prompts_get_memory_without_implicitly_activating_the_coordinator() {
 #[test]
 fn ultra_follows_the_verified_root_turn_and_respects_the_manual_chat_choice() {
     let f = Fixture::new("auto", "pilot");
-    let store = Store::new(Some(f.base.join("fstack/memory")), &f.store.package).unwrap();
+    let store = Store::new(f.base.join("fstack/memory")).unwrap();
     let sessions = f.base.join("sessions/2026/11/20");
     fs::create_dir_all(&sessions).unwrap();
     let session = "ultra-test";
@@ -182,8 +173,8 @@ fn ultra_follows_the_verified_root_turn_and_respects_the_manual_chat_choice() {
             .as_object_mut()
             .unwrap()
             .extend(fields.as_object().unwrap().clone());
-        hooks::hook(&store, "UserPromptSubmit", &input, &f.repo).unwrap()["hookSpecificOutput"]
-            ["additionalContext"]
+        hooks::hook(&store, package(), "UserPromptSubmit", &input, &f.repo).unwrap()
+            ["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap_or_default()
             .to_owned()
@@ -272,14 +263,14 @@ fn a_failed_disable_keeps_the_last_completed_manual_choice() {
         "cwd":f.repo,"prompt":"/faust-mode-off","permission_mode":"plan"});
     let mut on = off.clone();
     on["prompt"] = json!("/faust-mode");
-    assert!(hooks::hook(&f.store, "UserPromptSubmit", &on, &f.repo).is_err());
+    assert!(hooks::hook(&f.store, package(), "UserPromptSubmit", &on, &f.repo).is_err());
     assert!(!io::file(&marker).unwrap());
     let enabled = "coordinator-previous-runtime".to_owned();
     fs::write(&marker, &enabled).unwrap();
-    assert!(hooks::hook(&f.store, "UserPromptSubmit", &off, &f.repo).is_err());
+    assert!(hooks::hook(&f.store, package(), "UserPromptSubmit", &off, &f.repo).is_err());
     assert_eq!(io::read(&marker).unwrap(), Some(enabled));
     fs::remove_dir(marker.with_extension("off")).unwrap();
-    let retry = hooks::hook(&f.store, "UserPromptSubmit", &off, &f.repo).unwrap();
+    let retry = hooks::hook(&f.store, package(), "UserPromptSubmit", &off, &f.repo).unwrap();
     assert!(retry["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap()
@@ -325,7 +316,7 @@ fn markdown_command_examples_preserve_the_current_mode() {
 fn only_an_enabled_chat_receives_the_installed_index_on_activation_and_restore() {
     let f = Fixture::new("auto", "pilot");
     f.store.disable(&f.repo).unwrap();
-    let skills = crate::package::skill_names(&f.store.package).unwrap();
+    let skills = crate::package::skill_names(package()).unwrap();
     let contents = |event: &str, fields: Value| {
         f.hook(event, "turn", fields)["hookSpecificOutput"]["additionalContext"]
             .as_str()
@@ -345,7 +336,7 @@ fn only_an_enabled_chat_receives_the_installed_index_on_activation_and_restore()
             "skills/route/SKILL.md",
             "docs/skills.md",
         ] {
-            assert!(context.contains(&f.store.package.join(relative).display().to_string()));
+            assert!(context.contains(&package().join(relative).display().to_string()));
         }
         assert!(!context.contains("stage --turn"));
     };
@@ -462,9 +453,9 @@ fn explicit_mode_activates_without_binding_and_in_plan_without_memory() {
         .unwrap()
         .contains("нативном Plan Mode"));
     assert!(!f.store.state.join("pending.sqlite3").exists());
-    let store = Store::new(Some(f.base.join("unbound-state")), &f.store.package).unwrap();
+    let store = Store::new(f.base.join("unbound-state")).unwrap();
     let payload = json!({"hook_event_name":"UserPromptSubmit", "session_id":"new", "turn_id":"new", "cwd":f.repo,"prompt":"/faust-mode task"});
-    let output = hooks::hook(&store, "UserPromptSubmit", &payload, &f.repo).unwrap();
+    let output = hooks::hook(&store, package(), "UserPromptSubmit", &payload, &f.repo).unwrap();
     assert!(output["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap()
@@ -473,8 +464,7 @@ fn explicit_mode_activates_without_binding_and_in_plan_without_memory() {
         .as_str()
         .unwrap()
         .contains(
-            &store
-                .package
+            &package()
                 .join("skills/faust-mode/SKILL.md")
                 .display()
                 .to_string()
@@ -482,8 +472,8 @@ fn explicit_mode_activates_without_binding_and_in_plan_without_memory() {
     assert!(!store.state.join("pending.sqlite3").exists());
     let followup = json!({"hook_event_name":"UserPromptSubmit", "session_id":"new", "turn_id":"next", "cwd":f.repo,"prompt":"Продолжи"});
     assert!(
-        hooks::hook(&store, "UserPromptSubmit", &followup, &f.repo).unwrap()["hookSpecificOutput"]
-            ["additionalContext"]
+        hooks::hook(&store, package(), "UserPromptSubmit", &followup, &f.repo).unwrap()
+            ["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .is_some()
     );
@@ -541,7 +531,7 @@ fn existing_library_is_preserved() {
     let path = f.binding.root.join("Library.base");
     let custom = "views: []\n# Personal table settings\n";
     fs::write(&path, custom).unwrap();
-    views::ensure_library(&f.binding.root, &f.store.package).unwrap();
+    views::ensure_library(&f.binding.root).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), custom);
 }
 
@@ -603,7 +593,7 @@ fn inbox_manual_edits_dedup_and_scope() {
     let a = f.store.approve(&f.binding, id(&v)).unwrap();
     assert_eq!(a["body"], "Edited heliotrope");
     assert_eq!(f.save("Keep heliotrope", true), a);
-    let other = Store::new(Some(f.base.join("second")), &f.store.package).unwrap();
+    let other = Store::new(f.base.join("second")).unwrap();
     let b = other
         .setup(&f.vault, &f.repo, "pilot", Some("auto"))
         .unwrap();
@@ -847,7 +837,7 @@ fn search_and_recall_skip_invalid_record_bodies_without_reviving_predecessors() 
     }
 }
 #[test]
-fn hook_recall_defers_large_areas_and_cli_can_still_search_them() {
+fn hook_recall_keeps_searching_above_the_previous_area_cutoff() {
     let f = Fixture::new("auto", "pilot");
     let saved = f.save("Keep heliotrope", true);
     let records = f.root().join("Records");
@@ -860,18 +850,20 @@ fn hook_recall_defers_large_areas_and_cli_can_still_search_them() {
         .unwrap();
     }
     assert_eq!(
-        f.store
-            .recall_for_hook(&f.binding, "heliotrope", 3)
-            .unwrap(),
-        Some(json!([saved]))
+        f.store.recall(&f.binding, "heliotrope", 3).unwrap(),
+        json!([saved])
     );
     f.legacy("Forgotten", &"f".repeat(64), None);
-    assert_eq!(
-        f.store
-            .recall_for_hook(&f.binding, "heliotrope", 3)
-            .unwrap(),
-        None
+    let response = f.hook(
+        "UserPromptSubmit",
+        "wide",
+        json!({"prompt":"Find heliotrope"}),
     );
+    let context = response["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains(id(&saved)));
+    assert!(!context.contains("Keep heliotrope"));
     assert_eq!(
         f.store.search(&f.binding, "heliotrope", 3).unwrap(),
         json!([saved])
@@ -1191,6 +1183,113 @@ fn steering_revocation_survives_locked_database_and_failed_generation_replace() 
     assert!(f.pending().is_current(&token, &scope).is_err());
 }
 #[test]
+fn completed_turns_leave_room_for_new_capture() {
+    let f = Fixture::new("auto", "pilot");
+    let pending = f.pending();
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    for n in 0..270 {
+        let turn = format!("turn-{n}");
+        let key = pending::digest(&["session", &turn]);
+        let token = pending
+            .issue(&key, &scope, None, "", "session", &turn)
+            .unwrap();
+        assert!(pending.is_current(&token, &scope).unwrap());
+        assert!(!pending
+            .claim(
+                &key,
+                &scope,
+                "session",
+                &turn,
+                "",
+                pending::Delivery::Current {
+                    first_stop: true,
+                    confirmed: true,
+                }
+            )
+            .unwrap());
+        assert!(pending.has_generation(&key).unwrap());
+        assert!(!pending
+            .request_report(&key, &scope, "", "session", &turn)
+            .unwrap());
+    }
+}
+
+#[test]
+fn packed_stage_is_durable_before_post_tool_use() {
+    let f = Fixture::new("auto", "pilot");
+    let token = f.token("direct");
+    let request = json!({"action":"remember","candidate":candidate("Persist direct stage")});
+    let encoded = encode(&request).unwrap();
+    let stage = |flag: &str, payload: &str| {
+        execute(
+            &f.store,
+            &["stage", "--turn", &token, flag, payload].map(str::to_owned),
+            &f.repo,
+        )
+    };
+    assert_eq!(
+        stage("--payload", &encoded).unwrap(),
+        json!({"staged":true,"phase":"stage"})
+    );
+    assert_eq!(stage("--payload", &encoded).unwrap()["phase"], "stage");
+    assert!(stage("--payload", &encode(&json!({"action":"skip"})).unwrap()).is_err());
+    let scope = hooks::scope_id(&f.binding, &f.repo);
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["staged"], 1);
+    assert!(f
+        .store
+        .search(&f.binding, "direct", 3)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+    f.hook("Stop", "direct", json!({}));
+    assert_eq!(f.pending().diagnostics(&scope).unwrap()["phase"], "applied");
+    assert_eq!(
+        f.store.search(&f.binding, "direct", 3).unwrap()[0]["body"],
+        "Persist direct stage"
+    );
+    assert!(stage("--payload", &encoded).is_err());
+}
+
+#[test]
+fn batch_stage_records_receipts_after_stop() {
+    let f = Fixture::new("auto", "pilot");
+    let token = f.token("batch");
+    let request = json!({"operations":[
+        {"operation_id":"batch-project","action":"remember","candidate":candidate("Approve batch decision")},
+        {"operation_id":"batch-shared","action":"remember","scope":"shared","candidate":{
+            "kind":"preference","title":"Shared test convention","body":"Read event receipts."
+        }}
+    ]});
+    let cli = |args: &[&str]| {
+        execute(
+            &f.store,
+            &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>(),
+            &f.repo,
+        )
+    };
+    let packed = encode(&prepare_request(&request).unwrap()).unwrap();
+    assert_eq!(
+        cli(&["stage", "--turn", &token, "--payload", &packed]).unwrap()["staged"],
+        true
+    );
+    assert_eq!(cli(&["receipt", "batch-project"]).unwrap(), Value::Null);
+    assert_eq!(cli(&["receipt", "batch-shared"]).unwrap(), Value::Null);
+    assert_eq!(f.hook("Stop", "batch", json!({})), json!({}));
+    for operation in ["batch-project", "batch-shared"] {
+        let receipt = cli(&["receipt", operation]).unwrap();
+        assert_eq!(receipt["operation_id"], operation);
+        assert_eq!(receipt["status"], "persisted");
+    }
+    let receipt = cli(&["receipt", "batch-project"]).unwrap();
+    let record = cli(&["show", receipt["record_id"].as_str().unwrap()]).unwrap();
+    assert_eq!(record["session_id"], "session");
+    assert_eq!(record["turn_id"], "batch");
+    let diagnostics = cli(&["diagnostics"]).unwrap();
+    assert_eq!(diagnostics["phase"], "applied");
+}
+
+#[test]
 fn pending_limits_expiry_private_storage_and_scope() {
     let f = Fixture::new("auto", "pilot");
     let token = f.token("one");
@@ -1304,13 +1403,10 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
             prior_path
         );
     }
+    let fresh_state = f.base.join("fresh-state");
     assert_eq!(
-        scope::binding_location(&f.store.state, &f.repo)
-            .unwrap()
-            .identity,
-        scope::binding_location(&f.store.state, &nested)
-            .unwrap()
-            .identity
+        scope::binding_path(&fresh_state, &f.repo).unwrap(),
+        scope::binding_path(&fresh_state, &nested).unwrap()
     );
     for worktree in [&f.repo, &linked] {
         let state_in_worktree = worktree.join("profile/fstack/memory");
@@ -1326,12 +1422,12 @@ fn git_registered_worktrees_share_binding_and_forged_pointers_fail() {
     assert!(f.store.auto_resolve(&linked).unwrap().is_none());
 }
 #[test]
-fn independent_entry_limits_count_canonical_and_legacy_tombstones_once() {
+fn large_tombstone_history_deduplicates_legacy_and_canonical_entries() {
     let f = Fixture::new("auto", "pilot");
     let records = f.root().join("Records");
     let forgotten = f.root().join("Forgotten");
     fs::create_dir(&forgotten).unwrap();
-    for n in 0..4096 {
+    for n in 0..4097 {
         let id = format!("{n:064x}");
         fs::write(
             records.join(format!("{id}-forgotten.json")),
@@ -1339,55 +1435,51 @@ fn independent_entry_limits_count_canonical_and_legacy_tombstones_once() {
         )
         .unwrap();
     }
-    assert_eq!(store::tombstone_ids(&f.root()).unwrap().len(), 4096);
+    assert_eq!(store::tombstone_ids(&f.root()).unwrap().len(), 4097);
     let first = format!("{:064x}", 0);
     f.legacy("Forgotten", &first, None);
-    assert_eq!(store::tombstone_ids(&f.root()).unwrap().len(), 4096);
-    fs::write(records.join(format!("{}.md", "f".repeat(64))), "record").unwrap();
-    assert_eq!(store::files(&records, false).unwrap().len(), 1);
-    let next = format!("{:064x}", 4096);
+    assert_eq!(store::tombstone_ids(&f.root()).unwrap().len(), 4097);
+    let next = format!("{:064x}", 4097);
     f.legacy("Forgotten", &next, None);
-    assert!(store::tombstone_ids(&f.root()).is_err());
-    fs::remove_file(forgotten.join(format!("{next}.md"))).unwrap();
-    fs::write(records.join(format!("{next}-forgotten.json")), "{}").unwrap();
-    assert!(store::files(&records, true).is_err());
+    fs::write(
+        records.join(format!("{next}-forgotten.json")),
+        json!({"id":next}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(store::tombstone_ids(&f.root()).unwrap().len(), 4098);
+    let latest = f.save("Can still forget a new decision", true);
+    f.store.forget(&f.binding, id(&latest)).unwrap();
+    assert_eq!(store::tombstone_ids(&f.root()).unwrap().len(), 4099);
+    assert!(f.store.get(&f.binding, id(&latest)).is_err());
 }
 #[test]
-fn record_limit_is_checked_on_insert_and_existing_history_stays_readable() {
+fn large_record_history_stays_readable_and_writable() {
     let f = Fixture::new("auto", "pilot");
     let root = f.root();
     let records = root.join("Records");
     let saved = f.save("Keep readable heliotrope", true);
-    let draft = f.save("Draft for capacity test", false);
+    let draft = f.save("Draft from another device", false);
     let contents = fs::read_to_string(store::record(&root, id(&draft))).unwrap();
-    let synced_draft = |n| {
+    for n in 0..4094 {
         let synced_id = format!("{n:064x}");
         fs::write(
             store::record(&root, &synced_id),
             contents.replace(id(&draft), &synced_id),
         )
         .unwrap();
-    };
-    for n in 0..4093 {
-        synced_draft(n);
     }
     fs::write(records.join("Personal note.md"), "Other vault data").unwrap();
-    let last = f.save("Last writable record", true);
-    let new = candidate("Next writable record");
-    let insert = || f.store.save(&f.binding, &new, true, None, None);
-    assert!(insert().is_err());
-    assert_eq!(f.save("Last writable record", true)["id"], last["id"]);
     assert_eq!(store::files(&records, false).unwrap().len(), 4096);
-
-    synced_draft(4093);
-    assert_eq!(store::files(&records, false).unwrap().len(), 4097);
+    let next = f.save("First writable record past the previous limit", true);
+    let last = f.save("Next writable record", true);
+    assert_eq!(f.save("Next writable record", true)["id"], last["id"]);
+    assert_eq!(store::files(&records, false).unwrap().len(), 4098);
     assert_eq!(f.store.get(&f.binding, id(&saved)).unwrap(), saved);
     assert_eq!(f.store.search(&f.binding, "readable", 1).unwrap()[0], saved);
-    assert!(insert().is_err());
     f.store.forget(&f.binding, id(&draft)).unwrap();
-    assert!(insert().is_err());
     f.store.forget(&f.binding, id(&last)).unwrap();
-    assert_eq!(insert().unwrap()["status"], "memory");
+    assert_eq!(f.store.get(&f.binding, id(&next)).unwrap(), next);
+    assert!(f.store.get(&f.binding, id(&last)).is_err());
 }
 #[test]
 fn promotion_rejects_oversize_without_losing_editable_inbox() {
@@ -1675,7 +1767,7 @@ fn prompt_search_failure_warns_without_exposing_notes_or_blocking_the_turn() {
 fn cross_profile_locking_hides_forgotten_records() {
     let f = Fixture::new("inbox", "pilot");
     let v = f.save("Current heliotrope", false);
-    let other_store = Store::new(Some(f.base.join("second-profile")), &f.store.package).unwrap();
+    let other_store = Store::new(f.base.join("second-profile")).unwrap();
     let b = other_store
         .setup(&f.vault, &f.repo, "pilot", Some("auto"))
         .unwrap();
@@ -2091,7 +2183,7 @@ fn later_stop_recovers_trusted_stage_when_original_stop_never_committed_claim() 
             let conn = rusqlite::Connection::open(f.store.state.join("pending.sqlite3")).unwrap();
             conn.execute_batch("BEGIN IMMEDIATE").unwrap();
             let event = json!({"hook_event_name":"Stop","session_id":"session","turn_id":"original","cwd":f.repo,"stop_hook_active":false});
-            assert!(hooks::hook(&f.store, "Stop", &event, &f.repo).is_err());
+            assert!(hooks::hook(&f.store, package(), "Stop", &event, &f.repo).is_err());
             conn.execute_batch("ROLLBACK").unwrap();
         }
 
@@ -2106,9 +2198,9 @@ fn later_stop_recovers_trusted_stage_when_original_stop_never_committed_claim() 
             ("session", &f.repo, "plan"),
         ] {
             let event = json!({"hook_event_name":"UserPromptSubmit","session_id":session,"turn_id":"foreign","cwd":cwd,"prompt":"/faust-mode","mode":mode});
-            hooks::hook(&f.store, "UserPromptSubmit", &event, cwd).unwrap();
+            hooks::hook(&f.store, package(), "UserPromptSubmit", &event, cwd).unwrap();
             let event = json!({"hook_event_name":"Stop","session_id":session,"turn_id":"foreign","cwd":cwd,"mode":mode,"stop_hook_active":false});
-            hooks::hook(&f.store, "Stop", &event, cwd).unwrap();
+            hooks::hook(&f.store, package(), "Stop", &event, cwd).unwrap();
             assert_eq!(
                 f.store.search(&f.binding, "heliotrope", 5).unwrap(),
                 json!([])
@@ -2270,7 +2362,7 @@ fn invalid_profile_layout_blocks_only_when_an_existing_generation_must_be_revoke
     assert!(!state_in_marker.exists());
     fs::write(marker.join("HEAD"), "ref: refs/heads/main\n").unwrap();
     let state = versioned.join("absent-profile/fstack/memory");
-    let store = Store::new(Some(state.clone()), &f.store.package).unwrap();
+    let store = Store::new(state.clone()).unwrap();
     let event = json!({"hook_event_name":"UserPromptSubmit","session_id":"session","turn_id":"test",
         "cwd":f.repo,"permission_mode":"default","prompt":"Продолжи работу"});
     for (hook, prompt, status, index) in [
@@ -2287,7 +2379,7 @@ fn invalid_profile_layout_blocks_only_when_an_existing_generation_must_be_revoke
         let mut payload = event.clone();
         payload["hook_event_name"] = json!(hook);
         payload["prompt"] = json!(prompt);
-        let result = hooks::hook(&store, hook, &payload, &f.repo).unwrap();
+        let result = hooks::hook(&store, package(), hook, &payload, &f.repo).unwrap();
         let context = result["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
@@ -2305,7 +2397,7 @@ fn invalid_profile_layout_blocks_only_when_an_existing_generation_must_be_revoke
         io::nonce().unwrap(),
     )
     .unwrap();
-    let result = hooks::hook(&store, "UserPromptSubmit", &event, &f.repo).unwrap();
+    let result = hooks::hook(&store, package(), "UserPromptSubmit", &event, &f.repo).unwrap();
     assert_eq!(result["decision"], "block");
 }
 
@@ -2315,7 +2407,7 @@ fn workspace_containing_the_profile_never_blocks_ordinary_prompts_or_creates_sta
     let cwd = f.base.join("home");
     fs::create_dir(&cwd).unwrap();
     let state = cwd.join("profile/fstack/memory");
-    let store = Store::new(Some(state.clone()), &f.store.package).unwrap();
+    let store = Store::new(state.clone()).unwrap();
     for path in [cwd.as_path(), cwd.ancestors().last().unwrap()] {
         for (event, prompt) in [
             ("UserPromptSubmit", "Исправь тесты"),
@@ -2323,7 +2415,7 @@ fn workspace_containing_the_profile_never_blocks_ordinary_prompts_or_creates_sta
             ("PostToolUse", ""),
         ] {
             let payload = json!({"hook_event_name":event,"session_id":"ordinary","turn_id":"test","cwd":path,"permission_mode":"default","prompt":prompt,"stop_hook_active":false});
-            let result = hooks::hook(&store, event, &payload, path).unwrap();
+            let result = hooks::hook(&store, package(), event, &payload, path).unwrap();
             if event == "UserPromptSubmit" {
                 assert!(result["hookSpecificOutput"]["additionalContext"]
                     .as_str()
@@ -2335,7 +2427,8 @@ fn workspace_containing_the_profile_never_blocks_ordinary_prompts_or_creates_sta
             }
         }
         let activation = json!({"hook_event_name":"UserPromptSubmit","session_id":"s","turn_id":"t","cwd":path,"permission_mode":"default","prompt":"/faust-mode Сделай задачу"});
-        let response = hooks::hook(&store, "UserPromptSubmit", &activation, path).unwrap();
+        let response =
+            hooks::hook(&store, package(), "UserPromptSubmit", &activation, path).unwrap();
         assert!(response["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap()
@@ -2375,6 +2468,18 @@ fn short_skip_requires_a_validated_standalone_command_and_leaves_no_note() {
 fn correction_requires_a_single_literal_command_in_an_authorized_turn() {
     let f = Fixture::new("inbox", "reviewed");
     let token = f.token("fix");
+    let args = [
+        "stage",
+        "--turn",
+        &token,
+        "--correction",
+        "Runner",
+        "Use uv run pytest",
+    ];
+    assert_eq!(
+        execute(&f.store, &args.map(str::to_owned), &f.repo).unwrap(),
+        json!({"validated":true})
+    );
     let packed = stage_command(&token, &json!({"action": "skip"}));
     let (prefix, _) = packed.split_once(" --payload ").unwrap();
     let cmd = format!("{prefix} --correction 'Runner' 'Use uv run pytest'");
@@ -2400,7 +2505,12 @@ fn correction_requires_a_single_literal_command_in_an_authorized_turn() {
     }
     let scope = hooks::scope_id(&f.binding, &f.repo);
     assert_eq!(f.pending().diagnostics(&scope).unwrap()["staged"], 0);
-    post(&f, "fix", cmd, json!({}));
+    post(
+        &f,
+        "fix",
+        cmd,
+        json!({"tool_response":"{\"validated\":true}"}),
+    );
     assert_eq!(f.hook("Stop", "fix", json!({})), json!({}));
     assert_eq!(f.store.search(&f.binding, "pytest", 5).unwrap(), json!([]));
     let inbox = f.store.inbox(&f.binding).unwrap();

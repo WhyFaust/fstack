@@ -33,15 +33,9 @@ def fingerprint(paths, root=ROOT):
 
 def inputs():
     runtime = ROOT / "tools/fstack"
-    templates = ROOT / "skills/memory/assets/vault"
-    if not (templates / "Home.md").is_file():
-        raise ValueError("Нет обязательного шаблона памяти Home.md")
     return {
         "runtime_sha256": fingerprint([
             *runtime.glob("src/**/*.rs"), runtime / "Cargo.toml", runtime / "Cargo.lock",
-        ]),
-        "templates_sha256": fingerprint([
-            path for path in templates.rglob("*") if path.is_file()
         ]),
         "harness_sha256": fingerprint([Path(__file__).resolve()]),
     }
