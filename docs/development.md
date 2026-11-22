@@ -2,34 +2,34 @@
 
 ## Минимальные проверки
 
-Для разработки нужны Rust 1.90.0 и системный C/C++ toolchain для сборки SQLite.
-На Windows имя бинарника — `fstack.exe`. Из корня репозитория выполни:
+Для разработки нужны Rust 1.90.0, системный C/C++ toolchain для сборки SQLite
+и Python 3.12 или новее. Установи компоненты Rust и зависимости тестов в рабочее
+окружение Python. Из корня репозитория выполни команды ниже.
 
 ```bash
 rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
-cargo +1.90.0 build --release --locked --manifest-path tools/fstack/Cargo.toml
-cargo +1.90.0 fmt --manifest-path tools/fstack/Cargo.toml -- --check
-cargo +1.90.0 clippy --all-targets --locked --manifest-path tools/fstack/Cargo.toml -- -D warnings
-cargo +1.90.0 test --release --locked --manifest-path tools/fstack/Cargo.toml
-mkdir -p bin
-cp tools/fstack/target/release/fstack bin/fstack
-bin/fstack --package . check-package .
-bin/fstack --package . release check
+python -m pip install -r tools/fstack/evals/requirements.txt
+python .github/workflows/check.py
 ```
 
-Список платформ и флаги сборки задаёт [CI](../.github/workflows/release.yml).
-Проверяй память во временных vault и профиле вне Git. `check-package` проверяет
-ресурсы пакета, локальные ссылки и якоря.
+Команда проверяет форматирование, Clippy и тесты Rust, собирает релизный бинарник,
+сверяет пакет, локальные ссылки, якоря и метаданные версии. Затем она запускает
+тесты измерителя и корпуса. Бинарник появится в `tools/fstack/target/release/`
+под именем `fstack`, на Windows под именем `fstack.exe`.
 
-```bash
-python -m unittest discover -s tools/fstack/benchmarks -p 'test_*.py' -v
-python -m unittest discover -s tools/fstack/evals -p 'test_*.py' -v
-```
+[CI](../.github/workflows/release.yml) задаёт платформы и флаги сборки. Он передаёт
+этой же команде бинарник выпуска и целевую платформу. Тесты Python, сравнение
+версии с базой и проверка установки выполняются в задаче Linux. В задачах Windows
+и macOS команда сообщает о пропуске тестов Python. Проверяй память во временных
+vault и профиле вне Git.
 
 ## Проверка фактическим клиентом
 
+Подготовь отдельную копию проверяемой ревизии и добавь в неё собранный бинарник
+по пути `bin/fstack` или `bin/fstack.exe` для Windows.
+
 ```bash
-bin/fstack check-installation --codex /absolute/path/to/codex
+tools/fstack/target/release/fstack --package /absolute/path/to/package check-installation --codex /absolute/path/to/codex
 python tools/fstack/evals/check_doctor.py /absolute/path/to/package --codex /absolute/path/to/codex
 python tools/fstack/evals/check_skill_invocation.py /absolute/path/to/package --codex /absolute/path/to/codex
 ```
@@ -80,7 +80,7 @@ PATCH, возможность или несовместимость в сери�
 Добавь входы сборки в индекс Git, затем выполни:
 
 ```bash
-bin/fstack --package . release prepare VERSION
+tools/fstack/target/release/fstack --package . release prepare VERSION
 git add .codex-plugin/plugin.json launchers/package-version launchers/runtime-id
 ```
 
@@ -89,8 +89,9 @@ git add .codex-plugin/plugin.json launchers/package-version launchers/runtime-id
 marketplace, лицензий и входов сборки. CI сверяет базу PR, имя выпуска в GitHub
 Releases и коммит очереди слияния.
 
-Изменения `.github/workflows/` сначала слей отдельным PR. CI проверяет уже
-выпущенный пакет, если всё дерево за пределами workflow совпадает с его тегом.
+Изменения `.github/workflows/` сначала слей отдельным PR. CI берёт команду проверки
+из ревизии PR и проверяет уже выпущенный пакет, если всё дерево за пределами
+workflow совпадает с его тегом.
 Для заметок к выпуску опиши действия пользователя в разделе PR `## При обновлении`.
 
 1. Для выпуска новой версии дождись успешной сборки четырёх платформ на текущем SHA открытого Ready PR.

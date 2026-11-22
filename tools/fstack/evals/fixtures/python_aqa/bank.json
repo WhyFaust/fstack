@@ -1,0 +1,114 @@
+{
+  "cases": [
+    {
+      "id": "python-manifest-fails-as-unit",
+      "split": "development",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_manifest_drains_sibling_after_failure",
+      "before_failure": [" : MANIFEST_DRAINS_SIBLING"],
+      "prompt": "Исправь dispatch.issue_manifest. Операции оформления должны стартовать совместно. Ошибка одной отменяет незавершённые операции и возвращается вызывающему коду после их очистки. Успех возвращает результаты в порядке входа.",
+      "criteria": ["При ошибке незавершённая операция отменена и завершила очистку до выхода из issue_manifest.", "Сохраняется причина ошибки и порядок успешных результатов."]
+    },
+    {
+      "id": "python-independent-send-outcomes",
+      "split": "development",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_sends_return_individual_outcomes",
+      "before_failure": [" : SENDS_RETURN_INDIVIDUAL_OUTCOMES"],
+      "prompt": "Исправь dispatch.send_individually. Отправки выполняются совместно, но отказ одной не прерывает остальные. Верни отдельный результат или объект ошибки для каждой операции в порядке входа.",
+      "criteria": ["Успешные результаты и причина отказа одной отправки возвращены в порядке входа.", "Все независимые операции выполняются, даже если одна завершается ошибкой."]
+    },
+    {
+      "id": "aqa-check-missing-precondition",
+      "split": "development",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_tracking_check_rejects_missing_label",
+      "before_failure": [" : CHECK_REJECTS_MISSING_LABEL"],
+      "prompt": "Исправь checks.DispatchTests.test_tracking_code. Маркировка обязана существовать и содержать запрошенный код. Отсутствие маркировки или поля должно приводить к отказу утверждения.",
+      "criteria": ["Отсутствие маркировки, поля или нужного значения влечёт отказ утверждения.", "Корректная маркировка проходит проверку."]
+    },
+    {
+      "id": "aqa-independent-invoice-expectation",
+      "split": "development",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_invoice_check_detects_wrong_total",
+      "before_failure": [" : CHECK_DETECTS_WRONG_INVOICE_TOTAL"],
+      "prompt": "Усиль checks.DispatchTests.test_invoice_total. Итог счёта равен сумме произведений количеств на цены плюс сбор 130. Проверка должна поймать ошибку вычисления. Реализацию расчёта оставь как есть.",
+      "criteria": ["Ошибка функции расчёта вызывает отказ проверки итоговой суммы.", "Ожидаемая сумма выведена независимо от функции расчёта, валидный итог проходит проверку."]
+    },
+    {
+      "id": "aqa-restore-after-partial-setup",
+      "split": "development",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_failed_setup_restores_state_before_next_test",
+      "before_failure": [" : SETUP_STATE_RESTORED"],
+      "prompt": "Исправь dispatch.dispatch_environment. Подготовка может прерваться при чтении настроек после смены окружения и каталога. Ошибка должна сохраниться, а следующий тест должен увидеть прежние переменную окружения, рабочий каталог и настройки.",
+      "criteria": ["Следующий тест видит прежние env, cwd и настройки после частичного сбоя подготовки.", "Подготовка по-прежнему меняет состояние на время работы и передаёт исходную ошибку вызывающему коду."]
+    },
+    {
+      "id": "python-expiry-injected-clock",
+      "split": "development",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_expiry_uses_injected_clock_at_boundary",
+      "before_failure": [" : EXPIRY_USES_INJECTED_CLOCK"],
+      "prompt": "Исправь dispatch.expired. При передаче clock возьми текущее время из этой функции. Срок истекает в момент дедлайна. Сохрани работу существующего вызова без clock и проверь границу без ожидания.",
+      "criteria": ["Подставляемые часы определяют результат до, в момент и после дедлайна.", "Существующий вызов без clock сохраняет монотонные часы."]
+    },
+    {
+      "id": "control-python-successful-batch-order",
+      "split": "control",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_successful_batches_preserve_input_order",
+      "before_failure": [],
+      "prompt": "Проверь порядок результатов двух пакетных операций при успешном завершении и на пустом входе. Меняй код только при нарушении описанного поведения: результаты следуют порядку входа.",
+      "criteria": ["Две пакетные операции возвращают результаты в порядке входа и пустой список на пустом входе."]
+    },
+    {
+      "id": "control-aqa-valid-dispatch-data",
+      "split": "control",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_project_checks_accept_valid_data",
+      "before_failure": [],
+      "prompt": "Запусти проверки правильной маркировки и суммы счёта на обычных данных. Проверь, что они действительно исполнены и прошли.",
+      "criteria": ["На валидных входах обе проверки выполнены и прошли."]
+    },
+    {
+      "id": "control-aqa-successful-environment-cleanup",
+      "split": "control",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_successful_setup_restores_original_absence",
+      "before_failure": [],
+      "prompt": "Проверь обычный выход из dispatch.dispatch_environment. Когда регион изначально не задан, после выхода должны исчезнуть добавленная переменная окружения и временные поля настроек. Рабочий каталог должен восстановиться.",
+      "criteria": ["После успешного контекста cwd и настройки восстановлены, добавленной переменной окружения нет."]
+    },
+    {
+      "id": "control-python-default-clock",
+      "split": "control",
+      "base": "9d3ad22d4f7fd61cc2112d5d66634d5d766bb367",
+      "reference": "bbbbe3dae4a223ae6c66a036d3bfde7b72993b68",
+      "oracle_file": "oracle.py",
+      "test": "oracle.DispatchContractTests.test_expiry_accepts_existing_calls",
+      "before_failure": [],
+      "prompt": "Проверь совместимость вызова expired(deadline) без передачи часов для заведомо будущего и прошедшего срока.",
+      "criteria": ["Вызов expired(deadline) правильно классифицирует заведомо будущий и прошедший срок."]
+    }
+  ]
+}

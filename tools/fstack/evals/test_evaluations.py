@@ -152,11 +152,10 @@ class EvaluationTests(unittest.TestCase):
     def test_candidate_syntax_error_is_failure_not_environment_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            path = root / "scripts/tests/test_memory_store.py"
-            path.parent.mkdir(parents=True)
-            case = {"oracle_file": "scripts/tests/test_memory_store.py", "reference": "ref",
-                    "test": "scripts.tests.test_memory_store.MemoryStoreTests.test_one"}
-            with patch.object(corpus, "git", return_value=b"def invalid syntax!\n"):
+            (root / "dispatch.py").write_bytes(b"def invalid syntax!\n")
+            case = {"oracle_file": "oracle.py", "reference": "ref", "test": "oracle.DispatchContractTests.test_one"}
+            oracle = b"import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).parent))\nimport dispatch\n"
+            with patch.object(corpus, "git", return_value=oracle):
                 self.assertEqual(corpus.grade(root, case, root)["status"], "fail")
 
     def test_grade_uses_saved_source_instead_of_solver_bytecode(self):
