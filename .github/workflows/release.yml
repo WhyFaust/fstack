@@ -82,25 +82,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Rust, сборка и тесты
+      - name: Подготовить команду проверки и выбрать исходники пакета
+        env:
+          PACKAGE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          git show HEAD:.github/workflows/check.py > "$RUNNER_TEMP/fstack-check.py"
+          git checkout --detach "$PACKAGE_SHA"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Установить зависимости тестов Python
+        if: runner.os == 'Linux' && hashFiles('tools/fstack/evals/requirements.txt') != ''
+        run: python -m pip install -r tools/fstack/evals/requirements.txt
+      - name: Собрать бинарник выпуска
         run: |
           rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt,clippy
-          cargo "+$TOOLCHAIN" fmt --manifest-path "$CARGO_MANIFEST" -- --check
-          cargo "+$TOOLCHAIN" clippy --all-targets --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST" -- -D warnings
-          cargo "+$TOOLCHAIN" test --release --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST"
           cargo "+$TOOLCHAIN" build --release --locked --target "$TARGET" --manifest-path "$CARGO_MANIFEST"
-      - name: Проверить пакет и версию
+      - name: Выполнить общие проверки
+        run: |
+          options=()
+          if [[ "$RUNNER_OS" != Linux ]]; then options+=(--skip-python-tests); fi
+          python "$RUNNER_TEMP/fstack-check.py" --toolchain "$TOOLCHAIN" --target "$TARGET" --binary "$BINARY" "${options[@]}"
+      - name: Проверить версию относительно базы
+        if: runner.os == 'Linux' && needs.source.outputs.base != ''
         env:
           CHANGE_BASE: ${{ needs.source.outputs.base }}
-        run: |
-          "$BINARY" --package . check-package .
-          "$BINARY" --package . release check
-          if [[ -n "$CHANGE_BASE" && "$RUNNER_OS" == "Linux" ]]; then
-            "$BINARY" --package . release check-next "$CHANGE_BASE"
-          fi
+        run: '"$BINARY" --package . release check-next "$CHANGE_BASE"'
       - name: Проверить доступность версии в GitHub Releases
         if: runner.os == 'Linux'
         env:
@@ -111,15 +121,6 @@ jobs:
           plan=$("$BINARY" --package . release plan)
           echo "$plan"
           if [[ "$WORKFLOW_ONLY" == true ]]; then jq -e '.publish == false' <<< "$plan"; fi
-      - uses: actions/setup-python@v7
-        if: runner.os == 'Linux'
-        with:
-          python-version: '3.12'
-      - name: Тесты измерителя и экспериментов
-        if: runner.os == 'Linux'
-        run: |
-          python -m unittest discover -s tools/fstack/benchmarks -v
-          python -m unittest discover -s tools/fstack/evals -v
       - name: Проверить установленный пакет и вызов навыка в Codex
         if: runner.os == 'Linux'
         run: |
