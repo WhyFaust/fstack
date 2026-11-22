@@ -30,7 +30,7 @@ $start.FileName = $binary
 $start.WorkingDirectory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EncodedWorkingDirectory))
 $start.UseShellExecute = $false
 $package = [IO.Path]::GetFullPath($env:PLUGIN_ROOT).TrimEnd([char]92, [char]47)
-$start.Arguments = '--package "' + $package + '" memory hook ' + $EventName
+$start.Arguments = '--package "' + $package + '" hook ' + $EventName
 $process = [Diagnostics.Process]::Start($start)
 try {
     $process.WaitForExit()

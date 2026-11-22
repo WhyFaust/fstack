@@ -340,10 +340,6 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         ("sessionStart", 2),
         ("subagentStart", 1),
         ("userPromptSubmit", 1),
-        ("postToolUse", 1),
-        ("stop", 1),
-        ("subagentStop", 1),
-        ("interrupt", 1),
     ]);
     let mut actual_handlers = BTreeMap::new();
     for hook in &hooks {

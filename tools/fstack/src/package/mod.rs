@@ -482,25 +482,17 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
     let config = json_file(&contained(root, root, relative, false)?)?;
     let hooks = config["hooks"]
         .as_object()
-        .ok_or("Неверный набор событий памяти")?;
-    let expected = [
-        "SessionStart",
-        "SubagentStart",
-        "UserPromptSubmit",
-        "PostToolUse",
-        "Stop",
-        "SubagentStop",
-        "Interrupt",
-    ];
+        .ok_or("Неверный набор событий координатора")?;
+    let expected = ["SessionStart", "SubagentStart", "UserPromptSubmit"];
     require(
         hooks.len() == expected.len() && expected.iter().all(|e| hooks.contains_key(*e)),
-        "Неверный набор событий памяти",
+        "Неверный набор событий координатора",
     )?;
-    contained(root, root, "tools/fstack/src/memory", true)?;
+    contained(root, root, "tools/fstack/src/coordinator", true)?;
     contained(root, root, "launchers/fstack.sh", false)?;
     contained(root, root, "launchers/fstack.ps1", false)?;
-    contained(root, root, "hooks/memory.sh", false)?;
-    contained(root, root, "hooks/memory.ps1", false)?;
+    contained(root, root, "hooks/coordinator.sh", false)?;
+    contained(root, root, "hooks/coordinator.ps1", false)?;
     contained(root, root, "hooks/runtime-unavailable.json", false)?;
     let runtime_id = read(&contained(root, root, "launchers/runtime-id", false)?)?;
     require(
@@ -517,11 +509,7 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
             format!("{event}: неверное число команд хуков"),
         )?;
         require(
-            if event == "PostToolUse" {
-                groups[0]["matcher"] == "^Bash$"
-            } else {
-                groups[0].get("matcher").is_none()
-            },
+            groups[0].get("matcher").is_none(),
             format!("{event}: неверный фильтр хука"),
         )?;
         for (index, handler) in handlers.iter().enumerate() {
@@ -534,7 +522,7 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
 }
 
 fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
-    if matches!(event, "SessionStart" | "UserPromptSubmit" | "PostToolUse") {
+    if matches!(event, "SessionStart" | "UserPromptSubmit") {
         require(
             handler["additionalContextLimit"].as_u64() == Some(0),
             format!(
@@ -545,8 +533,6 @@ fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
     let timeout = match event {
         "Bootstrap" => 420,
         "SessionStart" => 10,
-        "Stop" | "SubagentStop" => 90,
-        "Interrupt" => 3,
         _ => 5,
     };
     require(
@@ -555,9 +541,9 @@ fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
         format!("{event}: неверный режим запуска хука"),
     )?;
     require(handler["type"] == "command", "Ожидался командный хук")?;
-    let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/memory.sh" {event}"#);
+    let posix = format!(r#"/bin/sh "$PLUGIN_ROOT/hooks/coordinator.sh" {event}"#);
     let windows = format!(
-        r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'memory.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
+        r#"\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -Command "& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'coordinator.ps1')))) {event} $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))""#
     );
     require(
         string(handler, "command")? == posix,

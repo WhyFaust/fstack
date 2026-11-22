@@ -482,10 +482,10 @@ fn complete_package_rejects_broken_release_contracts() {
         fs::write(&path, original).unwrap();
     }
     let hooks = json_file(&package.join("hooks/hooks.json")).unwrap();
-    let mut synchronous = hooks["hooks"]["Stop"][0]["hooks"][0].clone();
+    let mut synchronous = hooks["hooks"]["SessionStart"][0]["hooks"][1].clone();
     synchronous["async"] = json!("false");
-    assert!(check_hook_command("Stop", &synchronous).is_err());
-    for event in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
+    assert!(check_hook_command("SessionStart", &synchronous).is_err());
+    for event in ["SessionStart", "UserPromptSubmit"] {
         let mut handler = hooks["hooks"][event][0]["hooks"]
             .as_array()
             .unwrap()

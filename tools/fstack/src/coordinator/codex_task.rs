@@ -1,4 +1,4 @@
-use super::{format, io, read_json};
+use super::{io, matches, read_json};
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
@@ -37,15 +37,12 @@ struct Transcript {
 
 fn turn_id(id: &Value) -> bool {
     id.as_str()
-        .is_some_and(|id| format::matches(r"\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z", id))
+        .is_some_and(|id| matches(r"\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z", id))
 }
 
 fn session_file(state: &Path, transcript: &Path, session: &str) -> Option<()> {
-    let fstack = state.parent()?;
-    let sessions = fstack.parent()?.join("sessions");
-    if fstack.file_name()? != "fstack"
-        || state.file_name()? != "memory"
-        || !transcript.is_absolute()
+    let sessions = state.join("sessions");
+    if !transcript.is_absolute()
         || transcript
             .components()
             .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
@@ -58,7 +55,7 @@ fn session_file(state: &Path, transcript: &Path, session: &str) -> Option<()> {
         .strip_prefix("rollout-")?
         .strip_suffix(".jsonl")?
         .strip_suffix(session)?;
-    if !format::matches(
+    if !matches(
         r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-\z",
         time,
     ) {
@@ -159,7 +156,6 @@ fn latest_turn(
     transcript: &Transcript,
     cwd: Option<&Path>,
     expected: Option<&str>,
-    allow_completed: bool,
 ) -> Option<Turn> {
     let mut turn: Option<ActiveTurn> = None;
     let mut communication = false;
@@ -204,9 +200,7 @@ fn latest_turn(
             (Some("event_msg"), Some("task_complete" | "turn_complete" | "turn_aborted"))
                 if data["turn_id"] == active.id =>
             {
-                if !allow_completed || event == Some("turn_aborted") {
-                    turn = None;
-                }
+                turn = None;
             }
             (Some("turn_context"), _) if data["turn_id"] == active.id => {
                 if let Some(cwd) = cwd {
@@ -244,15 +238,6 @@ fn latest_turn(
     })
 }
 
-fn hook_transcript(state: &Path, payload: &Value, session: &str) -> Option<Transcript> {
-    let path = if payload["hook_event_name"] == "SubagentStop" {
-        &payload["agent_transcript_path"]
-    } else {
-        &payload["transcript_path"]
-    };
-    transcript(state, path, session)
-}
-
 pub(super) fn current(
     state: &Path,
     payload: &Value,
@@ -260,51 +245,9 @@ pub(super) fn current(
     session: &str,
     turn: Option<&str>,
 ) -> Option<Turn> {
-    let local = hook_transcript(state, payload, session)?;
-    let mut turn = latest_turn(&local, Some(cwd), turn, false)?;
-    if payload["agent_id"] == session {
-        let parent = &local.header["source"]["subagent"]["thread_spawn"]["parent_thread_id"];
-        if !turn_id(parent) || parent == session {
-            return None;
-        }
-        turn.delegated = true;
-        if payload["hook_event_name"] == "SubagentStop" {
-            let parent = transcript(state, &payload["transcript_path"], parent.as_str()?)?;
-            if latest_turn(&parent, None, None, true)?.mode == Mode::Plan {
-                turn.mode = Mode::Plan;
-            }
-        }
-    } else {
-        turn.delegated &=
-            local.header["originator"] == "Codex Desktop" && local.header["source"] == "vscode";
-    }
+    let local = transcript(state, &payload["transcript_path"], session)?;
+    let mut turn = latest_turn(&local, Some(cwd), turn)?;
+    turn.delegated &=
+        local.header["originator"] == "Codex Desktop" && local.header["source"] == "vscode";
     Some(turn)
-}
-
-pub(super) fn cancelled(state: &Path, payload: &Value, session: &str, turn: &str) -> bool {
-    let Some(transcript) = hook_transcript(state, payload, session) else {
-        return false;
-    };
-    transcript
-        .tail
-        .lines()
-        .filter(|line| {
-            line.contains(turn) && (line.contains("\"turn_aborted\"") || line.contains("\"plan\""))
-        })
-        .filter_map(|line| read_json(line.as_bytes(), line.len()).ok())
-        .any(|row| {
-            let data = &row["payload"];
-            data["turn_id"] == turn
-                && match row["type"].as_str() {
-                    Some("event_msg") => {
-                        data["type"] == "turn_aborted"
-                            || (matches!(
-                                data["type"].as_str(),
-                                Some("task_started" | "turn_started")
-                            ) && data["collaboration_mode_kind"] == "plan")
-                    }
-                    Some("turn_context") => data["collaboration_mode"]["mode"] == "plan",
-                    _ => false,
-                }
-        })
 }

@@ -6,16 +6,19 @@ rust-version = "1.90"
 license = "MIT"
 
 [dependencies]
-fmem = { git = "https://github.com/WhyFaust/fmem.git", rev = "fb70495eb8558b7b13b3fed24bfe134f5563ce9c", default-features = false }
 regex = "1.11"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 toml = "0.8"
 sha2 = "0.10"
-rusqlite = { version = "0.37", features = ["bundled"] }
 libc = "0.2"
+fs2 = "0.4"
+getrandom = "0.3"
 tempfile = "3"
 
 zip = { version = "2", default-features = false, features = ["deflate"] }
 serde = { version = "1.0", features = ["derive"] }
 pulldown-cmark = { version = "0.13", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

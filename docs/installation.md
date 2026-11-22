@@ -34,6 +34,10 @@ fstack doctor --codex /absolute/path/to/codex --json
 Код выхода `0` означает успех, `1` — ошибки в поле `issues`.
 Профиль задаёт `CODEX_HOME`.
 
+Хуки `SessionStart`, `SubagentStart` и `UserPromptSubmit` управляют координатором.
+Его ручной выбор хранится в `CODEX_HOME/fstack/coordinator`. Профиль, инструкции
+и настройки подагентов остаются под управлением Codex и пользователя.
+
 ## Обновление
 
 Клиент с автообновлением получает marketplace при старте. Для ручного обновления:
@@ -92,4 +96,3 @@ fstack или процитируй правило. Навык может вос�
 
 `codex plugin remove fstack@fstack` удаляет плагин,
 `codex plugin marketplace remove fstack` — регистрацию источника.
-Заметки Obsidian сохраняются.

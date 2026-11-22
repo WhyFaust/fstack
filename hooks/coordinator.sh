@@ -19,4 +19,4 @@ while ! binary=$(/bin/sh "$PLUGIN_ROOT/launchers/fstack.sh" --runtime-path 2>/de
     fi
     exit 0
 done
-exec "$binary" --package "$PLUGIN_ROOT" memory hook "$1"
+exec "$binary" --package "$PLUGIN_ROOT" hook "$1"
