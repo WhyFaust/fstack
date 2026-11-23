@@ -18,13 +18,18 @@ from pathlib import Path
 from app_server import Server, environment, trust_fixture_hooks
 
 
-def check_mr_route(instruction: str, coordinator: Path, watch_pr: Path) -> None:
+def check_mr_route(instruction: str, coordinator: Path, watch_pr: Path, merge: Path) -> None:
     route = re.search(
         r"До первого чтения или записи по GitLab MR[^.]*?открой\s+"
         r"\[\$fstack:watch-pr\]\(([^)]+)\)", instruction,
     )
     if not route or (coordinator.parent / route[1]).resolve() != watch_pr:
         raise RuntimeError("В инструкции координатора нет перехода к установленному watch-pr до первого обращения к MR")
+    watch_instruction = watch_pr.read_text(encoding="utf-8")
+    for label, action in [("approval", "одобрения"), ("merge", "слияния")]:
+        link = re.search(rf"\[{label}\]\(([^)#]+)(?:#[^)]+)?\)", watch_instruction)
+        if not link or (watch_pr.parent / link[1]).resolve() != merge:
+            raise RuntimeError(f"Из watch-pr нет перехода к установленному merge для {action}")
 
 
 def check_quote_guard(name: str, instruction: str) -> None:
@@ -288,7 +293,7 @@ stream_max_retries = 0
                     check_quote_guard(selected, sources[selected])
                 if selected == "fstack:faust-mode":
                     instruction = next(text for text in texts if sources[selected] in text)
-                    check_mr_route(instruction, entries[selected], entries["fstack:watch-pr"])
+                    check_mr_route(instruction, entries[selected], entries["fstack:watch-pr"], entries["fstack:merge"])
                 else:
                     try:
                         check_hook_context(texts, root, signals, active=False, index=False)
