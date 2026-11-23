@@ -101,7 +101,8 @@ def grade(case: dict, result: dict, instructions: dict[str, str]) -> list[str]:
         if spawns or any(call["name"] in {"delegate_task", "create_threads", "t3_thread_launch"}
                          for call in routing["calls"]):
             issues.append("Запрошен запуск при недоступном провайдере")
-        if not re.search(r"недоступ|не поддерж|не настро|не найден|отсутств|\bнет\b", result["final"], re.I):
+        if not re.search(r"недоступ|не поддерж|не настро|не найден|отсутств|\bнет\b|не позволя(?:ет|ют) выбрать",
+                         result["final"], re.I):
             issues.append("Ответ не объясняет недоступность провайдера")
     if case["result"] and case["result"] not in result["final"]:
         issues.append("Ответ не содержит точный результат")

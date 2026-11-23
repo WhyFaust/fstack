@@ -59,6 +59,8 @@ class RoutingTests(unittest.TestCase):
         skill = self.command(sources["delegate"])
         final = f"Провайдер {unavailable['result']} недоступен."
         self.assertEqual(grade(unavailable, self.observation(skill, final=final), sources), [])
+        final = f"Инструмент запуска подагентов не позволяет выбрать провайдера {unavailable['result']}."
+        self.assertEqual(grade(unavailable, self.observation(skill, final=final), sources), [])
         launch = self.observation(skill, final=final, calls=[{"name": "spawn_agent"}])
         self.assertTrue(grade(unavailable, launch, sources))
 

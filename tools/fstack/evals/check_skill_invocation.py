@@ -211,7 +211,8 @@ stream_max_retries = 0
             raise RuntimeError(f"Снимок установлен без исполняемого runtime {binary}")
         signals = catalog_signals(root, entries)
         trust_fixture_hooks(codex, home, workspace)
-        server = Server(codex, home, workspace, isolated_user=True, path_prefix=transport)
+        hook_log = scratch / "hooks.log"
+        server = Server(codex, home, workspace, isolated_user=True, path_prefix=transport, hook_log=hook_log)
         thread = threading.Thread(target=provider.serve_forever)
         thread.start()
         try:
@@ -316,6 +317,12 @@ stream_max_retries = 0
 
             texts = turn_texts(server, provider, start_thread(server, workspace), "Проверь временный чат.", effort="ultra")
             check_hook_context(texts, root, signals, active=False, index=False)
+        except (RuntimeError, TimeoutError):
+            outcomes = [line for line in hook_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                        if "hook.command_outcome" in line]
+            for outcome in outcomes[-12:]:
+                print(outcome, file=sys.stderr)
+            raise
         finally:
             server.close()
             provider.shutdown()

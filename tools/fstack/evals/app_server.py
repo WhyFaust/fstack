@@ -120,16 +120,21 @@ def authentication(home: Path, auth_home: Path):
 
 class Server:
     def __init__(self, executable: str, home: Path, cwd: Path, *, isolated_user: bool = False,
-                 path_prefix: Path | None = None):
+                 path_prefix: Path | None = None, hook_log: Path | None = None):
         env = environment(home, isolated_user=isolated_user)
         if path_prefix is not None:
             env["PATH"] = os.pathsep.join((str(path_prefix), env.get("PATH", "")))
-        self.process = subprocess.Popen(
-            [executable, "app-server", "--listen", "stdio://"], cwd=cwd,
-            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-            start_new_session=os.name != "nt",
-        )
+        with contextlib.ExitStack() as resources:
+            stderr = subprocess.DEVNULL
+            if hook_log is not None:
+                env["RUST_LOG"] = "codex_hooks::engine::command_runner=trace"
+                stderr = resources.enter_context(hook_log.open("wb"))
+            self.process = subprocess.Popen(
+                [executable, "app-server", "--listen", "stdio://"], cwd=cwd,
+                env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=stderr, text=True, encoding="utf-8", errors="replace",
+                start_new_session=os.name != "nt",
+            )
         self.messages: queue.Queue = queue.Queue()
         self.pending: list[dict] = []
         self.serial = 0
