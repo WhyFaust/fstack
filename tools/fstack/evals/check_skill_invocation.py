@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -77,6 +78,13 @@ def turn_texts(server: Server, provider: ThreadingHTTPServer, thread_id: str, pr
     server.request("turn/start", params, deadline)
     while True:
         msg = server.pending.pop(0) if server.pending else server.receive(deadline)
+        if msg.get("method") == "hook/completed" and msg["params"]["threadId"] == thread_id:
+            hook = msg["params"]["run"]
+            if hook["status"] == "failed":
+                raise RuntimeError(
+                    f"Хук {hook['eventName']} завершился ошибкой для {prompt!r} "
+                    f"за {hook.get('durationMs')} мс: {hook.get('entries') or hook.get('statusMessage')}"
+                )
         if msg.get("method") == "turn/completed" and msg["params"]["threadId"] == thread_id:
             if msg["params"]["turn"]["status"] != "completed":
                 raise RuntimeError(f"Локальный запрос не завершён: {msg['params']['turn'].get('error')}")
@@ -122,9 +130,11 @@ def check_hook_context(texts: list[str], root: Path, signals: dict[str, str], *,
             raise RuntimeError(f"Сигнал {name!r} встречается {count} раз, ожидалось {int(index)}")
 
 
-def cold_marketplace(package: Path, scratch: Path) -> tuple[Path, Path]:
+def cold_marketplace(package: Path, scratch: Path, *, stub: bool) -> tuple[Path, Path | None]:
     market = scratch / "marketplace"
     shutil.copytree(package, market, ignore=shutil.ignore_patterns("bin", ".git", "target"))
+    if not stub:
+        return market, None
     transport = scratch / "transport"
     transport.mkdir()
     binary = transport / "binary"
@@ -138,23 +148,24 @@ while [ "${1#https://}" = "$1" ]; do shift; done
 case "$1" in
     *.sha256)
         name=${1##*/}
-        sleep 8
         printf '%s  %s\n' "$(cat "$root/sha256")" "${name%.sha256}" > "$3"
         ;;
-    *) cp "$root/binary" "$3" ;;
+    *) sleep 8; cp "$root/binary" "$3" ;;
 esac
 """, encoding="utf-8")
     curl.chmod(0o700)
     return market, transport
 
 
-def check(package: Path, codex: str, scratch: Path) -> None:
+def check(package: Path, codex: str, scratch: Path, *, measure_cold: bool = False) -> dict | None:
     home = scratch / "profile"
     workspace = scratch / "workspace"
     home.mkdir()
     workspace.mkdir()
     env = environment(home, isolated_user=True)
-    marketplace, transport = cold_marketplace(package, scratch) if os.name != "nt" else (package, None)
+    cold_profile = measure_cold or os.name != "nt"
+    marketplace, transport = (cold_marketplace(package, scratch, stub=not measure_cold)
+                              if cold_profile else (package, None))
 
     def run(*args: str) -> str:
         result = subprocess.run([codex, *args], cwd=workspace, env=env,
@@ -194,9 +205,9 @@ stream_max_retries = 0
                 raise RuntimeError(f"Установленная инструкция {name} отличается от пакета")
 
         binary = root / "bin" / ("fstack.exe" if os.name == "nt" else "fstack")
-        if transport and binary.exists():
+        if cold_profile and (binary.exists() or (home / "fstack/runtime").exists()):
             raise RuntimeError("Для проверки первого запроса нужен пустой кэш")
-        if not transport and (binary.is_symlink() or not binary.is_file() or not os.access(binary, os.X_OK)):
+        if not cold_profile and (binary.is_symlink() or not binary.is_file() or not os.access(binary, os.X_OK)):
             raise RuntimeError(f"Снимок установлен без исполняемого runtime {binary}")
         signals = catalog_signals(root, entries)
         trust_fixture_hooks(codex, home, workspace)
@@ -205,12 +216,19 @@ stream_max_retries = 0
         thread.start()
         try:
             server.initialize(time.monotonic() + 60)
-            if transport:
+            if cold_profile:
+                opening = time.monotonic()
                 cold = start_thread(server, workspace)
+                opened = time.monotonic()
                 texts = turn_texts(server, provider, cold, "/faust-mode")
+                ready = time.monotonic()
                 check_hook_context(texts, root, signals, active=True, index=True)
                 texts = turn_texts(server, provider, cold, "Продолжи первый чат.")
                 check_hook_context(texts, root, signals, active=True, index=False)
+                if measure_cold:
+                    return {"open_seconds": opened - opening, "ready_seconds": ready - opening,
+                            "package_version": installed["version"], "client": run("--version").strip(),
+                            "runtime_id": (root / "launchers/runtime-id").read_text(encoding="ascii").strip()}
             groups = server.request("skills/list", {"cwds": [str(workspace)], "forceReload": True},
                                     time.monotonic() + 60)["data"]
             if not groups or any(group.get("errors") for group in groups):
@@ -251,7 +269,10 @@ stream_max_retries = 0
                     instruction = next(text for text in texts if sources[selected] in text)
                     check_mr_route(instruction, entries[selected], entries["fstack:watch-pr"])
                 else:
-                    check_hook_context(texts, root, signals, active=False, index=False)
+                    try:
+                        check_hook_context(texts, root, signals, active=False, index=False)
+                    except RuntimeError as exc:
+                        raise RuntimeError(f"Запрос {prompt!r}: {exc}") from exc
 
             quoted = "Объясни пример команды в документации: `$fstack:why`."
             texts = turn_texts(server, provider, start_thread(server, workspace), quoted)
@@ -309,6 +330,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
     parser.add_argument("--codex", default="codex")
+    parser.add_argument("--cold-samples", type=int, metavar="N", help="измерить N запусков с реальной загрузкой")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="fstack-skill-check-") as directory:
-        check(args.package.resolve(), args.codex, Path(directory).resolve(strict=True))
+    if args.cold_samples is not None and args.cold_samples < 20:
+        parser.error("для p95 нужно не менее 20 запусков")
+    samples = []
+    for _ in range(args.cold_samples or 1):
+        with tempfile.TemporaryDirectory(prefix="fstack-skill-check-") as directory:
+            sample = check(args.package.resolve(), args.codex, Path(directory).resolve(strict=True),
+                           measure_cold=args.cold_samples is not None)
+            if sample is not None:
+                samples.append(sample)
+    if samples:
+        readiness = sorted(sample["ready_seconds"] for sample in samples)
+        p95 = readiness[math.ceil(len(readiness) * .95) - 1]
+        longest = max(sample["open_seconds"] for sample in samples)
+        print(json.dumps({"samples": samples, "ready_p95_seconds": p95, "open_max_seconds": longest}))
+        sys.exit(0 if p95 <= 10 and longest <= 15 else 1)

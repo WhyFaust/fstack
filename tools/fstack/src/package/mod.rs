@@ -525,7 +525,7 @@ fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
             ),
         )?;
     }
-    let timeout = if event == "SessionStart" { 65 } else { 5 };
+    let timeout = if event == "SessionStart" { 15 } else { 5 };
     require(
         handler.get("async").map_or(Some(false), Value::as_bool) == Some(false)
             && handler["timeout"] == timeout,

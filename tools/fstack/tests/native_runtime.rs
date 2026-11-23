@@ -478,14 +478,23 @@ fn launcher_verifies_the_selected_release_asset_before_installing() {
     let cache = runtime.runtime_cache();
     let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
         .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let install = |digest: &str| {
+    let install = |digest: &str, operation: &str| {
         Command::new(&shell)
             .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
             .arg(r#"
                 $curl = [IO.Path]::Combine($env:SystemRoot, 'System32', 'curl.exe')
                 Set-Item -LiteralPath ('function:' + $curl) -Value {
                     $path = $args[-1]
-                    $content = if ($path.EndsWith('.sha256')) {
+                    $checksum = $path.EndsWith('.sha256')
+                    $time = if ($env:FSTACK_TEST_OPERATION -eq '-PrepareSession') {
+                        if ($checksum) { '3' } else { '10' }
+                    } else {
+                        if ($checksum) { '10' } else { '45' }
+                    }
+                    if ($args[[array]::IndexOf($args, '--max-time') + 1] -ne $time) {
+                        throw 'Unexpected download budget'
+                    }
+                    $content = if ($checksum) {
                         $env:FSTACK_TEST_DIGEST + '  ' + [IO.Path]::GetFileNameWithoutExtension($path)
                     } else { 'fixture runtime' }
                     [IO.File]::WriteAllText($path, $content)
@@ -493,21 +502,22 @@ fn launcher_verifies_the_selected_release_asset_before_installing() {
                 }
                 $PSModuleAutoLoadingPreference = 'None'
                 $launcher = [IO.Path]::Combine($env:PLUGIN_ROOT, 'launchers', 'fstack.ps1')
-                & ([scriptblock]::Create([IO.File]::ReadAllText($launcher))) -InstallRuntime
+                & ([scriptblock]::Create([IO.File]::ReadAllText($launcher))) $env:FSTACK_TEST_OPERATION
             "#)
             .env("CODEX_HOME", &runtime.codex_home)
             .env("PLUGIN_ROOT", &runtime.root)
             .env("FSTACK_TEST_DIGEST", digest)
+            .env("FSTACK_TEST_OPERATION", operation)
             .output()
             .unwrap()
     };
-    let rejected = install(&"0".repeat(64));
+    let rejected = install(&"0".repeat(64), "-InstallRuntime");
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("runtime checksum mismatch"));
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
 
     let bytes = b"fixture runtime";
-    let accepted = install(&format!("{:x}", Sha256::digest(bytes)));
+    let accepted = install(&format!("{:x}", Sha256::digest(bytes)), "-PrepareSession");
     assert!(
         accepted.status.success(),
         "{}",
@@ -537,14 +547,22 @@ fn first_prompt_can_activate_after_session_start_downloads_runtime() {
         &curl,
         r#"#!/bin/sh
 set -eu
-while [ "${1#https://}" = "$1" ]; do shift; done
+while [ "${1#https://}" = "$1" ]; do
+    if [ "$1" = --max-time ]; then
+        shift
+        budget=$1
+    fi
+    shift
+done
 case "$1" in
     *.sha256)
+        [ "$budget" = 3 ]
+        [ "$FSTACK_OFFLINE" != yes ] || exit 28
         sleep 1
         name=${1##*/}
         printf '%s  %s\n' "$(cat "$FSTACK_FIXTURES/digest")" "${name%.sha256}" > "$3"
         ;;
-    *) cp "$FSTACK_FIXTURES/binary" "$3" ;;
+    *) [ "$budget" = 10 ]; cp "$FSTACK_FIXTURES/binary" "$3" ;;
 esac
 "#,
     )
@@ -555,20 +573,37 @@ esac
         serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
     let handler = &hooks["hooks"]["SessionStart"][0]["hooks"][0];
     assert!(handler.get("async").is_none());
-    let mut command = Command::new("/bin/sh");
-    command
-        .args(["-c", handler["command"].as_str().unwrap()])
-        .env("PLUGIN_ROOT", &runtime.root)
-        .env("PATH", fixtures.path())
-        .env("FSTACK_FIXTURES", fixtures.path());
-    let session =
-        json!({"hook_event_name": "SessionStart", "cwd": runtime.project, "session_id": "cold"});
-    let output: Value = serde_json::from_str(&runtime.run(&mut command, Some(session))).unwrap();
-    assert!(output["hookSpecificOutput"]["additionalContext"].is_string());
+    assert_eq!(handler["timeout"], 15);
+    let start = |offline| -> Value {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", handler["command"].as_str().unwrap()])
+            .env("PLUGIN_ROOT", &runtime.root)
+            .env("PATH", fixtures.path())
+            .env("FSTACK_FIXTURES", fixtures.path())
+            .env("FSTACK_OFFLINE", offline);
+        let session = json!({"hook_event_name": "SessionStart", "cwd": runtime.project, "session_id": "cold"});
+        serde_json::from_str(&runtime.run(&mut command, Some(session))).unwrap()
+    };
     let submit = |turn, prompt| {
         runtime.hook(&hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0],
         Some(json!({"hook_event_name": "UserPromptSubmit", "cwd": runtime.project, "session_id": "cold", "turn_id": turn, "prompt": prompt})))
     };
+    assert!(start("yes")["systemMessage"]
+        .as_str()
+        .unwrap()
+        .contains("обычном режиме"));
+    assert!(submit("before", "/faust-mode")["systemMessage"]
+        .as_str()
+        .unwrap()
+        .contains("команда не применена"));
+    assert_eq!(fs::read_dir(runtime.runtime_cache()).unwrap().count(), 0);
+    assert!(start("no")["hookSpecificOutput"]["additionalContext"].is_string());
+    let ordinary = submit("ready", "Продолжи без команды");
+    assert!(ordinary["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .contains("Faust-mode выключен"));
     for (turn, prompt) in [("first", "/faust-mode"), ("second", "Продолжи")] {
         let output = submit(turn, prompt);
         assert!(output["hookSpecificOutput"]["additionalContext"]

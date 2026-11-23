@@ -4,7 +4,7 @@ if (!$env:PLUGIN_ROOT) { exit 0 }
 $launcher = [IO.Path]::Combine($env:PLUGIN_ROOT, 'launchers', 'fstack.ps1')
 try {
     $launch = [scriptblock]::Create([IO.File]::ReadAllText($launcher))
-    $operation = if ($EventName -eq 'SessionStart') { '-InstallRuntime' } else { '-RuntimePath' }
+    $operation = if ($EventName -eq 'SessionStart') { '-PrepareSession' } else { '-RuntimePath' }
     $binary = & $launch $operation
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)

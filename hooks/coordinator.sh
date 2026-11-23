@@ -3,7 +3,7 @@ set -eu
 [ -n "${PLUGIN_ROOT:-}" ] || exit 0
 launcher=$PLUGIN_ROOT/launchers/fstack.sh
 if [ "$1" = SessionStart ]; then
-    operation=--install-runtime
+    operation=--prepare-session
 else
     operation=--runtime-path
 fi
