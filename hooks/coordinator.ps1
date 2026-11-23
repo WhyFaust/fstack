@@ -19,7 +19,7 @@ if (!$binary) {
     }
     exit 0
 }
-$start = New-Object System.Diagnostics.ProcessStartInfo
+$start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName = $binary
 $start.WorkingDirectory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EncodedWorkingDirectory))
 $start.UseShellExecute = $false

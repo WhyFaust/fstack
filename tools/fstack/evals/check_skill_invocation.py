@@ -165,6 +165,8 @@ def windows_hook_probe(package: Path, scratch: Path) -> Path:
     code = wrapper.read_text(encoding="utf-8")
     for marker, label in (("$ErrorActionPreference = 'Stop'", "script"),
                           ("$binary = & $launch $operation", "launcher"),
+                          ("if (!$binary) {", "launcher returned"),
+                          ("$start = [Diagnostics.ProcessStartInfo]::new()", "start info"),
                           ("$process = [Diagnostics.Process]::Start($start)", "spawn"),
                           ("    $process.WaitForExit()", "wait"),
                           ("    exit $process.ExitCode", "exit")):
