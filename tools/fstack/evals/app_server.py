@@ -55,7 +55,7 @@ def toml_string(value: str | Path) -> str:
 
 
 def profile(home: Path, workspace: Path, readonly: list[Path] = (), executable: str | None = None,
-            editable: bool = True) -> None:
+            editable: bool = True, *, hooks: bool = False) -> None:
     home.mkdir(parents=True, exist_ok=False)
     scratch = workspace.with_name(workspace.name + "-scratch")
     scratch.mkdir(exist_ok=True)
@@ -75,6 +75,7 @@ cli_auth_credentials_store = "file"
 
 [features]
 apps = false
+hooks = {str(hooks).lower()}
 memory_tool = false
 multi_agent = true
 multi_agent_v2 = true
@@ -117,10 +118,14 @@ def authentication(home: Path, auth_home: Path):
 
 
 class Server:
-    def __init__(self, executable: str, home: Path, cwd: Path, *, isolated_user: bool = False):
+    def __init__(self, executable: str, home: Path, cwd: Path, *, isolated_user: bool = False,
+                 path_prefix: Path | None = None):
+        env = environment(home, isolated_user=isolated_user)
+        if path_prefix is not None:
+            env["PATH"] = os.pathsep.join((str(path_prefix), env.get("PATH", "")))
         self.process = subprocess.Popen(
             [executable, "app-server", "--listen", "stdio://"], cwd=cwd,
-            env=environment(home, isolated_user=isolated_user), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
             start_new_session=os.name != "nt",
         )

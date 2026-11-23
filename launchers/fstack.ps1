@@ -52,7 +52,8 @@ if (!(Test-RuntimeFile $binary)) {
         try {
             foreach ($suffix in @('.sha256', '')) {
                 $download = [IO.Path]::Combine($staging, "$asset$suffix")
-                & $curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --connect-timeout 15 --max-time 180 --retry 2 --retry-max-time 180 "$url$suffix" --output $download
+                $timeout = if ($suffix) { 10 } else { 45 }
+                & $curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --connect-timeout 10 --max-time $timeout "$url$suffix" --output $download
                 if ($LASTEXITCODE -ne 0) { throw "fstack: download failed ($LASTEXITCODE)" }
             }
             $download = [IO.Path]::Combine($staging, $asset)

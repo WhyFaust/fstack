@@ -244,10 +244,16 @@ pub(super) fn current(
     cwd: &Path,
     session: &str,
     turn: Option<&str>,
-) -> Option<Turn> {
-    let local = transcript(state, &payload["transcript_path"], session)?;
-    let mut turn = latest_turn(&local, Some(cwd), turn)?;
+) -> Result<Option<Turn>, &'static str> {
+    let path = &payload["transcript_path"];
+    if path.is_null() {
+        return Ok(None);
+    }
+    let local = transcript(state, path, session)
+        .ok_or("журнал чата отсутствует, недоступен или имеет неизвестный заголовок")?;
+    let mut turn = latest_turn(&local, Some(cwd), turn)
+        .ok_or("в журнале не подтверждены параметры текущего хода")?;
     turn.delegated &=
         local.header["originator"] == "Codex Desktop" && local.header["source"] == "vscode";
-    Some(turn)
+    Ok(Some(turn))
 }

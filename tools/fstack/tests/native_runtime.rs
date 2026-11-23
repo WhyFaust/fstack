@@ -381,10 +381,13 @@ fn startup_uses_the_cached_runtime_without_editing_personal_instructions() {
 
     let hooks: Value =
         serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
-    let bootstrap = &hooks["hooks"]["SessionStart"][0]["hooks"][0];
-    assert_eq!(bootstrap["async"], true);
+    let startup = &hooks["hooks"]["SessionStart"][0]["hooks"][0];
+    let input = || json!({"hook_event_name": "SessionStart", "cwd": runtime.project, "session_id": "startup"});
+    assert!(startup.get("async").is_none());
 
-    assert_eq!(runtime.hook(bootstrap, None), json!({}));
+    assert!(
+        runtime.hook(startup, Some(input()))["hookSpecificOutput"]["additionalContext"].is_string()
+    );
     let instructions = runtime.codex_home.join("AGENTS.md");
     let agents = runtime.codex_home.join("agents");
     assert!(!instructions.exists());
@@ -396,7 +399,9 @@ fn startup_uses_the_cached_runtime_without_editing_personal_instructions() {
     let agent = agents.join("custom.toml");
     fs::write(&agent, b"name = \"custom\"\n").unwrap();
 
-    assert_eq!(runtime.hook(bootstrap, None), json!({}));
+    assert!(
+        runtime.hook(startup, Some(input()))["hookSpecificOutput"]["additionalContext"].is_string()
+    );
     assert_eq!(fs::read(instructions).unwrap(), b"# User instructions\n");
     assert_eq!(fs::read(config).unwrap(), b"model = \"user-choice\"\n");
     assert_eq!(fs::read(agent).unwrap(), b"name = \"custom\"\n");
@@ -487,8 +492,8 @@ fn launcher_verifies_the_selected_release_asset_before_installing() {
                     $global:LASTEXITCODE = 0
                 }
                 $PSModuleAutoLoadingPreference = 'None'
-                $hook = [IO.Path]::Combine($env:PLUGIN_ROOT, 'hooks', 'coordinator.ps1')
-                & ([scriptblock]::Create([IO.File]::ReadAllText($hook))) Bootstrap
+                $launcher = [IO.Path]::Combine($env:PLUGIN_ROOT, 'launchers', 'fstack.ps1')
+                & ([scriptblock]::Create([IO.File]::ReadAllText($launcher))) -InstallRuntime
             "#)
             .env("CODEX_HOME", &runtime.codex_home)
             .env("PLUGIN_ROOT", &runtime.root)
@@ -509,6 +514,68 @@ fn launcher_verifies_the_selected_release_asset_before_installing() {
         String::from_utf8_lossy(&accepted.stderr)
     );
     assert_eq!(fs::read(cache.join("fstack.exe")).unwrap(), bytes);
+}
+
+#[cfg(unix)]
+#[test]
+fn first_prompt_can_activate_after_session_start_downloads_runtime() {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::PermissionsExt;
+
+    let runtime = Runtime::new();
+    let fixtures = tempfile::tempdir().unwrap();
+    let bytes = fs::read(&runtime.binary).unwrap();
+    fs::remove_file(&runtime.binary).unwrap();
+    fs::write(fixtures.path().join("binary"), &bytes).unwrap();
+    fs::write(
+        fixtures.path().join("digest"),
+        format!("{:x}", Sha256::digest(&bytes)),
+    )
+    .unwrap();
+    let curl = fixtures.path().join("curl");
+    fs::write(
+        &curl,
+        r#"#!/bin/sh
+set -eu
+while [ "${1#https://}" = "$1" ]; do shift; done
+case "$1" in
+    *.sha256)
+        sleep 1
+        name=${1##*/}
+        printf '%s  %s\n' "$(cat "$FSTACK_FIXTURES/digest")" "${name%.sha256}" > "$3"
+        ;;
+    *) cp "$FSTACK_FIXTURES/binary" "$3" ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(curl, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let hooks: Value =
+        serde_json::from_slice(&fs::read(runtime.root.join("hooks/hooks.json")).unwrap()).unwrap();
+    let handler = &hooks["hooks"]["SessionStart"][0]["hooks"][0];
+    assert!(handler.get("async").is_none());
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", handler["command"].as_str().unwrap()])
+        .env("PLUGIN_ROOT", &runtime.root)
+        .env("PATH", fixtures.path())
+        .env("FSTACK_FIXTURES", fixtures.path());
+    let session =
+        json!({"hook_event_name": "SessionStart", "cwd": runtime.project, "session_id": "cold"});
+    let output: Value = serde_json::from_str(&runtime.run(&mut command, Some(session))).unwrap();
+    assert!(output["hookSpecificOutput"]["additionalContext"].is_string());
+    let submit = |turn, prompt| {
+        runtime.hook(&hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0],
+        Some(json!({"hook_event_name": "UserPromptSubmit", "cwd": runtime.project, "session_id": "cold", "turn_id": turn, "prompt": prompt})))
+    };
+    for (turn, prompt) in [("first", "/faust-mode"), ("second", "Продолжи")] {
+        let output = submit(turn, prompt);
+        assert!(output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("включён faust-mode"));
+    }
 }
 
 #[cfg(unix)]

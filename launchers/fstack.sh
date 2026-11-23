@@ -67,11 +67,10 @@ install_runtime() {
     staging=$(mktemp -d "$target_dir/.download.XXXXXXXX")
     trap 'rm -rf -- "$staging"' EXIT
     trap 'exit 1' HUP INT TERM
-    for suffix in .sha256 ''; do
-        curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
-            --connect-timeout 15 --max-time 180 --retry 2 --retry-max-time 180 \
-            "$url$suffix" --output "$staging/fstack$suffix"
-    done
+    curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+        --connect-timeout 10 --max-time 10 "$url.sha256" --output "$staging/fstack.sha256"
+    curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+        --connect-timeout 10 --max-time 45 "$url" --output "$staging/fstack"
     if command -v sha256sum >/dev/null 2>&1; then
         digest=$(sha256sum < "$staging/fstack")
     else

@@ -1,8 +1,10 @@
 """Проверяет обнаружение и явную загрузку всех установленных навыков Codex."""
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -119,12 +121,39 @@ def check_hook_context(texts: list[str], root: Path, signals: dict[str, str], *,
             raise RuntimeError(f"Сигнал {name!r} встречается {count} раз, ожидалось {int(index)}")
 
 
+def cold_marketplace(package: Path, scratch: Path) -> tuple[Path, Path]:
+    market = scratch / "marketplace"
+    shutil.copytree(package, market, ignore=shutil.ignore_patterns("bin", ".git", "target"))
+    transport = scratch / "transport"
+    transport.mkdir()
+    binary = transport / "binary"
+    shutil.copy2(package / "bin/fstack", binary)
+    (transport / "sha256").write_text(hashlib.sha256(binary.read_bytes()).hexdigest(), encoding="ascii")
+    curl = transport / "curl"
+    curl.write_text(r"""#!/bin/sh
+set -eu
+root=${0%/*}
+while [ "${1#https://}" = "$1" ]; do shift; done
+case "$1" in
+    *.sha256)
+        name=${1##*/}
+        sleep 8
+        printf '%s  %s\n' "$(cat "$root/sha256")" "${name%.sha256}" > "$3"
+        ;;
+    *) cp "$root/binary" "$3" ;;
+esac
+""", encoding="utf-8")
+    curl.chmod(0o700)
+    return market, transport
+
+
 def check(package: Path, codex: str, scratch: Path) -> None:
     home = scratch / "profile"
     workspace = scratch / "workspace"
     home.mkdir()
     workspace.mkdir()
     env = environment(home, isolated_user=True)
+    marketplace, transport = cold_marketplace(package, scratch) if os.name != "nt" else (package, None)
 
     def run(*args: str) -> str:
         result = subprocess.run([codex, *args], cwd=workspace, env=env,
@@ -150,7 +179,7 @@ supports_websockets = false
 request_max_retries = 0
 stream_max_retries = 0
 ''', encoding="utf-8")
-        run("plugin", "marketplace", "add", str(package))
+        run("plugin", "marketplace", "add", str(marketplace))
         installed = json.loads(run("plugin", "add", "fstack@fstack", "--json"))
         root = Path(installed["installedPath"]).resolve()
         sources = {f"fstack:{entry.parent.name}": entry.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
@@ -164,15 +193,23 @@ stream_max_retries = 0
                 raise RuntimeError(f"Установленная инструкция {name} отличается от пакета")
 
         binary = root / "bin" / ("fstack.exe" if os.name == "nt" else "fstack")
-        if binary.is_symlink() or not binary.is_file() or not os.access(binary, os.X_OK):
+        if transport and binary.exists():
+            raise RuntimeError("Для проверки первого запроса нужен пустой кэш")
+        if not transport and (binary.is_symlink() or not binary.is_file() or not os.access(binary, os.X_OK)):
             raise RuntimeError(f"Снимок установлен без исполняемого runtime {binary}")
         signals = catalog_signals(root, entries)
         trust_fixture_hooks(codex, home, workspace)
-        server = Server(codex, home, workspace, isolated_user=True)
+        server = Server(codex, home, workspace, isolated_user=True, path_prefix=transport)
         thread = threading.Thread(target=provider.serve_forever)
         thread.start()
         try:
             server.initialize(time.monotonic() + 60)
+            if transport:
+                cold = start_thread(server, workspace)
+                texts = turn_texts(server, provider, cold, "/faust-mode")
+                check_hook_context(texts, root, signals, active=True, index=True)
+                texts = turn_texts(server, provider, cold, "Продолжи первый чат.")
+                check_hook_context(texts, root, signals, active=True, index=False)
             groups = server.request("skills/list", {"cwds": [str(workspace)], "forceReload": True},
                                     time.monotonic() + 60)["data"]
             if not groups or any(group.get("errors") for group in groups):

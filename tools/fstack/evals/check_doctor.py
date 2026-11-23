@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -33,23 +34,34 @@ def check(package: Path, codex: str, scratch: Path) -> None:
         assert not any(project.iterdir()), "doctor создал файл в рабочем проекте"
         return report
 
-    run(codex, "plugin", "marketplace", "add", ".", cwd=package)
+    marketplace = scratch / "marketplace"
+    shutil.copytree(package, marketplace, ignore=shutil.ignore_patterns("bin", ".git", "target"))
+    run(codex, "plugin", "marketplace", "add", ".", cwd=marketplace)
     assert doctor(1)["installed"] is False
     installed = json.loads(run(codex, "plugin", "add", "fstack@fstack", "--json"))
     root = Path(installed["installedPath"])
     initial = doctor(1)
     assert initial["installed"] is True and initial["enabled"] is True, initial
     assert initial["version"] == installed["version"] and Path(initial["package"]).samefile(root), initial
-    assert initial["runtime_present"] is True and Path(initial["runtime"]).samefile(root / "bin" / binary.name), initial
+    assert initial["runtime_present"] is False and initial["runtime_healthy"] is None, initial
     assert initial["enabled_skills"] == len(list((package / "skills").glob("*/SKILL.md"))), initial
 
     expected = trust_fixture_hooks(codex, home, project)
     assert expected and initial["hooks"] == expected, initial
+    runtime = Path(initial["runtime"])
+    assert runtime.is_relative_to(home / "fstack/runtime"), initial
+    runtime.parent.mkdir(parents=True)
+    shutil.copy2(binary, runtime)
     healthy = doctor(0)
-    assert healthy["issues"] == [] and healthy["hooks"] == {
+    assert healthy["runtime_healthy"] is True and healthy["issues"] == [] and healthy["hooks"] == {
         event: ["trusted"] * len(states) for event, states in expected.items()
     }, healthy
-    print(f"{installed['version']}: doctor обнаружил установку, runtime и смену доверия хуков.")
+    runtime.write_bytes(b"x")
+    damaged = doctor(1)
+    assert damaged["runtime_present"] is True and damaged["runtime_healthy"] is False, damaged
+    assert damaged["hooks"] == healthy["hooks"], damaged
+    assert any("проверка запуска" in issue for issue in damaged["issues"]), damaged
+    print(f"{installed['version']}: doctor различил отсутствие runtime, успешный запуск, повреждение и доверие хуков.")
 
 
 if __name__ == "__main__":
