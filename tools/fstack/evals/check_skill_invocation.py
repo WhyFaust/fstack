@@ -161,14 +161,6 @@ def windows_hook_probe(package: Path, scratch: Path) -> Path:
     market = scratch / "marketplace"
     shutil.copytree(package, market, ignore=shutil.ignore_patterns(".git", "target"))
     record = "[IO.File]::AppendAllText([IO.Path]::Combine($env:CODEX_HOME,'windows-hook.log'),"
-    hooks = market / "hooks/hooks.json"
-    manifest = json.loads(hooks.read_text(encoding="utf-8"))
-    for event, groups in manifest["hooks"].items():
-        for group in groups:
-            for handler in group["hooks"]:
-                handler["commandWindows"] = handler["commandWindows"].replace(
-                    '-Command "&', f'-Command "{record} \x27{event}: command\x27+[Environment]::NewLine); &')
-    hooks.write_text(json.dumps(manifest), encoding="utf-8")
     wrapper = market / "hooks/coordinator.ps1"
     code = wrapper.read_text(encoding="utf-8")
     for marker, label in (("$ErrorActionPreference = 'Stop'", "script"),
