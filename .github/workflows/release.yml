@@ -23,6 +23,7 @@ defaults:
 env:
   CARGO_MANIFEST: tools/fstack/Cargo.toml
   TOOLCHAIN: 1.90.0
+  CODEX_CLI_VERSION: 0.171.0
 
 jobs:
   source:
@@ -33,6 +34,7 @@ jobs:
       sha: ${{ steps.select.outputs.sha }}
       base: ${{ steps.select.outputs.base }}
       workflow_only: ${{ steps.select.outputs.workflow_only }}
+      version: ${{ steps.select.outputs.version }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -61,6 +63,7 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "workflow_only=$workflow_only" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   package:
     needs: source
@@ -122,15 +125,16 @@ jobs:
           echo "$plan"
           if [[ "$WORKFLOW_ONLY" == true ]]; then jq -e '.publish == false' <<< "$plan"; fi
       - name: Проверить установленный пакет и вызов навыка в Codex
-        if: runner.os == 'Linux'
+        # Выпущенный 0.2.11 проверял вызов в Codex только на Linux.
+        if: runner.os == 'Linux' || needs.source.outputs.workflow_only == 'false' || needs.source.outputs.version != '0.2.11'
         run: |
           package="$RUNNER_TEMP/fstack-plugin"
           mkdir -p "$package/bin"
-          git archive HEAD | tar -x -C "$package"
-          cp "$BINARY" "$package/bin/fstack"
+          git archive HEAD | (cd "$package" && tar -x)
+          cp "$BINARY" "$package/bin/"
           cli_dir="$RUNNER_TEMP/fstack-cli"
-          npm install --prefix "$cli_dir" --prefer-online --no-save --no-audit --no-fund @openai/codex@latest
-          codex="$cli_dir/node_modules/.bin/codex"
+          npm install --prefix "$cli_dir" --prefer-online --no-save --no-audit --no-fund "@openai/codex@$CODEX_CLI_VERSION"
+          codex=$(python -c 'from pathlib import Path; import sys; paths = [p for p in Path(sys.argv[1]).glob("node_modules/**/vendor/*/bin/codex*") if p.name in {"codex", "codex.exe"} and p.is_file()]; assert len(paths) == 1, paths; print(paths[0].as_posix())' "$cli_dir")
           "$codex" --version
           "$BINARY" --package "$package" check-installation --codex "$codex"
           python tools/fstack/evals/check_doctor.py "$package" --codex "$codex"
