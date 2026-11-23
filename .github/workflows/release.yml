@@ -126,7 +126,7 @@ jobs:
         run: |
           package="$RUNNER_TEMP/fstack-plugin"
           mkdir -p "$package/bin"
-          git archive HEAD | tar -x -C "$package"
+          git archive HEAD | (cd "$package" && tar -x)
           cp "$BINARY" "$package/bin/"
           cli_dir="$RUNNER_TEMP/fstack-cli"
           npm install --prefix "$cli_dir" --prefer-online --no-save --no-audit --no-fund "@openai/codex@$CODEX_CLI_VERSION"

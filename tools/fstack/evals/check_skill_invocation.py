@@ -308,4 +308,4 @@ if __name__ == "__main__":
     parser.add_argument("--codex", default="codex")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="fstack-skill-check-") as directory:
-        check(args.package.resolve(), args.codex, Path(directory))
+        check(args.package.resolve(), args.codex, Path(directory).resolve(strict=True))

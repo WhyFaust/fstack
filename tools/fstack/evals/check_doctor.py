@@ -70,4 +70,4 @@ if __name__ == "__main__":
     parser.add_argument("--codex", required=True)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="fstack-doctor-") as directory:
-        check(args.package.resolve(), args.codex, Path(directory))
+        check(args.package.resolve(), args.codex, Path(directory).resolve(strict=True))
