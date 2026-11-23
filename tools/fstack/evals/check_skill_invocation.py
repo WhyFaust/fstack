@@ -157,6 +157,32 @@ esac
     return market, transport
 
 
+def windows_hook_probe(package: Path, scratch: Path) -> Path:
+    market = scratch / "marketplace"
+    shutil.copytree(package, market, ignore=shutil.ignore_patterns(".git", "target"))
+    record = "[IO.File]::AppendAllText([IO.Path]::Combine($env:CODEX_HOME,'windows-hook.log'),"
+    hooks = market / "hooks/hooks.json"
+    manifest = json.loads(hooks.read_text(encoding="utf-8"))
+    for event, groups in manifest["hooks"].items():
+        for group in groups:
+            for handler in group["hooks"]:
+                handler["commandWindows"] = handler["commandWindows"].replace(
+                    '-Command "&', f'-Command "{record} \x27{event}: command\x27+[Environment]::NewLine); &')
+    hooks.write_text(json.dumps(manifest), encoding="utf-8")
+    wrapper = market / "hooks/coordinator.ps1"
+    code = wrapper.read_text(encoding="utf-8")
+    for marker, label in (("$ErrorActionPreference = 'Stop'", "script"),
+                          ("$binary = & $launch $operation", "launcher"),
+                          ("$process = [Diagnostics.Process]::Start($start)", "spawn"),
+                          ("    $process.WaitForExit()", "wait"),
+                          ("    exit $process.ExitCode", "exit")):
+        if code.count(marker) != 1:
+            raise RuntimeError(f"Точка наблюдения Windows не найдена: {marker}")
+        code = code.replace(marker, f"{record} $EventName+': {label}'+[Environment]::NewLine)\n{marker}")
+    wrapper.write_text(code, encoding="utf-8")
+    return market
+
+
 def check(package: Path, codex: str, scratch: Path, *, measure_cold: bool = False) -> dict | None:
     home = scratch / "profile"
     workspace = scratch / "workspace"
@@ -165,7 +191,7 @@ def check(package: Path, codex: str, scratch: Path, *, measure_cold: bool = Fals
     env = environment(home, isolated_user=True)
     cold_profile = measure_cold or os.name != "nt"
     marketplace, transport = (cold_marketplace(package, scratch, stub=not measure_cold)
-                              if cold_profile else (package, None))
+                              if cold_profile else (windows_hook_probe(package, scratch), None))
 
     def run(*args: str) -> str:
         result = subprocess.run([codex, *args], cwd=workspace, env=env,
@@ -318,6 +344,12 @@ stream_max_retries = 0
             texts = turn_texts(server, provider, start_thread(server, workspace), "Проверь временный чат.", effort="ultra")
             check_hook_context(texts, root, signals, active=False, index=False)
         except (RuntimeError, TimeoutError):
+            phases = home / "windows-hook.log"
+            if os.name == "nt":
+                if phases.is_file():
+                    print("\n".join(phases.read_text(encoding="utf-8").splitlines()[-20:]), file=sys.stderr)
+                else:
+                    print("Windows: код PowerShell не записал ни одной фазы запуска", file=sys.stderr)
             outcomes = [line for line in hook_log.read_text(encoding="utf-8", errors="replace").splitlines()
                         if "hook.command_outcome" in line]
             for outcome in outcomes[-12:]:
