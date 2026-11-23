@@ -151,7 +151,11 @@ fn hook(state: &State, package: &Path, event: &str, payload: &Value, cwd: &Path)
     } else {
         None
     };
-    let recorded = codex_task::current(&state.profile, payload, cwd, session, turn);
+    let (recorded, journal_problem) =
+        match codex_task::current(&state.profile, payload, cwd, session, turn) {
+            Ok(recorded) => (recorded, None),
+            Err(problem) => (None, Some(problem)),
+        };
     let plan = explicit_plan(payload)
         || recorded
             .as_ref()
@@ -183,7 +187,15 @@ fn hook(state: &State, package: &Path, event: &str, payload: &Value, cwd: &Path)
         };
         activation_state.map_or_else(|| INACTIVE.into(), |state| activation(package, plan, state))
     };
-    Ok(extra(event, context))
+    let mut output = extra(event, context);
+    if event == "UserPromptSubmit" && previous.is_none() && command.is_none() {
+        if let Some(problem) = journal_problem {
+            output["systemMessage"] = json!(format!(
+                "fstack не смог проверить автовключение: {problem}. Режим можно включить командой /faust-mode."
+            ));
+        }
+    }
+    Ok(output)
 }
 
 pub fn run(arguments: &[OsString], package: &Path) -> Result<()> {
@@ -194,7 +206,7 @@ pub fn run(arguments: &[OsString], package: &Path) -> Result<()> {
     else {
         return Err("Неизвестное событие координатора".into());
     };
-    let payload = read_json(std::io::stdin().lock(), 2_097_152);
+    let payload = protocol::read_hook_json(std::io::stdin().lock(), 2_097_152);
     let output = match payload {
         Ok(payload) => {
             let result = (|| {
@@ -202,7 +214,15 @@ pub fn run(arguments: &[OsString], package: &Path) -> Result<()> {
                 let cwd = std::env::current_dir().map_err(io::err)?;
                 hook(&state, package, event, &payload, &cwd)
             })();
-            result.unwrap_or_else(|_| fallback(package, event, &payload))
+            result.unwrap_or_else(|_| {
+                let mut output = fallback(package, event, &payload);
+                if event == "UserPromptSubmit" {
+                    output["systemMessage"] = json!(
+                        "fstack не смог прочитать или сохранить режим чата. Проверьте состояние каталога fstack/coordinator в профиле Codex."
+                    );
+                }
+                output
+            })
         }
         Err(_) => json!({}),
     };

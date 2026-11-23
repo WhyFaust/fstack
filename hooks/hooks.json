@@ -5,16 +5,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh \"$PLUGIN_ROOT/hooks/coordinator.sh\" Bootstrap",
-            "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'coordinator.ps1')))) Bootstrap $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))\"",
-            "timeout": 420,
-            "async": true
-          },
-          {
-            "type": "command",
             "command": "/bin/sh \"$PLUGIN_ROOT/hooks/coordinator.sh\" SessionStart",
             "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create([IO.File]::ReadAllText([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'hooks', 'coordinator.ps1')))) SessionStart $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Environment]::CurrentDirectory)))\"",
-            "timeout": 10,
+            "timeout": 15,
             "additionalContextLimit": 0
           }
         ]

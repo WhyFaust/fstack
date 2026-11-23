@@ -211,6 +211,35 @@ fn ultra_uses_only_the_verified_root_turn_and_manual_choice_wins() {
     snapshot(json!("vscode"), &f.repo, "ultra");
     assert!(submit("Проверь модуль", json!({})).contains("по глубине ultra"));
     assert!(!f.state.directory.exists());
+    let check_journal = |prompt: &str, path: &Path| {
+        f.hook(
+            "UserPromptSubmit",
+            json!({"prompt":prompt,"transcript_path":path}),
+        )
+    };
+    assert!(check_journal("Проверь модуль", &transcript)["systemMessage"].is_null());
+    let missing = check_journal("Проверь модуль", &sessions.join("missing.jsonl"));
+    assert!(missing["systemMessage"]
+        .as_str()
+        .unwrap()
+        .contains("журнал"));
+    assert!(!missing.to_string().contains(sessions.to_str().unwrap()));
+    let invalid = fs::read_to_string(&transcript)
+        .unwrap()
+        .replace("\"mode\":\"default\"", "\"kind\":\"default\"");
+    fs::write(&transcript, invalid).unwrap();
+    let output = check_journal("Проверь модуль", &transcript);
+    assert!(output["systemMessage"]
+        .as_str()
+        .unwrap()
+        .contains("текущего хода"));
+    assert_eq!(output["hookSpecificOutput"]["additionalContext"], INACTIVE);
+    assert!(check_journal("/faust-mode-off", &transcript)["systemMessage"].is_null());
+    assert!(check_journal("Продолжи", &transcript)["systemMessage"].is_null());
+    assert!(check_journal("/faust-mode", &transcript)["systemMessage"].is_null());
+    let marker = f.state.marker("session");
+    fs::remove_file(marker).unwrap();
+    snapshot(json!("vscode"), &f.repo, "ultra");
     assert!(submit("Продолжи", json!({"turn_id":"other"})).contains("выключен"));
     assert!(submit("Продолжи", json!({"permission_mode":"plan"})).contains("нативном Plan Mode"));
     snapshot(json!("vscode"), &f.base, "ultra");
@@ -266,13 +295,22 @@ fn plan_and_workspace_containing_profile_keep_coordination_without_other_state()
 #[test]
 fn malformed_or_mismatched_hook_inputs_do_not_modify_state() {
     let f = Fixture::new();
-    assert!(read_json(
-        br#"{"session_id":"first","session_id":"second"}"#.as_slice(),
-        100
-    )
-    .is_err());
-    assert!(read_json(b"[]".as_slice(), 100).is_err());
-    assert!(read_json(b"{}".as_slice(), 1).is_err());
+    for (input, limit) in [
+        (
+            br#"{"session_id":"first","session_id":"second"}"#.as_slice(),
+            100,
+        ),
+        (b"[]".as_slice(), 100),
+        (b"{} {}".as_slice(), 100),
+        (b"{}".as_slice(), 1),
+    ] {
+        assert!(read_json(input, limit).is_err());
+        assert!(protocol::read_hook_json(input, limit).is_err());
+    }
+    assert_eq!(
+        protocol::read_hook_json(b"\xef\xbb\xbf{}\r\n".as_slice(), 7).unwrap(),
+        json!({})
+    );
     for fields in [
         json!({"cwd":f.base}),
         json!({"session_id":"../other"}),

@@ -67,11 +67,16 @@ install_runtime() {
     staging=$(mktemp -d "$target_dir/.download.XXXXXXXX")
     trap 'rm -rf -- "$staging"' EXIT
     trap 'exit 1' HUP INT TERM
-    for suffix in .sha256 ''; do
-        curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
-            --connect-timeout 15 --max-time 180 --retry 2 --retry-max-time 180 \
-            "$url$suffix" --output "$staging/fstack$suffix"
-    done
+    checksum_timeout=10
+    binary_timeout=45
+    if [ "$3" = --prepare-session ]; then
+        checksum_timeout=3
+        binary_timeout=10
+    fi
+    curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+        --connect-timeout 10 --max-time "$checksum_timeout" "$url.sha256" --output "$staging/fstack.sha256"
+    curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+        --connect-timeout 10 --max-time "$binary_timeout" "$url" --output "$staging/fstack"
     if command -v sha256sum >/dev/null 2>&1; then
         digest=$(sha256sum < "$staging/fstack")
     else
@@ -90,10 +95,10 @@ main() {
     root=$(package_root)
     binary=$(runtime_path "$root")
     case "${1:-}" in
-        --install-runtime)
+        --install-runtime|--prepare-session)
             [ "$#" -eq 1 ] || exit 2
             if ! runtime_file "$binary"; then
-                install_runtime "$binary" "$root"
+                install_runtime "$binary" "$root" "$1"
             fi
             printf '%s\n' "$binary"
             ;;

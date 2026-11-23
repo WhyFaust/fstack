@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import shutil
 import subprocess
@@ -55,7 +56,7 @@ def toml_string(value: str | Path) -> str:
 
 
 def profile(home: Path, workspace: Path, readonly: list[Path] = (), executable: str | None = None,
-            editable: bool = True) -> None:
+            editable: bool = True, *, hooks: bool = False) -> None:
     home.mkdir(parents=True, exist_ok=False)
     scratch = workspace.with_name(workspace.name + "-scratch")
     scratch.mkdir(exist_ok=True)
@@ -75,6 +76,7 @@ cli_auth_credentials_store = "file"
 
 [features]
 apps = false
+hooks = {str(hooks).lower()}
 memory_tool = false
 multi_agent = true
 multi_agent_v2 = true
@@ -117,13 +119,22 @@ def authentication(home: Path, auth_home: Path):
 
 
 class Server:
-    def __init__(self, executable: str, home: Path, cwd: Path, *, isolated_user: bool = False):
-        self.process = subprocess.Popen(
-            [executable, "app-server", "--listen", "stdio://"], cwd=cwd,
-            env=environment(home, isolated_user=isolated_user), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-            start_new_session=os.name != "nt",
-        )
+    def __init__(self, executable: str, home: Path, cwd: Path, *, isolated_user: bool = False,
+                 path_prefix: Path | None = None, hook_log: Path | None = None):
+        env = environment(home, isolated_user=isolated_user)
+        if path_prefix is not None:
+            env["PATH"] = os.pathsep.join((str(path_prefix), env.get("PATH", "")))
+        with contextlib.ExitStack() as resources:
+            stderr = subprocess.DEVNULL
+            if hook_log is not None:
+                env["RUST_LOG"] = "codex_hooks::engine::command_runner=trace"
+                stderr = resources.enter_context(hook_log.open("wb"))
+            self.process = subprocess.Popen(
+                [executable, "app-server", "--listen", "stdio://"], cwd=cwd,
+                env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=stderr, text=True, encoding="utf-8", errors="replace",
+                start_new_session=os.name != "nt",
+            )
         self.messages: queue.Queue = queue.Queue()
         self.pending: list[dict] = []
         self.serial = 0
@@ -233,7 +244,8 @@ def observe(result: dict, message: dict) -> None:
         result["reroutes"].append(params)
     elif method == "item/completed":
         item = params.get("item", {})
-        if item.get("type") in {"agentMessage", "commandExecution", "fileChange"} | DELEGATION_TYPES:
+        if item.get("type") in {"agentMessage", "commandExecution", "fileChange", "mcpToolCall",
+                               "dynamicToolCall", "webSearch"} | DELEGATION_TYPES:
             result["items"].append({"threadId": params.get("threadId"), "item": item})
     elif method == "thread/started":
         thread = params.get("thread", {})
@@ -243,8 +255,43 @@ def observe(result: dict, message: dict) -> None:
         result["errors"].append(params)
 
 
+def routing_evidence(home: Path, thread_id: str) -> dict:
+    if not re.fullmatch(r"[a-f0-9-]{36}", thread_id):
+        raise ClientError("Некорректный ID журнала проверки маршрута")
+    logs = list((home / "sessions").glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
+    if len(logs) != 1:
+        raise ClientError("Не найден единственный журнал проверки маршрута")
+    calls, skills, replies = [], [], []
+    wait_calls = set()
+    with logs[0].open(encoding="utf-8") as stream:
+        for line in stream:
+            row = json.loads(line)
+            if row["type"] != "response_item":
+                continue
+            item = row["payload"]
+            if item["type"] in {"function_call", "custom_tool_call"}:
+                call = {"name": item["name"]}
+                if item["name"] == "spawn_agent":
+                    arguments = json.loads(item["arguments"])
+                    call.update({key: arguments.get(key) for key in ("fork_turns", "reasoning_effort")})
+                if item["name"] == "wait_agent":
+                    wait_calls.add(item["call_id"])
+                calls.append(call)
+            elif item["type"] == "agent_message" and item.get("recipient") == "/root":
+                replies.append(" ".join(part.get("text", "") for part in item["content"]))
+            elif item["type"] == "function_call_output" and item["call_id"] in wait_calls:
+                output = item["output"]
+                replies.append(output if isinstance(output, str) else json.dumps(output, ensure_ascii=False))
+            elif item["type"] == "message" and item.get("role") == "user":
+                for part in item.get("content", []):
+                    match = re.match(r"<skill>\s*<name>([^<]+)</name>", part.get("text", "").lstrip())
+                    if match:
+                        skills.append(match.group(1))
+    return {"calls": calls, "skills_supplied": skills, "replies": replies}
+
+
 def run(executable: str, home: Path, workspace: Path, prompt: str, instructions: str,
-        model: str, effort: str, timeout: int) -> dict:
+        model: str, effort: str, timeout: int, *, capture_routing: bool = False) -> dict:
     start = time.monotonic()
     deadline = start + timeout
     result = {"status": "environment_error", "requested_model": model, "requested_effort": effort,
@@ -254,7 +301,7 @@ def run(executable: str, home: Path, workspace: Path, prompt: str, instructions:
     try:
         result["client"] = server.initialize(deadline)
         started = server.request("thread/start", {
-            "cwd": str(workspace), "ephemeral": True, "model": model,
+            "cwd": str(workspace), "ephemeral": not capture_routing, "model": model,
             "approvalPolicy": "never", "permissions": "fstack-eval",
             "allowProviderModelFallback": False,
             "config": {"model_reasoning_effort": effort},
@@ -301,13 +348,16 @@ def run(executable: str, home: Path, workspace: Path, prompt: str, instructions:
                 result.setdefault("agent_threads", {})[agent_id] = agent_settings(child["thread"])
             except (ClientError, TimeoutError, KeyError) as exc:
                 result.setdefault("agent_metadata_errors", {})[agent_id] = str(exc)
+        if capture_routing and result["status"] == "completed":
+            result["routing"] = routing_evidence(home, thread_id)
     except TimeoutError as exc:
         result.update(status="timeout", error=str(exc))
         if thread_id and turn_id:
             with contextlib.suppress(Exception):
                 server.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}, time.monotonic() + 5)
-    except (ClientError, OSError, KeyError) as exc:
+    except (ClientError, OSError, KeyError, ValueError) as exc:
         result["error"] = str(exc)
+        result["status"] = "environment_error"
     finally:
         server.close()
         result["elapsed_seconds"] = round(time.monotonic() - start, 3)

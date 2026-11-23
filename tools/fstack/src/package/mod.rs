@@ -503,20 +503,15 @@ fn hooks(root: &Path, relative: &str) -> Result<()> {
         let groups = groups.as_array().ok_or("Ожидался массив обработчиков")?;
         require(groups.len() == 1, "Ожидалась одна группа хуков")?;
         let handlers = groups[0]["hooks"].as_array().ok_or("Нет команд хуков")?;
-        let session_start = event == "SessionStart";
         require(
-            handlers.len() == 1 + usize::from(session_start),
+            handlers.len() == 1,
             format!("{event}: неверное число команд хуков"),
         )?;
         require(
             groups[0].get("matcher").is_none(),
             format!("{event}: неверный фильтр хука"),
         )?;
-        for (index, handler) in handlers.iter().enumerate() {
-            let bootstrap = session_start && index == 0;
-            let event = if bootstrap { "Bootstrap" } else { event };
-            check_hook_command(event, handler)?;
-        }
+        check_hook_command(event, &handlers[0])?;
     }
     Ok(())
 }
@@ -530,13 +525,9 @@ fn check_hook_command(event: &str, handler: &Value) -> Result<()> {
             ),
         )?;
     }
-    let timeout = match event {
-        "Bootstrap" => 420,
-        "SessionStart" => 10,
-        _ => 5,
-    };
+    let timeout = if event == "SessionStart" { 15 } else { 5 };
     require(
-        handler.get("async").map_or(Some(false), Value::as_bool) == Some(event == "Bootstrap")
+        handler.get("async").map_or(Some(false), Value::as_bool) == Some(false)
             && handler["timeout"] == timeout,
         format!("{event}: неверный режим запуска хука"),
     )?;

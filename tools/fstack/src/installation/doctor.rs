@@ -1,11 +1,14 @@
-use super::Client;
+use super::{hook_counts, wait, Client};
 use crate::{package, version, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 const PLUGIN: &str = "fstack@fstack";
 
@@ -21,6 +24,7 @@ struct Report {
     package: Option<PathBuf>,
     runtime: Option<PathBuf>,
     runtime_present: Option<bool>,
+    runtime_healthy: Option<bool>,
     enabled_skills: Option<usize>,
     hooks: BTreeMap<String, Vec<String>>,
     issues: Vec<String>,
@@ -65,6 +69,29 @@ fn target() -> Result<&'static str> {
         }
         _ => Err("Для этой платформы нет готового runtime fstack".into()),
     }
+}
+
+fn probe_runtime(binary: &Path, package: &Path) -> Result<()> {
+    let mut output = tempfile::tempfile().map_err(|e| e.to_string())?;
+    let mut child = Command::new(binary)
+        .arg("--package")
+        .arg(package)
+        .args(["hook", "UserPromptSubmit"])
+        .current_dir(package)
+        .stdin(Stdio::null())
+        .stdout(output.try_clone().map_err(|e| e.to_string())?)
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let status = wait(&mut child, Duration::from_secs(2))?;
+    package::require(status.success(), format!("запуск завершился с {status}"))?;
+    output.rewind().map_err(|e| e.to_string())?;
+    let mut response = Vec::new();
+    output
+        .take(16)
+        .read_to_end(&mut response)
+        .map_err(|e| e.to_string())?;
+    package::require(response.trim_ascii() == b"{}", "не получен ответ хука")
 }
 
 fn runtime(package: &Path, home: &Path) -> Result<PathBuf> {
@@ -293,11 +320,17 @@ impl Report {
             Ok(path) => {
                 let present =
                     launcher_file(&path) && fs::metadata(&path).is_ok_and(|m| m.len() > 0);
-                self.runtime = Some(path);
                 self.runtime_present = Some(present);
-                if !present {
+                if present {
+                    let probe = probe_runtime(&path, &root);
+                    self.runtime_healthy = Some(probe.is_ok());
+                    if let Err(error) = probe {
+                        self.issues.push(format!("Бинарник runtime найден, но проверка запуска завершилась ошибкой: {error}. Восстановите runtime по инструкции установки."));
+                    }
+                } else {
                     self.issues.push("Бинарник runtime недоступен. Откройте чат с одобренным хуком SessionStart или установите runtime запускателем пакета.".into());
                 }
+                self.runtime = Some(path);
             }
             Err(e) => self.issues.push(e),
         }
@@ -356,26 +389,7 @@ impl Report {
                 "Источник обработчика отличается от файла хуков установленного fstack.".into(),
             );
         }
-        let config = package::json_file(config)?;
-        let mut expected = BTreeMap::new();
-        for (name, rules) in config["hooks"]
-            .as_object()
-            .ok_or("Нет событий в hooks.json")?
-        {
-            let mut event = name.clone();
-            if let Some(first) = event.get_mut(..1) {
-                first.make_ascii_lowercase();
-            }
-            let mut count = 0;
-            for rule in rules.as_array().ok_or("Некорректные группы хуков")?
-            {
-                count += rule["hooks"]
-                    .as_array()
-                    .ok_or("Некорректный список обработчиков")?
-                    .len();
-            }
-            expected.insert(event, count);
-        }
+        let expected = hook_counts(config)?;
         let actual: BTreeMap<_, _> = self
             .hooks
             .iter()
@@ -531,13 +545,21 @@ mod tests {
                 .unwrap();
             report
         };
-        let ok = scan(&skills, &hooks);
-        assert!(ok.issues.is_empty(), "{:?}", ok.issues);
-        assert_eq!(ok.version.as_deref(), Some("0.2.0"));
-        assert_eq!(ok.enabled_skills, Some(1));
-        assert_eq!(ok.package.unwrap(), root.canonicalize().unwrap());
-        assert_eq!(ok.runtime.unwrap(), bundled.canonicalize().unwrap());
-        assert_eq!(ok.runtime_present, Some(true));
+        let bundled_report = scan(&skills, &hooks);
+        assert_eq!(bundled_report.issues.len(), 1);
+        assert!(bundled_report.issues[0].contains("проверка запуска"));
+        assert_eq!(bundled_report.version.as_deref(), Some("0.2.0"));
+        assert_eq!(bundled_report.enabled_skills, Some(1));
+        assert_eq!(
+            bundled_report.package.unwrap(),
+            root.canonicalize().unwrap()
+        );
+        assert_eq!(
+            bundled_report.runtime.unwrap(),
+            bundled.canonicalize().unwrap()
+        );
+        assert_eq!(bundled_report.runtime_present, Some(true));
+        assert_eq!(bundled_report.runtime_healthy, Some(false));
 
         fs::remove_file(bundled).unwrap();
         fs::write(root.join(package::PACKAGE_VERSION), "0.2.1\n").unwrap();
@@ -546,6 +568,7 @@ mod tests {
         let path = problem.runtime.unwrap();
         assert!(path.starts_with(home.join("fstack/runtime/0.2.1")));
         assert_eq!(problem.runtime_present, Some(false));
+        assert_eq!(problem.runtime_healthy, None);
         assert_eq!(problem.hooks["sessionStart"], ["untrusted"]);
         assert!(problem
             .issues
@@ -558,9 +581,11 @@ mod tests {
         executable(&cache, b"native");
         hooks[0]["trustStatus"] = json!("managed");
         let cached = scan(&skills, &hooks);
-        assert!(cached.issues.is_empty(), "{:?}", cached.issues);
+        assert_eq!(cached.issues.len(), 1);
+        assert!(cached.issues[0].contains("проверка запуска"));
         assert_eq!(cached.runtime.unwrap(), cache);
         assert_eq!(cached.runtime_present, Some(true));
+        assert_eq!(cached.runtime_healthy, Some(false));
         let undiscovered = scan(&[], &[]);
         assert_eq!(undiscovered.package.unwrap(), root.canonicalize().unwrap());
         assert_eq!(undiscovered.enabled_skills, Some(0));

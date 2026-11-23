@@ -1,7 +1,8 @@
 use super::io;
 use crate::Result;
+use serde::Deserialize;
 use serde_json::{json, Value};
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 
 struct Unique(Value);
 impl<'de> serde::Deserialize<'de> for Unique {
@@ -76,6 +77,36 @@ pub fn read_json(reader: impl Read, limit: usize) -> Result<Value> {
     }
     let data = data.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&data);
     let Unique(v) = serde_json::from_slice(data).map_err(|_| "Invalid UTF-8 JSON hook input")?;
+    object(v)
+}
+
+pub fn read_hook_json(reader: impl Read, limit: usize) -> Result<Value> {
+    // Codex sends one JSON object. The launcher may still hold the input pipe open.
+    let mut input = BufReader::new(reader.take((limit + 1) as u64));
+    if input.fill_buf().map_err(io::err)?.first() == Some(&0xef) {
+        let mut bom = [0; 3];
+        input.read_exact(&mut bom).map_err(io::err)?;
+        if bom != [0xef, 0xbb, 0xbf] {
+            return Err("Invalid UTF-8 JSON hook input".into());
+        }
+    }
+    let mut parser = serde_json::Deserializer::from_reader(&mut input);
+    let Unique(v) =
+        Unique::deserialize(&mut parser).map_err(|_| "Invalid UTF-8 JSON hook input")?;
+    if input.get_ref().limit() == 0 {
+        return Err("Hook input exceeds the size limit".into());
+    }
+    if input
+        .buffer()
+        .iter()
+        .any(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+    {
+        return Err("Unexpected data after the hook input".into());
+    }
+    object(v)
+}
+
+fn object(v: Value) -> Result<Value> {
     if !v.is_object() {
         return Err("Expected a JSON object".into());
     }

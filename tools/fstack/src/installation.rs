@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -146,6 +146,21 @@ impl Client {
     }
 }
 
+fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Истёк таймаут команды".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn command(
     executable: &OsString,
     args: &[OsString],
@@ -163,18 +178,7 @@ fn command(
         .stderr(errors.try_clone().map_err(|e| e.to_string())?)
         .spawn()
         .map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(45);
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("Истёк таймаут команды: {args:?}"));
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let status = wait(&mut child, Duration::from_secs(45)).map_err(|e| format!("{args:?}: {e}"))?;
     let mut output = output;
     let mut errors = errors;
     output.rewind().map_err(|e| e.to_string())?;
@@ -215,6 +219,29 @@ fn check_installed_methods(source: &Path, installed: &Path) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn hook_counts(config: &Path) -> Result<BTreeMap<String, usize>> {
+    let config = json_file(config)?;
+    let mut counts = BTreeMap::new();
+    for (name, group) in config["hooks"]
+        .as_object()
+        .ok_or("Нет событий в hooks.json")?
+    {
+        let mut name = name.clone();
+        if let Some(first) = name.get_mut(..1) {
+            first.make_ascii_lowercase();
+        }
+        let mut count = 0;
+        for rule in group.as_array().ok_or("Некорректные группы хуков")? {
+            count += rule["hooks"]
+                .as_array()
+                .ok_or("Некорректный список обработчиков")?
+                .len();
+        }
+        counts.insert(name, count);
+    }
+    Ok(counts)
 }
 
 pub fn run(args: &[OsString], root: &Path) -> Result<()> {
@@ -336,15 +363,16 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
         "Обнаруженные навыки не совпадают с пакетом",
     )?;
     let hooks = flatten(hooks, "hooks")?;
-    let expected_handlers = BTreeMap::from([
-        ("sessionStart", 2),
-        ("subagentStart", 1),
-        ("userPromptSubmit", 1),
-    ]);
+    let manifest = json_file(&root.join(".codex-plugin/plugin.json"))?;
+    let relative = manifest["hooks"]
+        .as_str()
+        .ok_or("Нет пути hooks в манифесте")?;
+    let expected_handlers = hook_counts(&package::contained(root, root, relative, false)?)?;
+    let installed_hooks = package::contained(&installed_path, &installed_path, relative, false)?;
     let mut actual_handlers = BTreeMap::new();
     for hook in &hooks {
         let event = hook["eventName"].as_str().ok_or("Нет eventName")?;
-        *actual_handlers.entry(event).or_insert(0) += 1;
+        *actual_handlers.entry(event.to_owned()).or_insert(0) += 1;
     }
     require(
         actual_handlers == expected_handlers,
@@ -358,11 +386,11 @@ pub fn run(args: &[OsString], root: &Path) -> Result<()> {
             hook["source"] == "plugin"
                 && hook["handlerType"] == "command"
                 && hook["trustStatus"] == "untrusted"
-                && source.starts_with(&installed_path),
+                && source == installed_hooks,
             "Источник или доверие хука не совпадают",
         )?;
     }
-    let events: Vec<_> = expected_handlers.keys().copied().collect();
+    let events: Vec<_> = expected_handlers.keys().collect();
     println!(
         "{}",
         json!({"status":"passed","client":client_version.trim(),"version":version,"skills_discovered":expected.len(),"skill_files_and_catalog":"matched_source","hooks_discovered":events,"profile_instructions_created":false,"global_roles_installed":false,"model_availability":"not_checked","implicit_invocation":"not_verified","model_tasks":"not_run","role_execution":"not_run"})
