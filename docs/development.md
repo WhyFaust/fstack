@@ -26,8 +26,8 @@ python .github/workflows/check.py
 
 ## Контракт хуков координатора
 
-Штатный вход — `fstack [--package ROOT] hook EVENT`. Он читает JSON события
-из stdin и возвращает JSON контекста в stdout. Поддерживаются `SessionStart`,
+Штатный вход — `fstack [--package ROOT] hook EVENT`. Он принимает один объект
+JSON из stdin и отвечает в stdout, как только объект получен. Поддерживаются `SessionStart`,
 `SubagentStart` и `UserPromptSubmit`. При старте сессии запускатель готовит runtime до первого запроса. Состояние ручного режима хранится в
 `CODEX_HOME/fstack/coordinator`; журнал текущего хода читается из профиля Codex.
 

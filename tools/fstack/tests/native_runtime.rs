@@ -230,6 +230,42 @@ fn explicit_profile_and_cache_work_without_a_home_directory() {
     assert!(!profile.join("fstack/memory").exists());
 }
 
+#[test]
+fn hook_replies_to_a_complete_object_while_stdin_is_open() {
+    use std::{io::BufRead, sync::mpsc, thread, time::Duration};
+
+    let runtime = Runtime::new();
+    for event in ["SessionStart", "UserPromptSubmit"] {
+        let input = json!({"hook_event_name":event,"cwd":runtime.project,
+            "session_id":"open-pipe","turn_id":"turn","prompt":"Обычный запрос"});
+        let mut child = Command::new(&runtime.binary)
+            .arg("--package")
+            .arg(&runtime.root)
+            .args(["hook", event])
+            .env("CODEX_HOME", &runtime.codex_home)
+            .current_dir(&runtime.project)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.to_string().as_bytes()).unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (send, receive) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            let mut line = String::new();
+            let result = std::io::BufReader::new(stdout).read_line(&mut line);
+            send.send(result.map(|_| line)).unwrap();
+        });
+        let reply = receive.recv_timeout(Duration::from_secs(5));
+        drop(stdin);
+        assert!(child.wait().unwrap().success());
+        reader.join().unwrap();
+        let reply: Value = serde_json::from_str(&reply.expect(event).unwrap()).unwrap();
+        assert_eq!(reply["hookSpecificOutput"]["hookEventName"], event);
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_shells_preserve_hook_directory_and_utf8() {

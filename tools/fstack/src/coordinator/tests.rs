@@ -295,13 +295,22 @@ fn plan_and_workspace_containing_profile_keep_coordination_without_other_state()
 #[test]
 fn malformed_or_mismatched_hook_inputs_do_not_modify_state() {
     let f = Fixture::new();
-    assert!(read_json(
-        br#"{"session_id":"first","session_id":"second"}"#.as_slice(),
-        100
-    )
-    .is_err());
-    assert!(read_json(b"[]".as_slice(), 100).is_err());
-    assert!(read_json(b"{}".as_slice(), 1).is_err());
+    for (input, limit) in [
+        (
+            br#"{"session_id":"first","session_id":"second"}"#.as_slice(),
+            100,
+        ),
+        (b"[]".as_slice(), 100),
+        (b"{} {}".as_slice(), 100),
+        (b"{}".as_slice(), 1),
+    ] {
+        assert!(read_json(input, limit).is_err());
+        assert!(protocol::read_hook_json(input, limit).is_err());
+    }
+    assert_eq!(
+        protocol::read_hook_json(b"\xef\xbb\xbf{}\r\n".as_slice(), 7).unwrap(),
+        json!({})
+    );
     for fields in [
         json!({"cwd":f.base}),
         json!({"session_id":"../other"}),

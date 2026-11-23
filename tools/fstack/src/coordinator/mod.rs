@@ -206,7 +206,7 @@ pub fn run(arguments: &[OsString], package: &Path) -> Result<()> {
     else {
         return Err("Неизвестное событие координатора".into());
     };
-    let payload = read_json(std::io::stdin().lock(), 2_097_152);
+    let payload = protocol::read_hook_json(std::io::stdin().lock(), 2_097_152);
     let output = match payload {
         Ok(payload) => {
             let result = (|| {
