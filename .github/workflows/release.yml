@@ -34,6 +34,7 @@ jobs:
       sha: ${{ steps.select.outputs.sha }}
       base: ${{ steps.select.outputs.base }}
       workflow_only: ${{ steps.select.outputs.workflow_only }}
+      version: ${{ steps.select.outputs.version }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -62,6 +63,7 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "workflow_only=$workflow_only" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   package:
     needs: source
@@ -123,6 +125,8 @@ jobs:
           echo "$plan"
           if [[ "$WORKFLOW_ONLY" == true ]]; then jq -e '.publish == false' <<< "$plan"; fi
       - name: Проверить установленный пакет и вызов навыка в Codex
+        # Выпущенный 0.2.11 проверял вызов в Codex только на Linux.
+        if: runner.os == 'Linux' || needs.source.outputs.workflow_only == 'false' || needs.source.outputs.version != '0.2.11'
         run: |
           package="$RUNNER_TEMP/fstack-plugin"
           mkdir -p "$package/bin"
